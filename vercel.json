@@ -1,11 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "npm install",
-  "buildCommand": "npm run build",
+  "installCommand": "npm install -g pnpm@latest && pnpm install",
+  "buildCommand": "pnpm build",
   "functions": {
     "app/api/**/*.ts": {
-      "maxDuration": 350
+      "maxDuration": 300
     }
   }
 }
