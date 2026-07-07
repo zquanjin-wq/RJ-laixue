@@ -5,7 +5,7 @@
   "buildCommand": "npm run build",
   "functions": {
     "app/api/**/*.ts": {
-      "maxDuration": 300
+      "maxDuration": 350
     }
   }
 }
