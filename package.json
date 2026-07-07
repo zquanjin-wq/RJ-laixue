@@ -27,6 +27,7 @@
     "eval:orchestration:answer-content": "tsx eval/orchestration/answer-content-runner.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.0.0",
     "@ai-sdk/anthropic": "^3.0.71",
     "@ai-sdk/google": "^3.0.64",
     "@ai-sdk/openai": "^3.0.53",
