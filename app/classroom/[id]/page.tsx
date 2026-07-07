@@ -10,6 +10,7 @@ import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
+import { saveStageToCloud } from '@/lib/utils/cloud-sync';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { migrateScene } from '@/lib/edit/slide-schema';
@@ -239,7 +240,23 @@ export default function ClassroomDetailPage() {
               </div>
             </div>
           ) : (
-            <Stage onRetryOutline={retrySingleOutline} />
+            <>
+              <Stage onRetryOutline={retrySingleOutline} />
+              {/* 保存到云端 */}
+              <button
+                onClick={async () => {
+                  try {
+                    await saveStageToCloud(classroomId);
+                    alert('✅ 已保存到云端');
+                  } catch (e: any) {
+                    alert('❌ 保存失败：' + (e.message || '未知错误'));
+                  }
+                }}
+                className="fixed bottom-6 right-6 z-50 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg hover:opacity-90 transition-opacity"
+              >
+                ☁️ 保存到云端
+              </button>
+            </>
           )}
         </div>
       </MediaStageProvider>
