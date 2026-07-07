@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
+import CloudCourses from '@/components/cloud-courses';
 import {
   ArrowUp,
   Check,
@@ -904,7 +905,8 @@ function HomePage() {
           </AnimatePresence>
         </motion.div>
       )}
-
+  {/* ─── Cloud Courses ─── */}
+      <CloudCourses />
       {/* Footer — flows with content, at the very end */}
       <div className="mt-auto pt-12 pb-4 text-center text-xs text-muted-foreground/40">
         OpenMAIC Open Source Project
