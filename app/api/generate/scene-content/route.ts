@@ -163,6 +163,11 @@ export async function POST(req: NextRequest) {
       `Generating content: "${effectiveOutline.title}" (${effectiveOutline.type}) [model=${modelString}]`,
     );
 
+      let effectiveLanguageDirective = languageDirective;
+    if (requirements?.requirement) {
+      const m = requirements.requirement.match(/(?:AI|ai).*?助教.*?[名叫是]+(.+?)(?:[，。,.\n]|$)/);
+      if (m) effectiveLanguageDirective = (languageDirective || '') + `\n\n**CRITICAL**: The AI tutor must be named "${m[1].trim()}" in ALL content and dialogue.`;
+    }
     const userLocale = req.headers?.get('x-user-locale') ?? '';
 
 
