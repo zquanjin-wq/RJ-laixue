@@ -14,7 +14,7 @@ import type {
 } from '@/lib/types/generation';
 import type { AgentInfo } from '@/lib/generation/generation-pipeline';
 import type { Scene } from '@/lib/types/stage';
-import type { SpeechAction } from '@/lib/types/action';
+import type { Action, SpeechAction } from '@/lib/types/action';
 import { splitLongSpeechActions } from '@/lib/audio/tts-utils';
 import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
 import { resolveAgentVoiceOptions, pickNarratorAgent } from '@/lib/audio/agent-voice';
@@ -107,6 +107,107 @@ function messageFromError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function stripPdfImagePayload(img: PdfImage): PdfImage {
+  return {
+    ...img,
+    // Full base64 image data is restored from imageMapping on the server.
+    // Keeping it here can push Vercel's request body over the 4.5MB limit.
+    src: '',
+  };
+}
+
+function getSuggestedImageIds(outline: SceneOutline): string[] {
+  return outline.suggestedImageIds ?? [];
+}
+
+function slimPdfImagesForOutline(
+  outline: SceneOutline,
+  pdfImages?: PdfImage[],
+): PdfImage[] | undefined {
+  if (!pdfImages) return undefined;
+
+  const suggestedIds = getSuggestedImageIds(outline);
+  if (suggestedIds.length === 0) return undefined;
+
+  const suggestedIdSet = new Set(suggestedIds);
+  const slimImages = pdfImages
+    .filter((img) => suggestedIdSet.has(img.id))
+    .map(stripPdfImagePayload);
+
+  return slimImages.length > 0 ? slimImages : undefined;
+}
+
+function slimImageMappingForOutline(
+  outline: SceneOutline,
+  imageMapping?: ImageMapping,
+): ImageMapping | undefined {
+  if (!imageMapping) return undefined;
+
+  const suggestedIds = getSuggestedImageIds(outline);
+  if (suggestedIds.length === 0) return undefined;
+
+  const slimMapping: ImageMapping = {};
+  for (const id of suggestedIds) {
+    if (imageMapping[id]) {
+      slimMapping[id] = imageMapping[id];
+    }
+  }
+
+  return Object.keys(slimMapping).length > 0 ? slimMapping : undefined;
+}
+
+type SceneContentRequestParams = {
+  outline: SceneOutline;
+  allOutlines: SceneOutline[];
+  stageId: string;
+  pdfImages?: PdfImage[];
+  imageMapping?: ImageMapping;
+  stageInfo: {
+    name: string;
+    description?: string;
+    language?: string;
+    style?: string;
+  };
+  agents?: AgentInfo[];
+  languageDirective?: string;
+  requirements?: UserRequirements;
+};
+
+const SCENE_CONTENT_BODY_WARN_BYTES = 3_500_000;
+
+function trimImageMappingToFit(payload: SceneContentRequestParams): SceneContentRequestParams {
+  if (!payload.imageMapping) return payload;
+
+  let bodySize = JSON.stringify(withThinkingConfig(payload)).length;
+  if (bodySize <= SCENE_CONTENT_BODY_WARN_BYTES) return payload;
+
+  const orderedIds = getSuggestedImageIds(payload.outline).filter((id) => payload.imageMapping?.[id]);
+  const nextMapping: ImageMapping = { ...payload.imageMapping };
+
+  for (let i = orderedIds.length - 1; i >= 0; i -= 1) {
+    delete nextMapping[orderedIds[i]];
+    bodySize = JSON.stringify(withThinkingConfig({ ...payload, imageMapping: nextMapping })).length;
+    if (bodySize <= SCENE_CONTENT_BODY_WARN_BYTES) {
+      return {
+        ...payload,
+        imageMapping: Object.keys(nextMapping).length > 0 ? nextMapping : undefined,
+      };
+    }
+  }
+
+  return { ...payload, imageMapping: undefined };
+}
+
+function slimSceneContentPayload(params: SceneContentRequestParams): SceneContentRequestParams {
+  const payload = {
+    ...params,
+    pdfImages: slimPdfImagesForOutline(params.outline, params.pdfImages),
+    imageMapping: slimImageMappingForOutline(params.outline, params.imageMapping),
+  };
+
+  return trimImageMappingToFit(payload);
+}
+
 /** Call POST /api/generate/scene-content (step 1) */
 export async function fetchSceneContent(
   params: {
@@ -131,10 +232,11 @@ export async function fetchSceneContent(
   try {
     return await withGenerationRetry(
       async () => {
+        const payload = slimSceneContentPayload(params);
         const response = await fetch('/api/generate/scene-content', {
           method: 'POST',
           headers: getApiHeaders(),
-          body: JSON.stringify(withThinkingConfig(params)),
+          body: JSON.stringify(withThinkingConfig(payload)),
           signal,
         });
 
@@ -305,7 +407,7 @@ async function generateTTSForScene(
 ): Promise<{ success: boolean; failedCount: number; error?: string }> {
   const providerId = useSettingsStore.getState().ttsProviderId;
   scene.actions = splitLongSpeechActions(scene.actions || [], providerId);
-  const speechActions = scene.actions.filter(
+  const speechActions = (scene.actions as Action[]).filter(
     (a): a is SpeechAction => a.type === 'speech' && !!a.text,
   );
   if (speechActions.length === 0) return { success: true, failedCount: 0 };
@@ -431,9 +533,9 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       const sortedScenes = [...scenes].sort((a, b) => a.order - b.order);
       if (sortedScenes.length > 0) {
         const lastScene = sortedScenes[sortedScenes.length - 1];
-        previousSpeeches = (lastScene.actions || [])
-          .filter((a): a is SpeechAction => a.type === 'speech')
-          .map((a) => a.text);
+          previousSpeeches = ((lastScene.actions || []) as Action[])
+            .filter((a): a is SpeechAction => a.type === 'speech')
+            .map((a) => a.text);
       }
 
       // #572: opt-in parallel content fetch. Concurrency is server-configured
@@ -728,7 +830,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         const sortedScenes = [...store.getState().scenes].sort((a, b) => a.order - b.order);
         const lastScene = sortedScenes[sortedScenes.length - 1];
         const previousSpeeches = lastScene
-          ? (lastScene.actions || [])
+          ? ((lastScene.actions || []) as Action[])
               .filter((a): a is SpeechAction => a.type === 'speech')
               .map((a) => a.text)
           : [];

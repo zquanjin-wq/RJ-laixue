@@ -3,7 +3,7 @@
 import { Stage } from '@/components/stage';
 import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
-import { loadImageMapping } from '@/lib/utils/image-storage';
+import { loadImageMappingCompressed } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
@@ -176,7 +176,7 @@ export default function ClassroomDetailPage() {
         .map((img: { storageId?: string }) => img.storageId)
         .filter(Boolean);
 
-      loadImageMapping(storageIds).then((imageMapping) => {
+      loadImageMappingCompressed(storageIds).then((imageMapping) => {
         generateRemaining({
           pdfImages: params.pdfImages,
           imageMapping,
@@ -248,6 +248,7 @@ export default function ClassroomDetailPage() {
                   try {
                     await saveStageToCloud(classroomId);
                     alert('✅ 已保存到云端');
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   } catch (e: any) {
                     alert('❌ 保存失败：' + (e.message || '未知错误'));
                   }
