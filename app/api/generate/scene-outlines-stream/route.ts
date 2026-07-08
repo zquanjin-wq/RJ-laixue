@@ -383,7 +383,15 @@ export async function POST(req: NextRequest) {
     if (!prompts) {
       return apiError('INTERNAL_ERROR', 500, 'Prompt template not found');
     }
-
+// ── Extract AI assistant name from user requirements ──
+    const assistantNameMatch = requirements.requirement.match(
+      /(?:AI|ai).*?助教.*?[名叫是]+(.+?)(?:[，。,.\n]|$)/
+    );
+    if (assistantNameMatch) {
+      const assistantName = assistantNameMatch[1].trim();
+      prompts.user += `\n\n**CRITICAL**: The AI assistant/tutor in this course must be named "${assistantName}". Use "${assistantName}" as the tutor's name in ALL generated content, agent configurations, dialogue, and voice prompts.`;
+    }
+    
     log.info(
       `Generating outlines: "${requirements.requirement.substring(0, 50)}" [model=${modelString}]`,
     );
