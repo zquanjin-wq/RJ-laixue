@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
       visionEnabled: hasVision,
       generatedMediaMapping,
       agents,
-      effectiveLanguageDirective,,
+      effectiveLanguageDirective,
       thinkingConfig,
       targetLanguage: userLocale || undefined,
       userRequirements: requirements,
