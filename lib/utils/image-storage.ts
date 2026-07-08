@@ -175,3 +175,57 @@ export async function loadPdfBlob(key: string): Promise<Blob | null> {
   const record = await db.imageFiles.get(key);
   return record?.blob ?? null;
 }
+
+/**
+ * Compress a base64 image using Canvas API
+ */
+async function compressImage(
+  base64: string,
+  maxWidth = 1024,
+  quality = 0.6,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width);
+        width = maxWidth;
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('No canvas context')); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('Image load failed'));
+    img.src = base64;
+  });
+}
+/**
+ * Load images from IndexedDB, compress, and return as imageMapping.
+ * Use this instead of loadImageMapping when sending to API to avoid 413.
+ */
+export async function loadImageMappingCompressed(
+  imageIds: string[],
+  maxWidth = 1024,
+  quality = 0.6,
+): Promise<Record<string, string>> {
+  const mapping: Record<string, string> = {};
+  for (const storageId of imageIds) {
+    try {
+      const record = await db.imageFiles.get(storageId);
+      if (record) {
+        const base64 = await blobToBase64(record.blob);
+        const compressed = await compressImage(base64, maxWidth, quality);
+        const originalId = storageId.replace(/^session_[^_]+_/, '');
+        mapping[originalId] = compressed;
+      }
+    } catch (error) {
+      log.error(`Failed to load image ${storageId}:`, error);
+    }
+  }
+  return mapping;
+}
