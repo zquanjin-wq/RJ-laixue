@@ -166,15 +166,14 @@ export async function POST(req: NextRequest) {
     const userLocale = req.headers?.get('x-user-locale') ?? '';
 
 
-    // ── Extract AI assistant name from user requirements ──
-    let effectiveLanguageDirective = languageDirective;
+   // ── Extract AI assistant name from user requirements ──
     if (requirements?.requirement) {
       const assistantNameMatch = requirements.requirement.match(
         /(?:AI|ai).*?助教.*?[名叫是]+(.+?)(?:[，。,.\n]|$)/
       );
       if (assistantNameMatch) {
         const assistantName = assistantNameMatch[1].trim();
-        effectiveLanguageDirective = (languageDirective || '') +
+        languageDirective = (languageDirective || '') +
           `\n\n**CRITICAL**: The AI assistant/tutor in this course must be named "${assistantName}". Use "${assistantName}" as the tutor's name in ALL generated content, dialogue, and voice scripts.`;
       }
     }
@@ -186,7 +185,7 @@ export async function POST(req: NextRequest) {
       visionEnabled: hasVision,
       generatedMediaMapping,
       agents,
-      effectiveLanguageDirective,
+      languageDirective: effectiveLanguageDirective,
       thinkingConfig,
       targetLanguage: userLocale || undefined,
       userRequirements: requirements,
