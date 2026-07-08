@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   let resolvedModelString: string | undefined;
   try {
     const body = await req.json();
-    const {
+    let {
       outline: rawOutline,
       allOutlines,
       pdfImages,
