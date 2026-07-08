@@ -6,7 +6,7 @@ import { db } from '@/lib/utils/database';
 async function collectStageData(stageId: string) {
   const [stage, scenes, outlines] = await Promise.all([
     db.stages.get(stageId),
-    db.stageScenes.where('stageId').equals(stageId).toArray(),
+   db.scenes.where('stageId').equals(stageId).toArray(),
     db.stageOutlines.where('stageId').equals(stageId).toArray(),
   ]);
   if (!stage) {
@@ -63,9 +63,9 @@ export async function importCourseFromCloud(courseId: string) {
   if (error) throw error;
   if (!data) throw new Error('课程不存在');
   const { stage, scenes, outlines } = data.data;
-  await db.transaction('rw', db.stages, db.stageScenes, db.stageOutlines, async () => {
+  await db.transaction('rw', db.stages, db.scenes, db.stageOutlines, async () => {
     await db.stages.put(stage);
-    await db.stageScenes.bulkPut(scenes);
+    await db.scenes.bulkPut(scenes);
     await db.stageOutlines.bulkPut(outlines);
   });
   return { id: data.id, title: data.title };
