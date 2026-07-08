@@ -25,6 +25,7 @@ import { isAbortError } from '@/lib/generation/generation-retry';
 import { FOREGROUND_SCENE_RETRY_OPTIONS } from './foreground-retry';
 import {
   loadImageMapping,
+  loadImageMappingCompressed,
   loadPdfBlob,
   cleanupOldImages,
   storeImages,
@@ -445,7 +446,7 @@ function GenerationPreviewContent() {
       let imageMapping: ImageMapping = {};
       if (currentSession.imageStorageIds && currentSession.imageStorageIds.length > 0) {
         log.debug('Loading images from IndexedDB');
-        imageMapping = await loadImageMapping(currentSession.imageStorageIds);
+        imageMapping = await loadImageMappingCompressed(currentSession.imageStorageIds);
       } else if (
         currentSession.imageMapping &&
         Object.keys(currentSession.imageMapping).length > 0
