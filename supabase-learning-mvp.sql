@@ -76,6 +76,22 @@ create index if not exists course_progress_events_course_id_idx
 create index if not exists course_progress_events_student_id_idx
   on public.course_progress_events (student_id, created_at desc);
 
+-- RLS policies: allow anon key full access to learning tables
+alter table public.students enable row level security;
+alter table public.course_assignments enable row level security;
+alter table public.course_progress_events enable row level security;
+
+create policy "Allow anon read students" on public.students for select to anon using (true);
+create policy "Allow anon insert students" on public.students for insert to anon with check (true);
+create policy "Allow anon update students" on public.students for update to anon using (true) with check (true);
+
+create policy "Allow anon read assignments" on public.course_assignments for select to anon using (true);
+create policy "Allow anon insert assignments" on public.course_assignments for insert to anon with check (true);
+create policy "Allow anon update assignments" on public.course_assignments for update to anon using (true) with check (true);
+
+create policy "Allow anon read events" on public.course_progress_events for select to anon using (true);
+create policy "Allow anon insert events" on public.course_progress_events for insert to anon with check (true);
+
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
