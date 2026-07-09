@@ -93,6 +93,7 @@ export async function deleteCloudCourse(courseId: string) {
 export interface StudentRecord {
   id: string;
   name: string;
+  access_code?: string | null;
   email?: string | null;
   employee_no?: string | null;
   note?: string | null;
