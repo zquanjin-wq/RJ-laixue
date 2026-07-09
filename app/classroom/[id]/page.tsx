@@ -10,7 +10,7 @@ import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
-import { saveStageToCloud } from '@/lib/utils/cloud-sync';
+import { recordLearningEvent, saveStageToCloud } from '@/lib/utils/cloud-sync';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { migrateScene } from '@/lib/edit/slide-schema';
@@ -23,14 +23,19 @@ export default function ClassroomDetailPage() {
   const searchParams = useSearchParams();
   const classroomId = params?.id as string;
   const readOnlyShare = searchParams.get('share') === '1';
+  const studentId = searchParams.get('student') || undefined;
 
   const { loadFromStorage } = useStageStore();
   const generationComplete = useStageStore((s) => s.generationComplete);
+  const scenes = useStageStore((s) => s.scenes);
+  const currentSceneId = useStageStore((s) => s.currentSceneId);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const generationStartedRef = useRef(false);
+  const openEventSentRef = useRef(false);
+  const completeEventSentRef = useRef(false);
 
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
     onComplete: () => {
@@ -79,6 +84,34 @@ export default function ClassroomDetailPage() {
           }
         } catch (fetchErr) {
           log.warn('Server-side storage fetch failed:', fetchErr);
+        }
+      }
+
+      if (!useStageStore.getState().stage) {
+        log.info('No local/server classroom data, trying cloud course:', classroomId);
+        try {
+          const res = await fetch(`/api/courses/${encodeURIComponent(classroomId)}`);
+          if (res.ok) {
+            const json = await res.json();
+            const courseData = json?.data?.data;
+            if (json.success && courseData?.stage) {
+              const { stage, scenes = [], outlines = [] } = courseData;
+              const migrated = (scenes as Scene[]).map(migrateScene);
+              useStageStore.getState().setStage(stage);
+              useStageStore.setState({
+                scenes: migrated,
+                outlines,
+                currentSceneId: migrated[0]?.id ?? null,
+                mode: 'playback',
+                generationComplete: true,
+                generatingOutlines: [],
+                generationStatus: 'completed',
+              });
+              log.info('Loaded from cloud course:', classroomId);
+            }
+          }
+        } catch (cloudErr) {
+          log.warn('Cloud course fetch failed:', cloudErr);
         }
       }
 
@@ -152,6 +185,48 @@ export default function ClassroomDetailPage() {
       stop();
     };
   }, [classroomId, loadClassroom, stop]);
+
+  useEffect(() => {
+    if (!readOnlyShare || !studentId || openEventSentRef.current) return;
+
+    openEventSentRef.current = true;
+    recordLearningEvent({
+      courseId: classroomId,
+      studentId,
+      eventType: 'open_course',
+    }).catch((err) => {
+      log.warn('Failed to record learning open event:', err);
+      openEventSentRef.current = false;
+    });
+  }, [classroomId, readOnlyShare, studentId]);
+
+  useEffect(() => {
+    if (
+      !readOnlyShare ||
+      !studentId ||
+      !generationComplete ||
+      completeEventSentRef.current ||
+      scenes.length === 0
+    ) {
+      return;
+    }
+
+    const currentScene = scenes.find((scene) => scene.id === currentSceneId);
+    const lastOrder = Math.max(...scenes.map((scene) => scene.order));
+    if (!currentScene || currentScene.order < lastOrder) return;
+
+    completeEventSentRef.current = true;
+    recordLearningEvent({
+      courseId: classroomId,
+      studentId,
+      eventType: 'complete_course',
+      sceneId: currentScene.id,
+      sceneOrder: currentScene.order,
+    }).catch((err) => {
+      log.warn('Failed to record learning complete event:', err);
+      completeEventSentRef.current = false;
+    });
+  }, [classroomId, currentSceneId, generationComplete, readOnlyShare, scenes, studentId]);
 
   // Auto-resume generation for pending outlines
   useEffect(() => {

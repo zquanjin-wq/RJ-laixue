@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { listCloudCourses, deleteCloudCourse } from '@/lib/utils/cloud-sync';
+import { LearningManager } from '@/components/learning-manager';
 interface CloudCourse {
   id: string;
   title: string;
@@ -15,6 +16,7 @@ export default function CloudCourses() {
   const [courses, setCourses] = useState<CloudCourse[]>([]);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState<string | null>(null);
+  const [managingCourseId, setManagingCourseId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const fetchCourses = useCallback(async () => {
     try {
@@ -105,10 +107,29 @@ export default function CloudCourses() {
               >
                 🗑 删除
               </button>
+              <button
+                onClick={() =>
+                  setManagingCourseId((current) => (current === course.id ? null : course.id))
+                }
+                className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                学习管理
+              </button>
             </div>
           </div>
         ))}
       </div>
+      {managingCourseId && (
+        <LearningManager
+          courseId={managingCourseId}
+          courseTitle={
+            courses.find((course) => course.id === managingCourseId)?.title ||
+            courses.find((course) => course.id === managingCourseId)?.topic ||
+            '未命名课程'
+          }
+          onClose={() => setManagingCourseId(null)}
+        />
+      )}
     </div>
   );
 }

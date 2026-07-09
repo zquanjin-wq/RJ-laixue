@@ -50,7 +50,13 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Whitelist: access-code endpoints, health check
-  if (pathname.startsWith('/api/access-code/') || pathname.startsWith('/api/courses') || pathname === '/api/health') {
+  if (
+    pathname.startsWith('/api/access-code/') ||
+    pathname.startsWith('/api/courses') ||
+    pathname.startsWith('/api/students') ||
+    pathname.startsWith('/api/learning') ||
+    pathname === '/api/health'
+  ) {
     return NextResponse.next();
   }
 
