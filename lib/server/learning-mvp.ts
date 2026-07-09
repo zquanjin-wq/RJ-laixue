@@ -38,10 +38,31 @@ export function normalizeStudentInput(input: StudentInput): StudentInput {
   };
 }
 
+export async function verifyStudentAccess(courseId: string, accessCode: string) {
+  const { data, error } = await supabase
+    .from('students')
+    .select('id, name, access_code')
+    .eq('access_code', accessCode)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Access code not found');
+
+  const { data: assignment, error: assignError } = await supabase
+    .from('course_assignments')
+    .select('id, status')
+    .eq('course_id', courseId)
+    .eq('student_id', data.id)
+    .maybeSingle();
+  if (assignError) throw assignError;
+  if (!assignment) throw new Error('Student not assigned to this course');
+
+  return { studentId: data.id, studentName: data.name };
+}
+
 export async function listStudents() {
   const { data, error } = await supabase
     .from('students')
-    .select('id, name, email, employee_no, note, created_at, updated_at')
+    .select('id, name, access_code, email, employee_no, note, created_at, updated_at')
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data ?? [];
@@ -52,7 +73,7 @@ export async function createStudent(input: StudentInput) {
   const { data, error } = await supabase
     .from('students')
     .insert(student)
-    .select('id, name, email, employee_no, note, created_at, updated_at')
+    .select('id, name, access_code, email, employee_no, note, created_at, updated_at')
     .single();
   if (error) throw error;
   return data;
@@ -68,7 +89,7 @@ export async function importStudents(inputs: StudentInput[]) {
       const { data, error } = await supabase
         .from('students')
         .upsert(student, { onConflict: 'email' })
-        .select('id, name, email, employee_no, note, created_at, updated_at')
+        .select('id, name, access_code, email, employee_no, note, created_at, updated_at')
         .single();
       if (error) throw error;
       results.push(data);
@@ -76,7 +97,7 @@ export async function importStudents(inputs: StudentInput[]) {
       const { data, error } = await supabase
         .from('students')
         .upsert(student, { onConflict: 'employee_no' })
-        .select('id, name, email, employee_no, note, created_at, updated_at')
+        .select('id, name, access_code, email, employee_no, note, created_at, updated_at')
         .single();
       if (error) throw error;
       results.push(data);

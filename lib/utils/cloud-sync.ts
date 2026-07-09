@@ -164,6 +164,15 @@ export async function assignCourseToStudents(courseId: string, studentIds: strin
   return readApiJson<CourseAssignmentRecord[]>(response);
 }
 
+export async function verifyStudentAccess(courseId: string, accessCode: string) {
+  const response = await fetch('/api/learning/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courseId, accessCode }),
+  });
+  return readApiJson<{ studentId: string; studentName: string }>(response);
+}
+
 export async function recordLearningEvent(input: {
   courseId: string;
   studentId?: string;

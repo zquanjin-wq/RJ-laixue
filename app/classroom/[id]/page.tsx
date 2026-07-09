@@ -11,6 +11,7 @@ import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
 import { recordLearningEvent, saveStageToCloud } from '@/lib/utils/cloud-sync';
+import { StudentGate } from '@/components/student-gate';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { migrateScene } from '@/lib/edit/slide-schema';
@@ -24,6 +25,8 @@ export default function ClassroomDetailPage() {
   const classroomId = params?.id as string;
   const readOnlyShare = searchParams.get('share') === '1';
   const studentId = searchParams.get('student') || undefined;
+  const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
+  const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
 
   const { loadFromStorage } = useStageStore();
   const generationComplete = useStageStore((s) => s.generationComplete);
@@ -32,6 +35,7 @@ export default function ClassroomDetailPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showGate, setShowGate] = useState(false);
 
   const generationStartedRef = useRef(false);
   const openEventSentRef = useRef(false);
@@ -162,6 +166,12 @@ export default function ClassroomDetailPage() {
   }, [classroomId, loadFromStorage]);
 
   useEffect(() => {
+    if (readOnlyShare && !verifiedStudentId) {
+      setShowGate(true);
+    }
+  }, [readOnlyShare, verifiedStudentId]);
+
+  useEffect(() => {
     // Reset loading state on course switch to unmount Stage during transition,
     // preventing stale data from syncing back to the new course
     setLoading(true);
@@ -187,23 +197,23 @@ export default function ClassroomDetailPage() {
   }, [classroomId, loadClassroom, stop]);
 
   useEffect(() => {
-    if (!readOnlyShare || !studentId || openEventSentRef.current) return;
+    if (!readOnlyShare || !verifiedStudentId || openEventSentRef.current) return;
 
     openEventSentRef.current = true;
     recordLearningEvent({
       courseId: classroomId,
-      studentId,
+      studentId: verifiedStudentId!,
       eventType: 'open_course',
     }).catch((err) => {
       log.warn('Failed to record learning open event:', err);
       openEventSentRef.current = false;
     });
-  }, [classroomId, readOnlyShare, studentId]);
+  }, [classroomId, readOnlyShare, verifiedStudentId]);
 
   useEffect(() => {
     if (
       !readOnlyShare ||
-      !studentId ||
+      !verifiedStudentId ||
       !generationComplete ||
       completeEventSentRef.current ||
       scenes.length === 0
@@ -218,7 +228,7 @@ export default function ClassroomDetailPage() {
     completeEventSentRef.current = true;
     recordLearningEvent({
       courseId: classroomId,
-      studentId,
+      studentId: verifiedStudentId!,
       eventType: 'complete_course',
       sceneId: currentScene.id,
       sceneOrder: currentScene.order,
@@ -226,7 +236,7 @@ export default function ClassroomDetailPage() {
       log.warn('Failed to record learning complete event:', err);
       completeEventSentRef.current = false;
     });
-  }, [classroomId, currentSceneId, generationComplete, readOnlyShare, scenes, studentId]);
+  }, [classroomId, currentSceneId, generationComplete, readOnlyShare, scenes, verifiedStudentId]);
 
   // Auto-resume generation for pending outlines
   useEffect(() => {
@@ -317,6 +327,15 @@ export default function ClassroomDetailPage() {
                 </button>
               </div>
             </div>
+          ) : showGate ? (
+            <StudentGate
+              courseId={classroomId}
+              onVerified={(sid, sname) => {
+                setVerifiedStudentId(sid);
+                setVerifiedStudentName(sname);
+                setShowGate(false);
+              }}
+            />
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />

@@ -5,6 +5,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.students (
   id uuid primary key default gen_random_uuid(),
+  access_code text unique default upper(substring(md5(random()::text) from 1 for 6)),
   name text not null,
   email text,
   employee_no text,
@@ -15,6 +16,9 @@ create table if not exists public.students (
 
 create unique index if not exists students_email_unique
   on public.students (email);
+
+create unique index if not exists students_access_code_unique
+  on public.students (access_code);
 
 create unique index if not exists students_employee_no_unique
   on public.students (employee_no);

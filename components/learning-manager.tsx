@@ -147,13 +147,13 @@ export function LearningManager({ courseId, courseTitle, onClose }: LearningMana
   };
 
   const handleCopyStudentLink = async (studentId: string) => {
-    const url = `${window.location.origin}/classroom/${courseId}?share=1&student=${studentId}`;
+    const url = `${window.location.origin}/classroom/${courseId}?share=1`;
     if (!navigator.clipboard?.writeText) {
       window.prompt('复制学员学习链接', url);
       return;
     }
     await navigator.clipboard.writeText(url);
-    alert('学员学习链接已复制');
+    alert('学员学习链接已复制（学员需输入访问码进入）');
   };
 
   const toggleStudent = (studentId: string) => {
@@ -258,6 +258,7 @@ export function LearningManager({ courseId, courseTitle, onClose }: LearningMana
                     <tr>
                       <th className="p-2">选择</th>
                       <th className="p-2">学员</th>
+                      <th className="p-2">访问码</th>
                       <th className="p-2">工号/邮箱</th>
                       <th className="p-2">状态</th>
                       <th className="p-2">链接</th>
@@ -278,6 +279,9 @@ export function LearningManager({ courseId, courseTitle, onClose }: LearningMana
                             />
                           </td>
                           <td className="p-2 font-medium">{student.name}</td>
+                          <td className="p-2 text-muted-foreground font-mono text-xs">
+                            {student.access_code || '-'}
+                          </td>
                           <td className="p-2 text-muted-foreground">
                             {student.employee_no || student.email || '-'}
                           </td>
