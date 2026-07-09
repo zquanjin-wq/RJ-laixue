@@ -14,6 +14,16 @@ create table if not exists public.students (
   updated_at timestamptz not null default now()
 );
 
+alter table public.students
+  add column if not exists access_code text;
+
+update public.students
+set access_code = upper(substring(md5(random()::text) from 1 for 6))
+where access_code is null;
+
+alter table public.students
+  alter column access_code set default upper(substring(md5(random()::text) from 1 for 6));
+
 create unique index if not exists students_email_unique
   on public.students (email);
 

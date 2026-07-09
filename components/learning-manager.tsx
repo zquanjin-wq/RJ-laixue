@@ -18,7 +18,13 @@ interface LearningManagerProps {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const source = error as { message?: unknown; error?: unknown };
+    if (typeof source.message === 'string' && source.message.trim()) return source.message;
+    if (typeof source.error === 'string' && source.error.trim()) return source.error;
+  }
+  return fallback;
 }
 
 function parseStudentsCsv(text: string) {
@@ -146,7 +152,7 @@ export function LearningManager({ courseId, courseTitle, onClose }: LearningMana
     }
   };
 
-  const handleCopyStudentLink = async (studentId: string) => {
+  const handleCopyStudentLink = async () => {
     const url = `${window.location.origin}/classroom/${courseId}?share=1`;
     if (!navigator.clipboard?.writeText) {
       window.prompt('复制学员学习链接', url);
@@ -291,7 +297,7 @@ export function LearningManager({ courseId, courseTitle, onClose }: LearningMana
                           <td className="p-2">
                             {assignment ? (
                               <button
-                                onClick={() => handleCopyStudentLink(student.id)}
+                                onClick={() => handleCopyStudentLink()}
                                 className="rounded border px-2 py-1 text-[11px] hover:bg-muted"
                               >
                                 复制

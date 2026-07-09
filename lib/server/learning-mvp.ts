@@ -17,7 +17,20 @@ export interface LearningEventInput {
 }
 
 export function getErrorMessage(error: unknown, fallback = '未知错误') {
-  return error instanceof Error ? error.message : fallback;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const source = error as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+    };
+    const parts = [source.message, source.details, source.hint, source.code]
+      .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+      .map((part) => part.trim());
+    if (parts.length > 0) return parts.join(' | ');
+  }
+  return fallback;
 }
 
 function normalizeNullableText(value: unknown) {
