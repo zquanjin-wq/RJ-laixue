@@ -150,6 +150,14 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     const selectedAgentIds = useSettingsStore((s) => s.selectedAgentIds);
     const ttsMuted = useSettingsStore((s) => s.ttsMuted);
     const ttsEnabled = useSettingsStore((s) => s.ttsEnabled);
+    const setTTSEnabled = useSettingsStore((s) => s.setTTSEnabled);
+
+    // Auto-enable TTS for shared/learner view (new devices default to ttsEnabled=false)
+    useEffect(() => {
+      if (readOnlyShare && !ttsEnabled) {
+        setTTSEnabled(true);
+      }
+    }, [readOnlyShare, ttsEnabled, setTTSEnabled]);
 
     // Generate participants from selected agents
     const participants = useMemo(
