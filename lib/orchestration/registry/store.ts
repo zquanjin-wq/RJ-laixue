@@ -298,10 +298,13 @@ export function agentsToParticipants(
       hasTeacher = true;
     }
 
-    // Use i18n name for default agents, fall back to registry name
-    const i18nName = t?.(`settings.agentNames.${agent.id}`);
-    const displayName =
-      i18nName && i18nName !== `settings.agentNames.${agent.id}` ? i18nName : agent.name;
+    // Default agents: prefer i18n display name; generated agents: always use their own name
+    const displayName = agent.isDefault
+      ? (() => {
+          const i18nName = t?.(`settings.agentNames.${agent.id}`);
+          return i18nName && i18nName !== `settings.agentNames.${agent.id}` ? i18nName : agent.name;
+        })()
+      : agent.name;
 
     participants.push({
       id: agent.id,

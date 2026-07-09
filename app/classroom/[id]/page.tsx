@@ -102,6 +102,12 @@ export default function ClassroomDetailPage() {
               const { stage, scenes = [], outlines = [] } = courseData;
               const migrated = (scenes as Scene[]).map(migrateScene);
               useStageStore.getState().setStage(stage);
+              // Hydrate generated agents from cloud course into IndexedDB + registry
+              if (stage.generatedAgentConfigs?.length) {
+                const { saveGeneratedAgents } = await import('@/lib/orchestration/registry/store');
+                await saveGeneratedAgents(stage.id, stage.generatedAgentConfigs);
+                log.info('Hydrated cloud course agents for stage:', stage.id);
+              }
               useStageStore.setState({
                 scenes: migrated,
                 outlines,
