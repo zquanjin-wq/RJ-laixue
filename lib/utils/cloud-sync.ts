@@ -14,13 +14,16 @@ async function readApiJson<T>(response: Response): Promise<T> {
 async function collectStageData(stageId: string) {
   const [stage, scenes, outlines] = await Promise.all([
     db.stages.get(stageId),
-   db.scenes.where('stageId').equals(stageId).toArray(),
+    db.scenes.where('stageId').equals(stageId).toArray(),
     db.stageOutlines.where('stageId').equals(stageId).toArray(),
   ]);
+
   if (!stage) {
     throw new Error(`课程 ${stageId} 在本地不存在`);
   }
-  const stageName = stage.name.trim();
+
+  const stageName = stage.name?.trim?.() || '';
+
   return {
     id: stage.id,
     title: stageName || '未命名课程',
@@ -36,17 +39,24 @@ async function collectStageData(stageId: string) {
 export async function saveStageToCloud(stageId: string) {
   const { id, title, topic, stage, scenes, outlines } =
     await collectStageData(stageId);
-  const { error } = await supabase.from('courses').upsert(
-    {
+
+  const response = await fetch('/api/courses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       id,
       title,
       topic,
-      data: { stage, scenes, outlines },
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'id' },
-  );
-  if (error) throw error;
+      data: {
+        stage,
+        scenes,
+        outlines,
+      },
+    }),
+  });
+
+  await readApiJson(response);
+
   return { id, title };
 }
 // ============================================================

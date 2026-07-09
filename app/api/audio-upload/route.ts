@@ -1,0 +1,106 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+
+export const runtime = 'nodejs'
+
+const BUCKET_NAME = 'course-audio'
+
+function getFileExtension(fileName: string, fallback = 'mp3') {
+  const parts = fileName.split('.')
+  const ext = parts.length > 1 ? parts.pop() : ''
+  return ext || fallback
+}
+
+function sanitizeFileName(fileName: string) {
+  return fileName
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
+    .toLowerCase()
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      return NextResponse.json(
+        {
+          error: 'Missing Supabase env vars',
+          details: {
+            hasSupabaseUrl: Boolean(supabaseUrl),
+            hasServiceRoleKey: Boolean(serviceRoleKey),
+          },
+        },
+        { status: 500 },
+      )
+    }
+
+    const formData = await request.formData()
+    const file = formData.get('file')
+
+    if (!file || !(file instanceof File)) {
+      return NextResponse.json(
+        { error: 'Missing audio file. Please upload with form field name "file".' },
+        { status: 400 },
+      )
+    }
+
+    if (!file.type.startsWith('audio/')) {
+      return NextResponse.json(
+        { error: `Invalid file type: ${file.type || 'unknown'}` },
+        { status: 400 },
+      )
+    }
+
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    })
+
+    const ext = getFileExtension(file.name)
+    const safeName = sanitizeFileName(file.name) || `audio.${ext}`
+    const filePath = `uploads/${Date.now()}-${crypto.randomUUID()}-${safeName}`
+
+    const arrayBuffer = await file.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, buffer, {
+        contentType: file.type || `audio/${ext}`,
+        upsert: false,
+      })
+
+    if (uploadError) {
+      return NextResponse.json(
+        {
+          error: 'Failed to upload audio to Supabase Storage',
+          details: uploadError.message,
+        },
+        { status: 500 },
+      )
+    }
+
+    const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath)
+
+    return NextResponse.json({
+      url: data.publicUrl,
+      path: filePath,
+      bucket: BUCKET_NAME,
+      fileName: file.name,
+      contentType: file.type,
+      size: file.size,
+    })
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: 'Unexpected audio upload error',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    )
+  }
+}
