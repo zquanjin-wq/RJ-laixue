@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { listCloudCourses, importCourseFromCloud, deleteCloudCourse } from '@/lib/utils/cloud-sync';
-import { useRouter } from 'next/navigation';
+import { listCloudCourses, deleteCloudCourse } from '@/lib/utils/cloud-sync';
 interface CloudCourse {
   id: string;
   title: string;
@@ -9,19 +8,21 @@ interface CloudCourse {
   created_at: string;
   updated_at: string;
 }
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
 export default function CloudCourses() {
-  const router = useRouter();
   const [courses, setCourses] = useState<CloudCourse[]>([]);
   const [loading, setLoading] = useState(true);
-  const [importing, setImporting] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<string | null>(null);
   const [error, setError] = useState('');
   const fetchCourses = useCallback(async () => {
     try {
       setError('');
       const data = await listCloudCourses();
       setCourses(data);
-    } catch (e: any) {
-      setError(e.message || '获取云端课程失败');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, '获取云端课程失败'));
     } finally {
       setLoading(false);
     }
@@ -29,15 +30,20 @@ export default function CloudCourses() {
   useEffect(() => {
     fetchCourses();
   }, [fetchCourses]);
-  const handleImport = async (courseId: string) => {
-    setImporting(courseId);
+  const handleShare = async (courseId: string) => {
+    setSharing(courseId);
     try {
-      const { id } = await importCourseFromCloud(courseId);
-      router.push(`/classroom/${id}`);
-    } catch (e: any) {
-      alert('导入失败：' + (e.message || '未知错误'));
+      const url = `${window.location.origin}/classroom/${courseId}`;
+      if (!navigator.clipboard?.writeText) {
+        window.prompt('复制课程链接', url);
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      alert('课程链接已复制，可以发给别人访问');
+    } catch (e: unknown) {
+      alert('分享失败：' + getErrorMessage(e, '未知错误'));
     } finally {
-      setImporting(null);
+      setSharing(null);
     }
   };
   const handleDelete = async (courseId: string) => {
@@ -45,8 +51,8 @@ export default function CloudCourses() {
     try {
       await deleteCloudCourse(courseId);
       setCourses((prev) => prev.filter((c) => c.id !== courseId));
-    } catch (e: any) {
-      alert('删除失败：' + (e.message || '未知错误'));
+    } catch (e: unknown) {
+      alert('删除失败：' + getErrorMessage(e, '未知错误'));
     }
   };
   if (loading) {
@@ -87,11 +93,11 @@ export default function CloudCourses() {
             </p>
             <div className="mt-3 flex gap-2">
               <button
-                onClick={() => handleImport(course.id)}
-                disabled={importing === course.id}
+                onClick={() => handleShare(course.id)}
+                disabled={sharing === course.id}
                 className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
               >
-                {importing === course.id ? '导入中...' : '📥 导入'}
+                {sharing === course.id ? '复制中...' : '分享'}
               </button>
               <button
                 onClick={() => handleDelete(course.id)}
@@ -106,3 +112,4 @@ export default function CloudCourses() {
     </div>
   );
 }
+

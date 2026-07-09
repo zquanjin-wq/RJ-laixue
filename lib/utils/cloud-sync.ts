@@ -12,10 +12,11 @@ async function collectStageData(stageId: string) {
   if (!stage) {
     throw new Error(`课程 ${stageId} 在本地不存在`);
   }
+  const stageName = stage.name.trim();
   return {
     id: stage.id,
-    title: (stage as any).title || (stage as any).topic || '',
-    topic: (stage as any).topic || '',
+    title: stageName || '未命名课程',
+    topic: stageName || '',
     stage,
     scenes,
     outlines,
