@@ -25,6 +25,7 @@ export default function ClassroomDetailPage() {
   const readOnlyShare = searchParams.get('share') === '1';
 
   const { loadFromStorage } = useStageStore();
+  const generationComplete = useStageStore((s) => s.generationComplete);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -245,7 +246,7 @@ export default function ClassroomDetailPage() {
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
               {/* 保存到云端 */}
-              {!readOnlyShare && (
+              {!readOnlyShare && generationComplete && (
                 <button
                   onClick={async () => {
                     try {
