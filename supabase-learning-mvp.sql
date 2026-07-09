@@ -21,7 +21,9 @@ create unique index if not exists students_employee_no_unique
 
 create table if not exists public.course_assignments (
   id uuid primary key default gen_random_uuid(),
-  course_id text not null references public.courses(id) on delete cascade,
+  -- Keep course_id as text and do not add a hard FK to courses(id).
+  -- Existing RJ-laixue deployments may have different courses.id types.
+  course_id text not null,
   student_id uuid not null references public.students(id) on delete cascade,
   status text not null default 'not_started'
     check (status in ('not_started', 'in_progress', 'completed')),
@@ -43,7 +45,7 @@ create index if not exists course_assignments_student_id_idx
 
 create table if not exists public.course_progress_events (
   id uuid primary key default gen_random_uuid(),
-  course_id text not null references public.courses(id) on delete cascade,
+  course_id text not null,
   student_id uuid references public.students(id) on delete set null,
   assignment_id uuid references public.course_assignments(id) on delete set null,
   event_type text not null
