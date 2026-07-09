@@ -33,7 +33,7 @@ export default function CloudCourses() {
   const handleShare = async (courseId: string) => {
     setSharing(courseId);
     try {
-      const url = `${window.location.origin}/classroom/${courseId}`;
+      const url = `${window.location.origin}/classroom/${courseId}?share=1`;
       if (!navigator.clipboard?.writeText) {
         window.prompt('复制课程链接', url);
         return;

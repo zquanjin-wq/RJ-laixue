@@ -34,6 +34,7 @@ interface HeaderControlsProps {
   readonly mode?: StageMode;
   readonly canEdit?: boolean;
   readonly onToggleEditMode?: () => void;
+  readonly hideProMode?: boolean;
   /**
    * `default` — the chunky h-9 pill used in the playback Stage Header.
    * `compact` — slightly tighter padding for embedding in CommandBar's
@@ -60,6 +61,7 @@ export function HeaderControls({
   mode,
   canEdit,
   onToggleEditMode,
+  hideProMode = false,
   variant = 'default',
 }: HeaderControlsProps) {
   const { t } = useI18n();
@@ -189,7 +191,7 @@ export function HeaderControls({
           host bar on the mode swap (no cross-bar layoutId morph: the
           playback Header and edit CommandBar have different left-side
           widths, so morphing made the pill visibly drift). */}
-      {onToggleEditMode && (
+      {!hideProMode && onToggleEditMode && (
         <label
           className={cn(
             'shrink-0 inline-flex items-center gap-2.5 rounded-full border shadow-sm transition-colors duration-200',

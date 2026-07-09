@@ -32,8 +32,10 @@ import { preloadEditor } from '@/lib/edit/preload-editor';
  */
 export function Stage({
   onRetryOutline,
+  readOnlyShare = false,
 }: {
   onRetryOutline?: (outlineId: string) => Promise<void>;
+  readOnlyShare?: boolean;
 }) {
   const { mode, setMode, scenes, currentSceneId, generatingOutlines, stage } = useStageStore();
   const currentScene = useStageStore((s) => s.getCurrentScene());
@@ -42,12 +44,14 @@ export function Stage({
   // Single source of truth feeds the Header's Pro Switch state and the
   // auto-exit effect below; keeping them in lock-step prevents an
   // edit-mode entry that would immediately auto-exit.
-  const isEditable = isCurrentSceneEditable({
-    currentSceneId,
-    sceneCount: scenes.length,
-    generatingOutlineCount: generatingOutlines.length,
-    hasCurrentScene: !!currentScene,
-  });
+  const isEditable =
+    !readOnlyShare &&
+    isCurrentSceneEditable({
+      currentSceneId,
+      sceneCount: scenes.length,
+      generatingOutlineCount: generatingOutlines.length,
+      hasCurrentScene: !!currentScene,
+    });
 
   // Cross-tab edit lock (#571). Lives at this layer because entry must
   // be refused BEFORE the live session is torn down; PlaybackChromeRoot
@@ -150,6 +154,7 @@ export function Stage({
               onRetryOutline={onRetryOutline}
               canEnterProMode={isEditable}
               onEnterProMode={toggleHandler}
+              readOnlyShare={readOnlyShare}
             />
           </motion.div>
         )}

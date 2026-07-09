@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
 import { loadImageMappingCompressed } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
@@ -20,7 +20,9 @@ const log = createLogger('Classroom');
 
 export default function ClassroomDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const classroomId = params?.id as string;
+  const readOnlyShare = searchParams.get('share') === '1';
 
   const { loadFromStorage } = useStageStore();
 
@@ -241,22 +243,24 @@ export default function ClassroomDetailPage() {
             </div>
           ) : (
             <>
-              <Stage onRetryOutline={retrySingleOutline} />
+              <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
               {/* 保存到云端 */}
-              <button
-                onClick={async () => {
-                  try {
-                    await saveStageToCloud(classroomId);
-                    alert('✅ 已保存到云端');
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  } catch (e: any) {
-                    alert('❌ 保存失败：' + (e.message || '未知错误'));
-                  }
-                }}
-                className="fixed bottom-6 right-6 z-50 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg hover:opacity-90 transition-opacity"
-              >
-                ☁️ 保存到云端
-              </button>
+              {!readOnlyShare && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await saveStageToCloud(classroomId);
+                      alert('✅ 已保存到云端');
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } catch (e: any) {
+                      alert('❌ 保存失败：' + (e.message || '未知错误'));
+                    }
+                  }}
+                  className="fixed bottom-6 right-6 z-50 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg hover:opacity-90 transition-opacity"
+                >
+                  ☁️ 保存到云端
+                </button>
+              )}
             </>
           )}
         </div>

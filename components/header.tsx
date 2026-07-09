@@ -11,9 +11,18 @@ interface HeaderProps {
   readonly mode?: StageMode;
   readonly canEdit?: boolean;
   readonly onToggleEditMode?: () => void;
+  readonly hideBackButton?: boolean;
+  readonly hideProMode?: boolean;
 }
 
-export function Header({ currentSceneTitle, mode, canEdit, onToggleEditMode }: HeaderProps) {
+export function Header({
+  currentSceneTitle,
+  mode,
+  canEdit,
+  onToggleEditMode,
+  hideBackButton = false,
+  hideProMode = false,
+}: HeaderProps) {
   const { t } = useI18n();
   const router = useRouter();
 
@@ -21,13 +30,15 @@ export function Header({ currentSceneTitle, mode, canEdit, onToggleEditMode }: H
     <>
       <header className="h-20 px-8 flex items-center justify-between z-10 bg-transparent gap-4">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <button
-            onClick={() => router.push('/')}
-            className="shrink-0 p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-            title={t('generation.backToHome')}
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+          {!hideBackButton && (
+            <button
+              onClick={() => router.push('/')}
+              className="shrink-0 p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+              title={t('generation.backToHome')}
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
           {/* Title block — hidden when `mode === 'edit'`. Header lives
               inside `PlaybackChromeRoot`, which is unmounted by `Stage`
               once mode flips to 'edit', so in steady state this branch
@@ -52,7 +63,12 @@ export function Header({ currentSceneTitle, mode, canEdit, onToggleEditMode }: H
           )}
         </div>
 
-        <HeaderControls mode={mode} canEdit={canEdit} onToggleEditMode={onToggleEditMode} />
+        <HeaderControls
+          mode={mode}
+          canEdit={canEdit}
+          onToggleEditMode={onToggleEditMode}
+          hideProMode={hideProMode}
+        />
       </header>
     </>
   );
