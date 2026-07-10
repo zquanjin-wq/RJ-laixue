@@ -41,7 +41,7 @@ export async function saveStageToCloud(stageId: string) {
   const { id, title, topic, stage, scenes, outlines } =
     await collectStageData(stageId);
 
-  const publishResult = await publishSceneAudioAssets(stageId, scenes);
+ const publishResult = await publishSceneAudioAssets(stageId, scenes as any);
 
   if (publishResult.failed.length > 0 || publishResult.missing.length > 0) {
     const failedCount = publishResult.failed.length;
@@ -88,7 +88,7 @@ export async function saveStageToCloud(stageId: string) {
 
   // 保存成功后，把补齐 audioUrl 的 scenes 回写本地，避免下次重复上传
   if (scenesToSave.length > 0) {
-    await db.scenes.bulkPut(scenesToSave);
+    await db.scenes.bulkPut(scenesToSave as any);
   }
 
   return {
