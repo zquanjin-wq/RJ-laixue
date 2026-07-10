@@ -1,15 +1,16 @@
-import { supabase } from '@/lib/supabase/client';
+﻿import { supabase } from '@/lib/supabase/client';
 import { db } from '@/lib/utils/database';
+import { publishSceneAudioAssets } from '@/lib/audio/audio-publish';
 
 async function readApiJson<T>(response: Response): Promise<T> {
   const data = await response.json();
   if (!response.ok || !data.success) {
-    throw new Error(data.error || '请求失败');
+    throw new Error(data.error || '璇锋眰澶辫触');
   }
   return data.data as T;
 }
 // ============================================================
-// 从 IndexedDB 读取完整课程数据
+// 浠?IndexedDB 璇诲彇瀹屾暣璇剧▼鏁版嵁
 // ============================================================
 async function collectStageData(stageId: string) {
   const [stage, scenes, outlines] = await Promise.all([
@@ -19,7 +20,7 @@ async function collectStageData(stageId: string) {
   ]);
 
   if (!stage) {
-    throw new Error(`课程 ${stageId} 在本地不存在`);
+    throw new Error(`璇剧▼ ${stageId} 鍦ㄦ湰鍦颁笉瀛樺湪`);
   }
 
   const stageName = stage.name?.trim?.() || '';
@@ -34,11 +35,39 @@ async function collectStageData(stageId: string) {
   };
 }
 // ============================================================
-// 保存课程到云端
+// 淇濆瓨璇剧▼鍒颁簯绔?
 // ============================================================
 export async function saveStageToCloud(stageId: string) {
   const { id, title, topic, stage, scenes, outlines } =
     await collectStageData(stageId);
+
+  const publishResult = await publishSceneAudioAssets(stageId, scenes);
+
+  if (publishResult.failed.length > 0 || publishResult.missing.length > 0) {
+    const failedCount = publishResult.failed.length;
+    const missingCount = publishResult.missing.length;
+
+    const failedPreview = publishResult.failed
+      .slice(0, 3)
+      .map((item) => `${item.audioId}: ${item.error}`)
+      .join('；');
+
+    const missingPreview = publishResult.missing
+      .slice(0, 3)
+      .map((item) => `${item.audioId}: ${item.reason}`)
+      .join('；');
+
+    const detailParts = [
+      failedCount > 0 ? `上传失败 ${failedCount} 条${failedPreview ? `（${failedPreview}）` : ''}` : '',
+      missingCount > 0 ? `本地音频缺失 ${missingCount} 条${missingPreview ? `（${missingPreview}）` : ''}` : '',
+    ].filter(Boolean);
+
+    throw new Error(
+      `保存失败：部分语音无法发布到云端。${detailParts.join('；')}。请重新生成语音后再保存。`,
+    );
+  }
+
+  const scenesToSave = publishResult.scenes;
 
   const response = await fetch('/api/courses', {
     method: 'POST',
@@ -49,7 +78,7 @@ export async function saveStageToCloud(stageId: string) {
       topic,
       data: {
         stage,
-        scenes,
+        scenes: scenesToSave,
         outlines,
       },
     }),
@@ -57,10 +86,24 @@ export async function saveStageToCloud(stageId: string) {
 
   await readApiJson(response);
 
-  return { id, title };
+  // 保存成功后，把补齐 audioUrl 的 scenes 回写本地，避免下次重复上传
+  if (scenesToSave.length > 0) {
+    await db.scenes.bulkPut(scenesToSave);
+  }
+
+  return {
+    id,
+    title,
+    audioPublish: {
+      uploaded: publishResult.uploaded.length,
+      skipped: publishResult.skipped.length,
+      missing: publishResult.missing.length,
+      failed: publishResult.failed.length,
+    },
+  };
 }
 // ============================================================
-// 列出云端课程
+// 鍒楀嚭浜戠璇剧▼
 // ============================================================
 export async function listCloudCourses() {
   const { data, error } = await supabase
@@ -71,7 +114,7 @@ export async function listCloudCourses() {
   return data;
 }
 // ============================================================
-// 下载课程到本地 IndexedDB
+// 涓嬭浇璇剧▼鍒版湰鍦?IndexedDB
 // ============================================================
 export async function importCourseFromCloud(courseId: string) {
   const { data, error } = await supabase
@@ -90,7 +133,7 @@ export async function importCourseFromCloud(courseId: string) {
   return { id: data.id, title: data.title };
 }
 // ============================================================
-// 删除云端课程
+// 鍒犻櫎浜戠璇剧▼
 // ============================================================
 export async function deleteCloudCourse(courseId: string) {
   const { error } = await supabase
@@ -199,3 +242,6 @@ export async function recordLearningEvent(input: {
   });
   return readApiJson<{ success: true }>(response);
 }
+
+
+
