@@ -37,6 +37,10 @@ interface ServerConfig {
   image: Record<string, ServerProviderEntry>;
   video: Record<string, ServerProviderEntry>;
   webSearch: Record<string, ServerProviderEntry>;
+  tokenPlan: {
+    configured: boolean;
+    presetId?: string;
+  };
   /** TTS provider IDs the operator force-disabled (server precedence). */
   ttsDisabled: Set<string>;
 }
@@ -127,6 +131,45 @@ const WEB_SEARCH_ENV_MAP: Record<string, string> = {
   BRAVE: 'brave',
   BAIDU: 'baidu',
   WEB_SEARCH_MINIMAX: 'minimax',
+};
+
+const MINIMAX_TOKEN_PLAN_KEY_ENVS = ['TOKEN_PLAN_MINIMAX_API_KEY', 'TOKEN_PLAN_API_KEY'];
+
+const MINIMAX_TOKEN_PLAN = {
+  presetId: 'minimax',
+  llm: {
+    providerId: 'minimax',
+    baseUrl: 'https://api.minimaxi.com/anthropic/v1',
+    models: [
+      'MiniMax-M3',
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2',
+    ],
+  },
+  image: {
+    providerId: 'minimax-image',
+    baseUrl: 'https://api.minimaxi.com',
+    models: ['image-01', 'image-01-live'],
+  },
+  video: {
+    providerId: 'minimax-video',
+    baseUrl: 'https://api.minimaxi.com',
+    models: ['MiniMax-Hailuo-2.3', 'MiniMax-Hailuo-02', 'MiniMax-Hailuo-02-Fast'],
+  },
+  tts: {
+    providerId: 'minimax-tts',
+    baseUrl: 'https://api.minimaxi.com',
+    modelId: 'speech-2.8-hd',
+  },
+  webSearch: {
+    providerId: 'minimax',
+    baseUrl: 'https://api.minimaxi.com',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -294,6 +337,47 @@ function applyOpenAIImageFallback(
   return imageConfig;
 }
 
+function readFirstEnv(names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function applyMinimaxTokenPlan(config: ServerConfig): ServerConfig {
+  const apiKey = readFirstEnv(MINIMAX_TOKEN_PLAN_KEY_ENVS);
+  if (!apiKey) return config;
+
+  config.providers[MINIMAX_TOKEN_PLAN.llm.providerId] ??= {
+    apiKey,
+    baseUrl: MINIMAX_TOKEN_PLAN.llm.baseUrl,
+    models: MINIMAX_TOKEN_PLAN.llm.models,
+  };
+  config.tts[MINIMAX_TOKEN_PLAN.tts.providerId] ??= {
+    apiKey,
+    baseUrl: MINIMAX_TOKEN_PLAN.tts.baseUrl,
+    models: [MINIMAX_TOKEN_PLAN.tts.modelId],
+  };
+  config.image[MINIMAX_TOKEN_PLAN.image.providerId] ??= {
+    apiKey,
+    baseUrl: MINIMAX_TOKEN_PLAN.image.baseUrl,
+    models: MINIMAX_TOKEN_PLAN.image.models,
+  };
+  config.video[MINIMAX_TOKEN_PLAN.video.providerId] ??= {
+    apiKey,
+    baseUrl: MINIMAX_TOKEN_PLAN.video.baseUrl,
+    models: MINIMAX_TOKEN_PLAN.video.models,
+  };
+  config.webSearch[MINIMAX_TOKEN_PLAN.webSearch.providerId] ??= {
+    apiKey,
+    baseUrl: MINIMAX_TOKEN_PLAN.webSearch.baseUrl,
+  };
+  config.tokenPlan = { configured: true, presetId: MINIMAX_TOKEN_PLAN.presetId };
+
+  return config;
+}
+
 function buildConfig(yamlData: YamlData): ServerConfig {
   const image = applyOpenAIImageFallback(
     loadEnvSection(IMAGE_ENV_MAP, yamlData.image, {
@@ -302,7 +386,7 @@ function buildConfig(yamlData: YamlData): ServerConfig {
     yamlData.image,
   );
 
-  return {
+  return applyMinimaxTokenPlan({
     providers: loadEnvSection(LLM_ENV_MAP, yamlData.providers, {
       keylessProviders: new Set(['ollama', 'lemonade']),
     }),
@@ -319,8 +403,9 @@ function buildConfig(yamlData: YamlData): ServerConfig {
     image,
     video: loadEnvSection(VIDEO_ENV_MAP, yamlData.video),
     webSearch: loadEnvSection(WEB_SEARCH_ENV_MAP, yamlData['web-search']),
+    tokenPlan: { configured: false },
     ttsDisabled: collectDisabledTTS(yamlData.tts),
-  };
+  });
 }
 
 function logConfig(config: ServerConfig, label: string): void {
@@ -363,11 +448,15 @@ function getConfig(): ServerConfig {
 // server config (the bug class #533 patched route-by-route).
 // ---------------------------------------------------------------------------
 
-type ProviderSection = Exclude<keyof ServerConfig, 'ttsDisabled'>;
+type ProviderSection = Exclude<keyof ServerConfig, 'ttsDisabled' | 'tokenPlan'>;
 
 /** Whether the operator configured this provider in the given section. */
 export function isServerConfiguredProvider(section: ProviderSection, providerId: string): boolean {
   return !!getConfig()[section][providerId];
+}
+
+export function getServerTokenPlan(): { configured: boolean; presetId?: string } {
+  return getConfig().tokenPlan;
 }
 
 function resolveSectionApiKey(

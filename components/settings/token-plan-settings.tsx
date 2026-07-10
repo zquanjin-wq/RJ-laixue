@@ -92,8 +92,16 @@ export function TokenPlanSettings() {
     return llmId ? (providersConfig[llmId as keyof typeof providersConfig]?.apiKey ?? '') : '';
   };
 
-  // Whether a preset's LLM provider already has a saved key (= enabled).
-  const isPresetEnabled = (preset: TokenPlanPreset): boolean => !!presetSavedKey(preset);
+  const isPresetServerConfigured = (preset: TokenPlanPreset): boolean => {
+    const llmId = preset.modalities.llm?.providerId;
+    return llmId
+      ? !!providersConfig[llmId as keyof typeof providersConfig]?.isServerConfigured
+      : false;
+  };
+
+  // Whether a preset is available from either local credentials or platform-managed config.
+  const isPresetEnabled = (preset: TokenPlanPreset): boolean =>
+    !!presetSavedKey(preset) || isPresetServerConfigured(preset);
 
   // The modalities a preset declares, in display order — drives the tab bar.
   const presetModalities = (preset: TokenPlanPreset): TokenPlanModality[] =>
@@ -228,9 +236,11 @@ export function TokenPlanSettings() {
                   </div>
                   {(() => {
                     const enabled = isPresetEnabled(selected);
+                    const serverManaged = isPresetServerConfigured(selected);
                     const savedKey = presetSavedKey(selected);
                     const trimmedKey = apiKey.trim();
-                    const updatingKey = enabled && trimmedKey.length > 0 && trimmedKey !== savedKey;
+                    const updatingKey =
+                      enabled && !serverManaged && trimmedKey.length > 0 && trimmedKey !== savedKey;
                     return (
                       <div className="flex items-center gap-2">
                         {updatingKey && (
@@ -245,7 +255,7 @@ export function TokenPlanSettings() {
                           </span>
                           <Switch
                             checked={enabled}
-                            disabled={!enabled && !trimmedKey}
+                            disabled={serverManaged || (!enabled && !trimmedKey)}
                             onCheckedChange={(checked) => {
                               if (checked) {
                                 handleApply();

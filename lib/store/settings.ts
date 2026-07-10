@@ -1356,6 +1356,7 @@ if (!res.ok) {
               image: Record<string, { models?: string[] }>;
               video: Record<string, Record<string, never>>;
               webSearch: Record<string, Record<string, never>>;
+              tokenPlan?: { configured?: boolean; presetId?: string };
               generation?: { parallelSceneConcurrency?: number };
             };
 

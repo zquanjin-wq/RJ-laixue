@@ -107,12 +107,24 @@ export interface LLMProviderCfgLike {
  *
  * Always also requires ≥1 model.
  */
-export function isLLMProviderConfigured(config: LLMProviderCfgLike): boolean {
-  if (!config.models || config.models.length < 1) return false;
-  if (config.isServerConfigured) return true;
-  if (config.requiresApiKey === false) return !!config.baseUrl;
-  if (!config.apiKey) return false;
-  return !!(config.baseUrl || config.defaultBaseUrl);
+export function isLLMProviderConfigured(config: any): boolean {
+  if (!config) return false;
+
+  const hasModels = Array.isArray(config.models) && config.models.length > 0;
+
+  /**
+   * Server configured providers should be treated as usable on the client.
+   * API key/base URL are intentionally not exposed to the browser.
+   */
+  if (config.isServerConfigured) {
+    if (Array.isArray(config.serverModels) && config.serverModels.length > 0) {
+      return hasModels;
+    }
+
+    return hasModels;
+  }
+
+  return !!config.apiKey && hasModels;
 }
 
 /**

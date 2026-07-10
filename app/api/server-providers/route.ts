@@ -6,6 +6,7 @@ import {
   getServerImageProviders,
   getServerVideoProviders,
   getServerWebSearchProviders,
+  getServerTokenPlan,
   getParallelSceneConcurrency,
 } from '@/lib/server/provider-config';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
@@ -23,6 +24,7 @@ export async function GET() {
       image: getServerImageProviders(),
       video: getServerVideoProviders(),
       webSearch: getServerWebSearchProviders(),
+      tokenPlan: getServerTokenPlan(),
       generation: {
         parallelSceneConcurrency: getParallelSceneConcurrency(),
       },

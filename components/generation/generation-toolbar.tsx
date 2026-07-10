@@ -66,6 +66,7 @@ export function GenerationToolbar({
   const currentProviderId = useSettingsStore((s) => s.providerId);
   const currentModelId = useSettingsStore((s) => s.modelId);
   const providersConfig = useSettingsStore((s) => s.providersConfig);
+  const serverProvidersLoaded = useSettingsStore((s) => s.serverProvidersLoaded);
   const setModel = useSettingsStore((s) => s.setModel);
   const thinkingConfigs = useSettingsStore((s) => s.thinkingConfigs);
   const setThinkingConfig = useSettingsStore((s) => s.setThinkingConfig);
@@ -150,6 +151,18 @@ export function GenerationToolbar({
           }
           t={t}
         />
+      ) : !serverProvidersLoaded ? (
+        <button
+          type="button"
+          disabled
+          className={cn(
+            pillCls,
+            'cursor-default text-muted-foreground/70 bg-muted/40 border-border/50',
+          )}
+        >
+          <Bot className="size-3.5 animate-pulse" />
+          <span>加载模型配置中...</span>
+        </button>
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
