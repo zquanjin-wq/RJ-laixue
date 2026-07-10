@@ -60,6 +60,7 @@ export interface SettingsState {
   providerId: ProviderId;
   modelId: string;
   thinkingConfigs: Record<string, ThinkingConfig>;
+  serverProvidersLoaded: boolean;
 
   // Provider configurations (unified JSON storage)
   providersConfig: ProvidersConfig;
@@ -892,6 +893,7 @@ export const useSettingsStore = create<SettingsState>()(
         imageGenerationEnabled: false,
         videoGenerationEnabled: false,
         reviewOutlineEnabled: false,
+        serverProvidersLoaded: false,
 
         // TTS is OFF by default; auto-enabled on first server-sync when a TTS
         // provider is configured (mirrors image/video). Fresh installs with no
@@ -1338,7 +1340,10 @@ export const useSettingsStore = create<SettingsState>()(
         fetchServerProviders: async () => {
           try {
             const res = await fetch('/api/server-providers');
-            if (!res.ok) return;
+if (!res.ok) {
+  set({ serverProvidersLoaded: true });
+  return;
+}
             // Managed providers expose only their allowed model list (LLM/image)
             // and presence (the "managed" flag) — never a base URL.
             const data = (await res.json()) as {
@@ -1369,20 +1374,28 @@ export const useSettingsStore = create<SettingsState>()(
                 }
               }
               // Set flags for server-configured providers
-              for (const [pid, info] of Object.entries(data.providers)) {
+              for (const [pid, info] of Object.entries(data.providers || {})) {
                 const key = pid as ProviderId;
                 if (newProvidersConfig[key]) {
-                  const currentModels = newProvidersConfig[key].models;
+                  const currentModels = newProvidersConfig[key].models || [];
+
                   // When server specifies allowed models, filter the models list
                   // while preserving custom IDs from env/YAML in server order.
+                  // When server only returns `{}` for a provider, treat its built-in
+                  // models as server-available models.
                   const currentModelMap = new Map(currentModels.map((m) => [m.id, m]));
                   const filteredModels = info.models?.length
                     ? info.models.map((id) => currentModelMap.get(id) ?? { id, name: id })
                     : currentModels;
+
+                  const serverModels = info.models?.length
+                    ? info.models
+                    : filteredModels.map((m) => m.id);
+
                   newProvidersConfig[key] = {
                     ...newProvidersConfig[key],
                     isServerConfigured: true,
-                    serverModels: info.models,
+                    serverModels,
                     models: filteredModels,
                   };
                 }
@@ -1721,13 +1734,14 @@ export const useSettingsStore = create<SettingsState>()(
               // AND client-API-key providers — see #580.)
 
               return {
-                providersConfig: newProvidersConfig,
-                ttsProvidersConfig: newTTSConfig,
-                asrProvidersConfig: newASRConfig,
-                pdfProvidersConfig: newPDFConfig,
-                imageProvidersConfig: newImageConfig,
-                videoProvidersConfig: newVideoConfig,
-                webSearchProvidersConfig: newWebSearchConfig,
+  serverProvidersLoaded: true,
+  providersConfig: newProvidersConfig,
+  ttsProvidersConfig: newTTSConfig,
+  asrProvidersConfig: newASRConfig,
+  pdfProvidersConfig: newPDFConfig,
+  imageProvidersConfig: newImageConfig,
+  videoProvidersConfig: newVideoConfig,
+                  webSearchProvidersConfig: newWebSearchConfig,
                 // Already clamped server-side (getParallelSceneConcurrency); this
                 // re-clamp is intentional belt-and-suspenders against a malformed
                 // response. The consumer (use-scene-generator) clamps once more.
@@ -1794,10 +1808,11 @@ export const useSettingsStore = create<SettingsState>()(
                 ...(autoTtsEnabled !== undefined && { ttsEnabled: autoTtsEnabled }),
               };
             });
-          } catch (e) {
-            // Silently fail — server providers are optional
-            log.warn('Failed to fetch server providers:', e);
-          }
+         } catch (e) {
+  // Silently fail — server providers are optional
+  log.warn('Failed to fetch server providers:', e);
+  set({ serverProvidersLoaded: true });
+}
         },
       };
     },
