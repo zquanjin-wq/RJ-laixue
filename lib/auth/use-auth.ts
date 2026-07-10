@@ -20,7 +20,15 @@ interface AuthState {
   error: string | null;
 }
 
-async function ensureProfile(user: User): Promise<UserProfile> {
+/**
+ * Read the profile for the signed-in user.
+ *
+ * Profile creation is owned exclusively by the database trigger
+ * `trg_handle_new_user` (see supabase-auth-triggers.sql). This
+ * function never inserts into profiles — if the row is missing we
+ * return null and let `onAuthStateChange` retry shortly after.
+ */
+async function fetchProfile(user: User): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from('profiles')
     .select('id, role, display_name')
@@ -28,22 +36,7 @@ async function ensureProfile(user: User): Promise<UserProfile> {
     .maybeSingle();
 
   if (error) throw error;
-  if (data) return data as UserProfile;
-
-  const displayName =
-    user.user_metadata?.display_name ||
-    user.user_metadata?.name ||
-    user.email?.split('@')[0] ||
-    null;
-
-  const { data: inserted, error: insertError } = await supabase
-    .from('profiles')
-    .insert({ id: user.id, role: 'learner', display_name: displayName })
-    .select('id, role, display_name')
-    .single();
-
-  if (insertError) throw insertError;
-  return inserted as UserProfile;
+  return (data as UserProfile | null) ?? null;
 }
 
 export function useAuth() {
@@ -63,7 +56,7 @@ export function useAuth() {
 
       const session = data.session;
       const user = session?.user ?? null;
-      const profile = user ? await ensureProfile(user) : null;
+      const profile = user ? await fetchProfile(user) : null;
 
       setState({ user, session, profile, loading: false, error: null });
     } catch (error) {
