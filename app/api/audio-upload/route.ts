@@ -1,27 +1,48 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
-export const runtime = 'nodejs'
+export const runtime = 'nodejs';
 
-const BUCKET_NAME = 'course-audio'
+const BUCKET_NAME = 'course-audio';
 
 function getFileExtension(fileName: string, fallback = 'mp3') {
-  const parts = fileName.split('.')
-  const ext = parts.length > 1 ? parts.pop() : ''
-  return ext || fallback
+  const parts = fileName.split('.');
+  const ext = parts.length > 1 ? parts.pop() : '';
+  return ext || fallback;
 }
 
 function sanitizeFileName(fileName: string) {
   return fileName
     .replace(/\s+/g, '-')
     .replace(/[^a-zA-Z0-9._-]/g, '')
-    .toLowerCase()
+    .toLowerCase();
+}
+
+function sanitizePathPart(value: string) {
+  return value
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
+    .toLowerCase();
+}
+
+function getAudioContentType(ext: string, fallback?: string) {
+  if (fallback?.startsWith('audio/')) return fallback;
+
+  const normalized = ext.toLowerCase();
+
+  if (normalized === 'mp3' || normalized === 'mpeg') return 'audio/mpeg';
+  if (normalized === 'wav') return 'audio/wav';
+  if (normalized === 'ogg') return 'audio/ogg';
+  if (normalized === 'webm') return 'audio/webm';
+  if (normalized === 'm4a') return 'audio/mp4';
+
+  return `audio/${normalized || 'mpeg'}`;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !serviceRoleKey) {
       return NextResponse.json(
@@ -33,24 +54,31 @@ export async function POST(request: NextRequest) {
           },
         },
         { status: 500 },
-      )
+      );
     }
 
-    const formData = await request.formData()
-    const file = formData.get('file')
+    const formData = await request.formData();
+    const file = formData.get('file');
+    const stageIdValue = formData.get('stageId');
+    const audioIdValue = formData.get('audioId');
+
+    const stageId =
+      typeof stageIdValue === 'string' ? sanitizePathPart(stageIdValue) : '';
+    const audioId =
+      typeof audioIdValue === 'string' ? sanitizePathPart(audioIdValue) : '';
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
         { error: 'Missing audio file. Please upload with form field name "file".' },
         { status: 400 },
-      )
+      );
     }
 
     if (!file.type.startsWith('audio/')) {
       return NextResponse.json(
         { error: `Invalid file type: ${file.type || 'unknown'}` },
         { status: 400 },
-      )
+      );
     }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -58,21 +86,25 @@ export async function POST(request: NextRequest) {
         persistSession: false,
         autoRefreshToken: false,
       },
-    })
+    });
 
-    const ext = getFileExtension(file.name)
-    const safeName = sanitizeFileName(file.name) || `audio.${ext}`
-    const filePath = `uploads/${Date.now()}-${crypto.randomUUID()}-${safeName}`
+    const ext = getFileExtension(file.name);
+    const safeName = sanitizeFileName(file.name) || `audio.${ext}`;
 
-    const arrayBuffer = await file.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
+    const filePath =
+      stageId && audioId
+        ? `classrooms/${stageId}/audio/${audioId}.${ext}`
+        : `uploads/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
     const { error: uploadError } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(filePath, buffer, {
-        contentType: file.type || `audio/${ext}`,
-        upsert: false,
-      })
+        contentType: getAudioContentType(ext, file.type),
+        upsert: Boolean(stageId && audioId),
+      });
 
     if (uploadError) {
       return NextResponse.json(
@@ -81,10 +113,10 @@ export async function POST(request: NextRequest) {
           details: uploadError.message,
         },
         { status: 500 },
-      )
+      );
     }
 
-    const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath)
+    const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath);
 
     return NextResponse.json({
       url: data.publicUrl,
@@ -93,7 +125,9 @@ export async function POST(request: NextRequest) {
       fileName: file.name,
       contentType: file.type,
       size: file.size,
-    })
+      stageId: stageId || undefined,
+      audioId: audioId || undefined,
+    });
   } catch (error) {
     return NextResponse.json(
       {
@@ -101,6 +135,6 @@ export async function POST(request: NextRequest) {
         details: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
-    )
+    );
   }
 }
