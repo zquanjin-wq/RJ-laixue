@@ -27,6 +27,8 @@ export default function ClassroomDetailPage() {
   const studentId = searchParams.get('student') || undefined;
   const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
   const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
+const [isSavingToCloud, setIsSavingToCloud] = useState(false);
+const [saveCloudMessage, setSaveCloudMessage] = useState('');
 
   const { loadFromStorage } = useStageStore();
   const generationComplete = useStageStore((s) => s.generationComplete);
@@ -345,23 +347,43 @@ export default function ClassroomDetailPage() {
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
-              {/* 保存到云端 */}
-              {!readOnlyShare && generationComplete && (
-                <button
-                  onClick={async () => {
-                    try {
-                      await saveStageToCloud(classroomId);
-                      alert('✅ 已保存到云端');
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    } catch (e: any) {
-                      alert('❌ 保存失败：' + (e.message || '未知错误'));
-                    }
-                  }}
-                  className="fixed bottom-6 right-6 z-50 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg hover:opacity-90 transition-opacity"
-                >
-                  ☁️ 保存到云端
-                </button>
-              )}
+{/* 保存到云端 */}
+{!readOnlyShare && generationComplete && (
+  <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
+    {saveCloudMessage && (
+      <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
+        {saveCloudMessage}
+      </div>
+    )}
+
+    <button
+      onClick={async () => {
+        if (isSavingToCloud) return;
+
+        setIsSavingToCloud(true);
+        setSaveCloudMessage('正在保存到云端，请稍候...');
+
+        try {
+          await saveStageToCloud(classroomId);
+          setSaveCloudMessage('✅ 保存成功');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (e: any) {
+          setSaveCloudMessage('❌ 保存失败：' + (e.message || '未知错误'));
+        } finally {
+          setIsSavingToCloud(false);
+        }
+      }}
+      disabled={isSavingToCloud}
+      className={`rounded-full px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition-opacity ${
+        isSavingToCloud
+          ? 'cursor-not-allowed bg-primary/70 opacity-70'
+          : 'bg-primary hover:opacity-90'
+      }`}
+    >
+      {isSavingToCloud ? '⏳ 保存中...' : '☁️ 保存到云端'}
+    </button>
+  </div>
+)}
             </>
           )}
         </div>

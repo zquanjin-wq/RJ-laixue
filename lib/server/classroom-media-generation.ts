@@ -7,6 +7,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { createClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { CLASSROOMS_DIR } from '@/lib/server/classroom-storage';
 import { generateImage } from '@/lib/media/image-providers';
@@ -37,6 +38,7 @@ import { splitLongSpeechActions } from '@/lib/audio/tts-utils';
 import { VOXCPM_AUTO_VOICE_ID, VOXCPM_TTS_PROVIDER_ID } from '@/lib/audio/voxcpm';
 
 const log = createLogger('ClassroomMedia');
+const processingTtsClassrooms = new Set<string>();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,6 +64,70 @@ async function downloadToBuffer(url: string): Promise<Buffer> {
 function mediaServingUrl(baseUrl: string, classroomId: string, subPath: string): string {
   return `${baseUrl}/api/classroom-media/${classroomId}/${subPath}`;
 }
+
+const AUDIO_BUCKET_NAME = 'course-audio';
+
+function getAudioContentType(format: string): string {
+  const normalized = format.toLowerCase();
+
+  if (normalized === 'mp3' || normalized === 'mpeg') return 'audio/mpeg';
+  if (normalized === 'wav') return 'audio/wav';
+  if (normalized === 'ogg') return 'audio/ogg';
+  if (normalized === 'aac') return 'audio/aac';
+  if (normalized === 'm4a') return 'audio/mp4';
+
+  return `audio/${normalized || 'mpeg'}`;
+}
+
+async function uploadAudioToSupabase(
+  classroomId: string,
+  filename: string,
+  audio: Buffer | Uint8Array | ArrayBuffer,
+  format: string,
+): Promise<string> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      `Missing Supabase env vars for audio upload. hasSupabaseUrl=${Boolean(
+        supabaseUrl,
+      )}, hasServiceRoleKey=${Boolean(serviceRoleKey)}`,
+    );
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+
+  let audioBuffer: Buffer;
+
+if (Buffer.isBuffer(audio)) {
+  audioBuffer = audio;
+} else if (audio instanceof ArrayBuffer) {
+  audioBuffer = Buffer.from(new Uint8Array(audio));
+} else {
+  audioBuffer = Buffer.from(audio);
+}
+  const filePath = `classrooms/${classroomId}/audio/${filename}`;
+
+  const { error } = await supabase.storage.from(AUDIO_BUCKET_NAME).upload(filePath, audioBuffer, {
+    contentType: getAudioContentType(format),
+    upsert: true,
+  });
+
+  if (error) {
+    throw new Error(`Supabase audio upload failed: ${error.message}`);
+  }
+
+  const { data } = supabase.storage.from(AUDIO_BUCKET_NAME).getPublicUrl(filePath);
+
+  return data.publicUrl;
+}
+
 
 // ---------------------------------------------------------------------------
 // Image / Video generation
@@ -216,10 +282,18 @@ export function replaceMediaPlaceholders(scenes: Scene[], mediaMap: Record<strin
 export async function generateTTSForClassroom(
   scenes: Scene[],
   classroomId: string,
-  baseUrl: string,
+  _baseUrl: string,
 ): Promise<void> {
-  const audioDir = path.join(CLASSROOMS_DIR, classroomId, 'audio');
-  await ensureDir(audioDir);
+  if (processingTtsClassrooms.has(classroomId)) {
+    log.warn(`Skip TTS generation: classroom ${classroomId} is already processing`);
+    return;
+  }
+
+  processingTtsClassrooms.add(classroomId);
+
+  try {
+    const audioDir = path.join(CLASSROOMS_DIR, classroomId, 'audio');
+    await ensureDir(audioDir);
 
   // Resolve TTS provider (exclude browser-native-tts and operator force-disabled
   // providers — server precedence, #665).
@@ -246,6 +320,8 @@ export async function generateTTSForClassroom(
     return;
   }
 
+const processedAudioIds = new Set<string>();
+
   for (const scene of scenes) {
     if (!scene.actions) continue;
 
@@ -256,13 +332,27 @@ export async function generateTTSForClassroom(
     // Use scene order to make audio IDs unique across scenes
     const sceneOrder = scene.order;
 
-    for (const action of scene.actions) {
-      if (action.type !== 'speech' || !(action as SpeechAction).text) continue;
-      const speechAction = action as SpeechAction;
-      // Include scene order in audioId to prevent collision across scenes
-      const audioId = `tts_s${sceneOrder}_${action.id}`;
+for (const action of scene.actions) {
+  if (action.type !== 'speech' || !(action as SpeechAction).text) continue;
+  const speechAction = action as SpeechAction;
 
-      try {
+  // 如果已经有云端音频，则跳过，避免重复调用 TTS 和重复消耗额度
+  if (speechAction.audioUrl) {
+    log.info(`Skip TTS for action ${action.id}: audioUrl already exists`);
+    continue;
+  }
+
+  // Include scene order in audioId to prevent collision across scenes
+  const audioId = `tts_s${sceneOrder}_${action.id}`;
+
+if (processedAudioIds.has(audioId)) {
+  log.warn(`Skip duplicated TTS action in current run: ${audioId}`);
+  continue;
+}
+
+processedAudioIds.add(audioId);
+
+  try {
         const result = await generateTTS(
           {
             providerId,
@@ -275,15 +365,27 @@ export async function generateTTSForClassroom(
           speechAction.text,
         );
 
-        const filename = `${audioId}.${result.format || format}`;
-        await fs.writeFile(path.join(audioDir, filename), result.audio);
+const audioFormat = result.format || format;
+const filename = `${audioId}.${audioFormat}`;
+const publicAudioUrl = await uploadAudioToSupabase(
+  classroomId,
+  filename,
+  result.audio,
+  audioFormat,
+);
 
-        speechAction.audioId = audioId;
-        speechAction.audioUrl = mediaServingUrl(baseUrl, classroomId, `audio/${filename}`);
-        log.info(`Generated TTS: ${filename} (${result.audio.length} bytes)`);
-      } catch (err) {
+speechAction.audioId = audioId;
+speechAction.audioUrl = publicAudioUrl;
+log.info(`Generated TTS and uploaded to Supabase: ${filename} (${result.audio.length} bytes)`);
+// MiniMax 有 RPM 限制，生成后稍等，避免短时间内打爆接口
+await new Promise((resolve) => setTimeout(resolve, 3000));
+
+     } catch (err) {
         log.warn(`TTS generation failed for action ${action.id}:`, err);
       }
     }
+  }
+  } finally {
+    processingTtsClassrooms.delete(classroomId);
   }
 }
