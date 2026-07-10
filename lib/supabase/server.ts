@@ -21,6 +21,7 @@
  */
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -83,11 +84,10 @@ export function getServiceSupabase(): SupabaseClient {
     );
   }
 
-  // Lazy require keeps the import graph clean for edge bundles.
-  // Note: dynamic require is allowed in CommonJS, but we are inside
-  // an ESM project — use top-level import below.
-  const { createClient } = require('@supabase/supabase-js');
-  return createClient(url, serviceKey, {
+  // Top-level import of @supabase/supabase-js; the helper itself is
+  // tree-shaken if the client is never invoked from a browser bundle,
+  // but the env check above guarantees the call path is server-only.
+  return createSupabaseClient(url, serviceKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
