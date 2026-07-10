@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import CloudCourses from '@/components/cloud-courses';
+import { AdminGate } from '@/components/auth-gate';
 import {
   ArrowUp,
   Check,
@@ -1438,5 +1439,9 @@ function ClassroomCard({
 }
 
 export default function Page() {
-  return <HomePage />;
+  return (
+    <AdminGate>
+      <HomePage />
+    </AdminGate>
+  );
 }
