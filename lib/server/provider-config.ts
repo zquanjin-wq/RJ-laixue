@@ -349,27 +349,32 @@ function applyMinimaxTokenPlan(config: ServerConfig): ServerConfig {
   const apiKey = readFirstEnv(MINIMAX_TOKEN_PLAN_KEY_ENVS);
   if (!apiKey) return config;
 
-  config.providers[MINIMAX_TOKEN_PLAN.llm.providerId] ??= {
+  config.providers[MINIMAX_TOKEN_PLAN.llm.providerId] = {
+    ...config.providers[MINIMAX_TOKEN_PLAN.llm.providerId],
     apiKey,
     baseUrl: MINIMAX_TOKEN_PLAN.llm.baseUrl,
     models: MINIMAX_TOKEN_PLAN.llm.models,
   };
-  config.tts[MINIMAX_TOKEN_PLAN.tts.providerId] ??= {
+  config.tts[MINIMAX_TOKEN_PLAN.tts.providerId] = {
+    ...config.tts[MINIMAX_TOKEN_PLAN.tts.providerId],
     apiKey,
     baseUrl: MINIMAX_TOKEN_PLAN.tts.baseUrl,
     models: [MINIMAX_TOKEN_PLAN.tts.modelId],
   };
-  config.image[MINIMAX_TOKEN_PLAN.image.providerId] ??= {
+  config.image[MINIMAX_TOKEN_PLAN.image.providerId] = {
+    ...config.image[MINIMAX_TOKEN_PLAN.image.providerId],
     apiKey,
     baseUrl: MINIMAX_TOKEN_PLAN.image.baseUrl,
     models: MINIMAX_TOKEN_PLAN.image.models,
   };
-  config.video[MINIMAX_TOKEN_PLAN.video.providerId] ??= {
+  config.video[MINIMAX_TOKEN_PLAN.video.providerId] = {
+    ...config.video[MINIMAX_TOKEN_PLAN.video.providerId],
     apiKey,
     baseUrl: MINIMAX_TOKEN_PLAN.video.baseUrl,
     models: MINIMAX_TOKEN_PLAN.video.models,
   };
-  config.webSearch[MINIMAX_TOKEN_PLAN.webSearch.providerId] ??= {
+  config.webSearch[MINIMAX_TOKEN_PLAN.webSearch.providerId] = {
+    ...config.webSearch[MINIMAX_TOKEN_PLAN.webSearch.providerId],
     apiKey,
     baseUrl: MINIMAX_TOKEN_PLAN.webSearch.baseUrl,
   };
