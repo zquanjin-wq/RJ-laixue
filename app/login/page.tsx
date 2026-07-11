@@ -38,8 +38,13 @@ function LoginContent() {
         password,
       });
       if (signInError) throw signInError;
-      router.replace(next);
-      router.refresh();
+      // Force a full page navigation rather than router.replace(next)
+      // + router.refresh(). The client-side transition was racing the
+      // Supabase auth cookie write: the RSC at /admin ran before the
+      // browser cookie store was fully updated and bounced us back to
+      // /login. window.location.assign triggers a brand-new request
+      // that the server reads cookies from cleanly.
+      window.location.assign(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败，请重试');
     } finally {
