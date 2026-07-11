@@ -99,19 +99,14 @@ export default async function AdminStudentsPage() {
                 className="rounded-lg border bg-background p-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between"
               >
                 <div className="space-y-1 min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{s.name}</span>
-                    {s.access_code && (
-                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-muted">
-                        {s.access_code}
-                      </span>
-                    )}
-                    {s.disabled_at ? (
-                      <Badge variant="destructive">已禁用</Badge>
-                    ) : (
-                      <Badge variant="default">已启用</Badge>
-                    )}
-                  </div>
+<div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium">{s.name}</span>
+                  {s.disabled_at ? (
+                    <Badge variant="destructive">已禁用</Badge>
+                  ) : (
+                    <Badge variant="default">已启用</Badge>
+                  )}
+                </div>
                   <div className="text-xs text-muted-foreground">
                     邮箱：{s.email || '—'}
                   </div>

@@ -7,9 +7,12 @@
  *
  *   1. auth.users row (with email_confirm=true so the learner can
  *      sign in immediately, plus a fresh random password).
- *   2. public.students row bound to that auth.users via user_id,
- *      with a freshly generated 6-char access_code and the operator
- *      email attached.
+ *   2. public.students row bound to that auth.users via user_id.
+ *      Note: the students.access_code column still exists in the
+ *      schema (preserved for legacy data + the column's DEFAULT
+ *      keeps generating a random code) but it is no longer part of
+ *      the account-creation flow — sharing is by direct email +
+ *      password handoff.
  *   3. public.profiles row via the handle_new_user DB trigger
  *      (role='learner').
  *
@@ -19,7 +22,7 @@
  *   - name is required.
  *
  * Body: { name: string, email: string }
- * 200:  { success: true, student_id, email, initial_password, access_code }
+ * 200:  { success: true, student_id, email, initial_password }
  * 400:  validation errors
  * 401:  unauthenticated
  * 403:  not admin
@@ -27,6 +30,7 @@
  * 500:  auth/db error
  */
 import { NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 
 const PASSWORD_ALPHABET =
@@ -161,51 +165,43 @@ export async function POST(request: Request) {
   }
   const newUserId = created.user.id;
 
-  // 3) Insert the students row. Retry once on access_code collision
-  //    since we generate it client-side.
-  let accessCode = generateAccessCode();
-  let insertedStudentId: string | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: inserted, error: insertError } = await serviceSupabase
-      .from('students')
-      .insert({
-        name,
-        email,
-        user_id: newUserId,
-        access_code: accessCode,
-      })
-      .select('id')
-      .single();
-    if (!insertError && inserted) {
-      insertedStudentId = inserted.id;
-      break;
-    }
-    if (insertError?.code === '23505') {
-      // unique violation on access_code — regenerate
-      accessCode = generateAccessCode();
-      continue;
-    }
+  // 3) Insert the students row. The access_code column still exists
+  //    in the schema but is no longer part of the account-creation
+  //    contract — the column DEFAULT generates a random 6-char code
+  //    automatically, which keeps the NOT NULL + UNIQUE constraints
+  //    happy without us having to think about it.
+  const { data: inserted, error: insertError } = await serviceSupabase
+    .from('students')
+    .insert({
+      name,
+      email,
+      user_id: newUserId,
+    })
+    .select('id')
+    .single();
+
+  if (insertError || !inserted) {
     // Roll back the auth user so we don't leave an orphan auth row.
     await serviceSupabase.auth.admin.deleteUser(newUserId);
     return NextResponse.json(
-      { success: false, errorCode: 'DB_ERROR', error: insertError?.message ?? '插入学员档案失败' },
+      {
+        success: false,
+        errorCode: 'DB_ERROR',
+        error: insertError?.message ?? '插入学员档案失败',
+      },
       { status: 500 },
     );
   }
 
-  if (!insertedStudentId) {
-    await serviceSupabase.auth.admin.deleteUser(newUserId);
-    return NextResponse.json(
-      { success: false, errorCode: 'INTERNAL_ERROR', error: '生成访问码多次冲突，请重试。' },
-      { status: 500 },
-    );
-  }
+  // Force the /admin/students RSC to re-render so the admin sees the
+  // new row without having to hard-refresh. Without this the page
+  // sometimes shows a stale roster after a router.refresh() cycle.
+  revalidatePath('/admin/students');
 
   return NextResponse.json({
     success: true,
-    student_id: insertedStudentId,
+    student_id: inserted.id,
     email,
     initial_password: initialPassword,
-    access_code: accessCode,
   });
 }

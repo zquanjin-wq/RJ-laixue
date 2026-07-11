@@ -21,7 +21,6 @@ import { Label } from '@/components/ui/label';
 interface SuccessPayload {
   email: string;
   initial_password: string;
-  access_code: string;
 }
 
 const ERROR_COPY: Record<string, string> = {
@@ -96,10 +95,6 @@ export function CreateStudentForm() {
               {success.initial_password}
             </dd>
           </div>
-          <div>
-            <dt className="inline font-medium">访问码：</dt>
-            <dd className="inline font-mono select-all">{success.access_code}</dd>
-          </div>
         </dl>
         <Button
           variant="default"
@@ -113,7 +108,7 @@ export function CreateStudentForm() {
             router.refresh();
           }}
         >
-          我已抄下，关闭
+          确认
         </Button>
       </div>
     );
