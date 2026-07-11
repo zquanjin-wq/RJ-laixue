@@ -72,8 +72,12 @@ next-env.d.ts
 /data
 /logs
 
-# docs
-/docs
+# RJ-laixue docs (PRD.md / DEV.md) ARE tracked; OPENMAIC upstream's
+# private developer docs live under subdirectories we don't add.
+# The blanket /docs ignore was too coarse — it suppressed our hand-off
+# documents. If you need to add private notes later, put them under
+# docs/internal/ and add that path here instead of reverting this.
+/docs/internal/
 # Eval results
 eval/whiteboard-layout/results/
 eval/outline-language/results/
