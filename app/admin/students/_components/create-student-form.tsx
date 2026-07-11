@@ -74,7 +74,6 @@ export function CreateStudentForm() {
       setSuccess({
         email: data.email,
         initial_password: data.initial_password,
-        access_code: data.access_code,
       });
     } catch {
       setError('网络异常，请重试。');
