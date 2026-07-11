@@ -88,9 +88,11 @@ export default async function StudentCoursesPage({
 
   const { data: student } = (await serviceSupabase
     .from('students')
-    .select('id, name, access_code')
+    .select('id, name, access_code, disabled_at')
     .eq('user_id', user.id)
-    .maybeSingle()) as { data: StudentRow | null };
+    .maybeSingle()) as {
+    data: (StudentRow & { disabled_at: string | null }) | null;
+  };
 
   if (!student) {
     return (
@@ -108,6 +110,23 @@ export default async function StudentCoursesPage({
               <Link href="/invite">前往绑定</Link>
             </Button>
           </CardContent>
+        </Card>
+      </main>
+    );
+  }
+
+  if (student.disabled_at) {
+    return (
+      <main className="min-h-screen bg-background flex items-center justify-center px-4">
+        <Card className="w-full max-w-md rounded-lg">
+          <CardHeader>
+            <CardTitle>账号已停用</CardTitle>
+            <CardDescription>
+              你的账号被管理员停用了（停用时间：
+              {new Date(student.disabled_at).toLocaleString('zh-CN')}）。
+              如需恢复请联系培训管理员。
+            </CardDescription>
+          </CardHeader>
         </Card>
       </main>
     );

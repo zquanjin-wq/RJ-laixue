@@ -1,43 +1,49 @@
 'use client';
 
-// app/admin/students/_components/bound-row.tsx
+// app/admin/students/_components/student-actions.tsx
 //
-// Inline control panel rendered next to each student that already
-// has a bound auth account. Exposes:
-//   - 重置密码 → POST /api/admin/students/reset-password, then
-//     surfaces the new initial password so the admin can read it back.
-//   - 解绑账号 → POST /api/admin/students/unbind, which deletes the
-//     auth.users row + clears students.user_id. The roster reloads
-//     so the row flips back to the unbound state.
+// Compact action panel for each roster row. Three actions:
+//
+//   - 重置密码 → POST /api/admin/students/reset-password, then shows
+//     the new password in a once-visible block until the admin closes.
+//   - 禁用 / 启用 → POST /disable or /enable, flipping the
+//     students.disabled_at flag (soft delete).
+//
+// "禁用" sets disabled_at = now() but keeps the row, the auth user,
+// the assignments, and the progress events intact so the operator
+// can re-enable later. Disabled learners can't sign in to
+// /student/courses.
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { DeleteArchiveButton } from './delete-archive-button';
 
 interface Props {
   studentId: string;
   studentName: string;
+  disabled: boolean;
 }
 
 const ERROR_COPY: Record<string, string> = {
   UNAUTHENTICATED: '管理员未登录，请刷新页面重新登录。',
   FORBIDDEN: '当前账号不是管理员。',
-  NOT_FOUND: '该学员尚未绑定账号。',
-  REFUSED: '不能解绑管理员账号。',
+  NOT_FOUND: '学员档案不存在。',
   AUTH_UPDATE_FAILED: '重置密码失败，请重试。',
-  INVALID_REQUEST: '请求异常，请刷新页面后再试。',
   DB_ERROR: '数据库异常，请重试。',
 };
 
-export function BoundRow({ studentId, studentName }: Props) {
+export function StudentActions({
+  studentId,
+  studentName,
+  disabled,
+}: Props) {
   const router = useRouter();
   const [resetting, setResetting] = useState(false);
-  const [unbinding, setUnbinding] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [error, setError] = useState('');
   const [newPassword, setNewPassword] = useState<string | null>(null);
-  const [confirmUnbind, setConfirmUnbind] = useState(false);
+  const [confirmToggle, setConfirmToggle] = useState(false);
   const [confirmText, setConfirmText] = useState('');
 
   async function resetPassword() {
@@ -61,8 +67,6 @@ export function BoundRow({ studentId, studentName }: Props) {
         return;
       }
       setNewPassword(data.initial_password);
-      // Defer router.refresh() until the admin confirms they've copied
-      // the new password — see the "我已抄下，关闭" button below.
     } catch {
       setError('网络异常，请重试。');
     } finally {
@@ -70,33 +74,35 @@ export function BoundRow({ studentId, studentName }: Props) {
     }
   }
 
-  async function unbind() {
-    setUnbinding(true);
+  async function toggleDisabled() {
+    setToggling(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/students/unbind', {
+      const path = disabled
+        ? `/api/admin/students/${studentId}/enable`
+        : `/api/admin/students/${studentId}/disable`;
+      const res = await fetch(path, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ student_id: studentId }),
       });
       const data = (await res.json()) as
-        | { success: true; warning?: string }
+        | { success: true }
         | { success: false; errorCode: string; error: string };
-      if (!res.ok || !('success' in data) || !data.success) {
+      if (!res.ok || !data.success) {
         setError(
           ERROR_COPY[(data as any).errorCode] ??
             (data as any).error ??
-            '解绑失败，请重试。',
+            '操作失败，请重试。',
         );
         return;
       }
-      setConfirmUnbind(false);
+      setConfirmToggle(false);
       setConfirmText('');
       router.refresh();
     } catch {
       setError('网络异常，请重试。');
     } finally {
-      setUnbinding(false);
+      setToggling(false);
     }
   }
 
@@ -105,7 +111,7 @@ export function BoundRow({ studentId, studentName }: Props) {
       <div className="rounded-md border bg-muted/40 p-3 space-y-2">
         <p className="text-sm font-medium text-foreground">密码已重置</p>
         <p className="text-xs text-muted-foreground">
-          请抄下新密码口头告知学员，下次刷新页面此密码将不可见。
+          请抄下新密码口头告知学员。
         </p>
         <dl className="text-sm space-y-1">
           <div>
@@ -129,14 +135,16 @@ export function BoundRow({ studentId, studentName }: Props) {
     );
   }
 
-  if (confirmUnbind) {
+  if (confirmToggle) {
     return (
       <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
         <p className="text-sm font-medium text-foreground">
-          确认解绑 {studentName} 的账号？
+          确认{disabled ? '启用' : '禁用'} {studentName}？
         </p>
         <p className="text-xs text-muted-foreground">
-          该学员的登录账号将被删除，且不可恢复。学员需要由你重新创建账号。
+          {disabled
+            ? '该学员将可以重新登录。'
+            : '该学员将无法登录 /student/courses，但档案、账号、课程分配与历史进度记录保留。'}
         </p>
         <p className="text-xs text-muted-foreground">
           为防误操作，输入学员姓名 <span className="font-mono">{studentName}</span> 确认：
@@ -150,18 +158,18 @@ export function BoundRow({ studentId, studentName }: Props) {
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="flex gap-2">
           <Button
-            variant="destructive"
+            variant={disabled ? 'default' : 'destructive'}
             size="sm"
-            disabled={unbinding || confirmText.trim() !== studentName}
-            onClick={unbind}
+            disabled={toggling || confirmText.trim() !== studentName}
+            onClick={toggleDisabled}
           >
-            {unbinding ? '解绑中...' : '确认解绑'}
+            {toggling ? '处理中...' : disabled ? '确认启用' : '确认禁用'}
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
-              setConfirmUnbind(false);
+              setConfirmToggle(false);
               setConfirmText('');
               setError('');
             }}
@@ -186,15 +194,14 @@ export function BoundRow({ studentId, studentName }: Props) {
           {resetting ? '重置中...' : '重置密码'}
         </Button>
         <Button
-          variant="ghost"
+          variant={disabled ? 'default' : 'ghost'}
           size="sm"
-          className="text-destructive hover:text-destructive"
-          onClick={() => setConfirmUnbind(true)}
+          className={disabled ? '' : 'text-destructive hover:text-destructive'}
+          onClick={() => setConfirmToggle(true)}
         >
-          解绑账号
+          {disabled ? '启用账号' : '禁用账号'}
         </Button>
       </div>
-      <DeleteArchiveButton studentId={studentId} studentName={studentName} />
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
