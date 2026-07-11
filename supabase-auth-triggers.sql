@@ -46,13 +46,16 @@ create trigger trg_handle_new_user
 
 -- ------------------------------------------------------------
 -- 2) upgrade_seed_admin: promote the operator's seed email to admin
+--    Email is hardcoded in the function body so it survives Supabase's
+--    PgBouncer connection pooling (set_config doesn't carry across
+--    pooled connections, so the trigger previously saw an empty target).
 --    Change the constant below to your admin email.
 -- ------------------------------------------------------------
 do $$
-declare
-  v_seed_email text := 'jinzengquan@ruijie.com.cn';
 begin
-  perform set_config('app.seed_admin_email', lower(v_seed_email), false);
+  -- Reserved: future per-deployment override goes here.
+  -- For now the email is hardcoded inside the function body.
+  perform 1;
 end
 $$;
 
@@ -63,10 +66,9 @@ security definer
 set search_path = public
 as $$
 declare
-  v_target text;
+  v_target_email text := 'jinzengquan@ruijie.com.cn';
 begin
-  v_target := nullif(lower(current_setting('app.seed_admin_email', true)), '');
-  if v_target is not null and lower(coalesce(new.email, '')) = v_target then
+  if lower(coalesce(new.email, '')) = lower(v_target_email) then
     update public.profiles
       set role = 'admin'
       where id = new.id;
