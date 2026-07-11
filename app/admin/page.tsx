@@ -65,6 +65,20 @@ export default async function AdminHubPage() {
             </CardContent>
           </Card>
 
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>课件管理</CardTitle>
+              <CardDescription>
+                查看已保存到云端的课件列表，以只读模式预览学员看到的内容。
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/admin/courses">进入课件管理</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="rounded-lg opacity-60">
             <CardHeader>
               <CardTitle>课程分配</CardTitle>
