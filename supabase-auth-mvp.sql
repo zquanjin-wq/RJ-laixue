@@ -3,12 +3,21 @@
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  role text not null default 'learner' check (role in ('admin', 'teacher', 'learner')),
+  role text not null default 'learner' check (role in ('admin', 'learner')),
   display_name text,
-  disabled_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Idempotent migrations: re-applied every time the script runs so
+-- existing deployments pick up the wider role enum + disabled_at.
+alter table public.profiles
+  drop constraint if exists profiles_role_check;
+alter table public.profiles
+  add column if not exists disabled_at timestamptz;
+alter table public.profiles
+  add constraint profiles_role_check
+  check (role in ('admin', 'teacher', 'learner'));
 
 alter table public.students
   add column if not exists user_id uuid references auth.users(id) on delete set null;
