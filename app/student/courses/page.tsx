@@ -185,7 +185,7 @@ export default async function StudentCoursesPage({
                   )}
                   <div className="ml-auto">
                     <Button asChild size="sm">
-                      <a href={`/classroom/${c.id}?share=1`}>进入教室</a>
+                      <a href={`/classroom/${c.id}`}>进入教室</a>
                     </Button>
                   </div>
                 </CardContent>

@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { listCloudCourses, deleteCloudCourse } from '@/lib/utils/cloud-sync';
-import { LearningManager } from '@/components/learning-manager';
 interface CloudCourse {
   id: string;
   title: string;
@@ -15,8 +14,6 @@ function getErrorMessage(error: unknown, fallback: string) {
 export default function CloudCourses() {
   const [courses, setCourses] = useState<CloudCourse[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sharing, setSharing] = useState<string | null>(null);
-  const [managingCourseId, setManagingCourseId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const fetchCourses = useCallback(async () => {
     try {
@@ -32,22 +29,6 @@ export default function CloudCourses() {
   useEffect(() => {
     fetchCourses();
   }, [fetchCourses]);
-  const handleShare = async (courseId: string) => {
-    setSharing(courseId);
-    try {
-      const url = `${window.location.origin}/classroom/${courseId}?share=1`;
-      if (!navigator.clipboard?.writeText) {
-        window.prompt('复制课程链接', url);
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      alert('课程链接已复制，可以发给别人访问');
-    } catch (e: unknown) {
-      alert('分享失败：' + getErrorMessage(e, '未知错误'));
-    } finally {
-      setSharing(null);
-    }
-  };
   const handleDelete = async (courseId: string) => {
     if (!confirm('确定要从云端删除这门课程吗？')) return;
     try {
@@ -95,41 +76,15 @@ export default function CloudCourses() {
             </p>
             <div className="mt-3 flex gap-2">
               <button
-                onClick={() => handleShare(course.id)}
-                disabled={sharing === course.id}
-                className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                {sharing === course.id ? '复制中...' : '分享'}
-              </button>
-              <button
                 onClick={() => handleDelete(course.id)}
                 className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-destructive"
               >
                 🗑 删除
               </button>
-              <button
-                onClick={() =>
-                  setManagingCourseId((current) => (current === course.id ? null : course.id))
-                }
-                className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                学习管理
-              </button>
             </div>
           </div>
         ))}
       </div>
-      {managingCourseId && (
-        <LearningManager
-          courseId={managingCourseId}
-          courseTitle={
-            courses.find((course) => course.id === managingCourseId)?.title ||
-            courses.find((course) => course.id === managingCourseId)?.topic ||
-            '未命名课程'
-          }
-          onClose={() => setManagingCourseId(null)}
-        />
-      )}
     </div>
   );
 }
