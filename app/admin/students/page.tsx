@@ -11,13 +11,17 @@
  *
  * Each row that does not yet have a bound user renders the inline
  * CreateAccountRow client component so the admin can provision an
- * auth.users account and bind students.user_id in one step.
+ * auth.users account and bind students.user_id in one step. Bound
+ * rows render BoundRow which exposes reset-password + unbind
+ * controls without leaving the page.
  */
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CreateAccountRow } from './_components/create-account-row';
+import { BoundRow } from './_components/bound-row';
 
 type StudentRow = {
   id: string;
@@ -74,7 +78,7 @@ export default async function AdminStudentsPage() {
           </div>
           <div className="flex gap-2">
             <Button asChild variant="outline" size="sm">
-              <a href="/">返回创作首页</a>
+              <Link href="/admin">返回管理端</Link>
             </Button>
           </div>
         </header>
@@ -115,9 +119,7 @@ export default async function AdminStudentsPage() {
               </div>
               <div className="md:max-w-md md:flex-shrink-0">
                 {s.user_id ? (
-                  <p className="text-xs text-muted-foreground">
-                    该学员已有账号，请直接通知学员登录使用。如需重置密码请到 Supabase Studio 的 auth.users 表操作。
-                  </p>
+                  <BoundRow studentId={s.id} studentName={s.name} />
                 ) : (
                   <CreateAccountRow studentId={s.id} studentName={s.name} />
                 )}
