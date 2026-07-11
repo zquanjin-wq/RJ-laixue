@@ -23,6 +23,12 @@ interface SuccessPayload {
   initial_password: string;
 }
 
+// ERROR_COPY only catches generic / unhandled cases. The API
+// already returns a precise `error` message for each business
+// scenario (e.g. '该邮箱已用作管理员账号...' for EMAIL_TAKEN),
+// so the catch below prefers `data.error` over the copy map and
+// only falls back to ERROR_COPY when the server didn't send a
+// message (legacy / network error).
 const ERROR_COPY: Record<string, string> = {
   UNAUTHENTICATED: '管理员未登录，请刷新页面重新登录。',
   FORBIDDEN: '当前账号不是管理员。',
@@ -56,9 +62,11 @@ export function CreateStudentForm() {
         | ({ success: true } & SuccessPayload & { student_id: string })
         | { success: false; errorCode: string; error: string };
       if (!res.ok || !('initial_password' in data)) {
+        // Prefer the server's specific message (e.g. '该邮箱已用作管理员账号...')
+        // so the admin knows which existing identity owns the email.
         setError(
-          ERROR_COPY[(data as any).errorCode] ??
-            (data as any).error ??
+          (data as any).error ??
+            ERROR_COPY[(data as any).errorCode] ??
             '创建失败，请重试。',
         );
         return;

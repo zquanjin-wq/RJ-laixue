@@ -51,8 +51,8 @@ export function CreateTeacherForm() {
         | { success: false; errorCode: string; error: string };
       if (!res.ok || !('initial_password' in data)) {
         setError(
-          ERROR_COPY[(data as any).errorCode] ??
-            (data as any).error ??
+          (data as any).error ??
+            ERROR_COPY[(data as any).errorCode] ??
             '创建失败，请重试。',
         );
         return;
