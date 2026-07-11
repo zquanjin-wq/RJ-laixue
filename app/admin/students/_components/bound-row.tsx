@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DeleteArchiveButton } from './delete-archive-button';
 
 interface Props {
   studentId: string;
@@ -193,6 +194,7 @@ export function BoundRow({ studentId, studentName }: Props) {
           解绑账号
         </Button>
       </div>
+      <DeleteArchiveButton studentId={studentId} studentName={studentName} />
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );

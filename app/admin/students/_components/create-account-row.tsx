@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DeleteArchiveButton } from './delete-archive-button';
 
 interface Props {
   studentId: string;
@@ -153,5 +154,7 @@ export function CreateAccountRow({ studentId, studentName }: Props) {
         {loading ? '创建中...' : '创建账号并绑定'}
       </Button>
     </form>
+    <DeleteArchiveButton studentId={studentId} studentName={studentName} />
+  </>
   );
 }
