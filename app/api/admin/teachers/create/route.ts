@@ -89,11 +89,32 @@ export async function POST(request: Request) {
     );
   }
   if (existingUsers?.users?.some((u) => u.email?.toLowerCase() === email)) {
+    // Look up the conflicting profile's role so the admin knows
+    // which existing identity owns the email.
+    const conflictingAuthUser = existingUsers.users.find(
+      (u) => u.email?.toLowerCase() === email,
+    );
+    let message = `该邮箱已被占用：${email}`;
+    if (conflictingAuthUser) {
+      const { data: conflictingProfile } = await serviceSupabase
+        .from('profiles')
+        .select('role')
+        .eq('id', conflictingAuthUser.id)
+        .maybeSingle();
+      const role = conflictingProfile?.role;
+      if (role === 'teacher') {
+        message = `该邮箱已用作老师账号（${conflictingAuthUser.email}），不能重复创建。`;
+      } else if (role === 'admin') {
+        message = `该邮箱已用作管理员账号，不能同时作为老师邮箱。`;
+      } else if (role === 'learner') {
+        message = `该邮箱已用作学员账号（${conflictingAuthUser.email}），不能同时作为老师邮箱。`;
+      }
+    }
     return NextResponse.json(
       {
         success: false,
         errorCode: 'EMAIL_TAKEN',
-        error: `该邮箱已被占用：${email}`,
+        error: message,
       },
       { status: 409 },
     );
