@@ -119,8 +119,9 @@ export function CreateAccountRow({ studentId, studentName }: Props) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-2">
-      <div className="space-y-1">
+    <>
+      <form onSubmit={submit} className="space-y-2">
+        <div className="space-y-1">
         <Label htmlFor={`email-${studentId}`} className="text-xs">
           学员邮箱
         </Label>
