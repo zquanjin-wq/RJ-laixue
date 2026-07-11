@@ -96,7 +96,11 @@ function InviteContent() {
         | { success: true; studentName: string }
         | { success: false; errorCode: string; error: string };
       if (!res.ok || !('studentName' in payload)) {
-        setError(ERROR_COPY[payload.errorCode] ?? payload.error ?? '绑定失败，请重试。');
+        // Prefer the API's precise 'error' field over a local copy
+        // map so business-specific copy (e.g. 'access_code already
+        // used') reaches the admin / learner instead of a generic
+        // fallback. ERROR_COPY only catches unhandled errorCode values.
+        setError(payload.error ?? '绑定失败，请重试。');
         return;
       }
       router.replace(`/student/courses?bound=${encodeURIComponent(payload.studentName)}`);
