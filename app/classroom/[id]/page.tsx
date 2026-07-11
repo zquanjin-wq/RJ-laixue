@@ -25,9 +25,22 @@ export default function ClassroomDetailPage() {
   const classroomId = params?.id as string;
   const readOnlyShare = searchParams.get('share') === '1';
   const studentId = searchParams.get('student') || undefined;
+  const editorAutoOpen = searchParams.get('editor') === '1';
   const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
   const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
 const [isSavingToCloud, setIsSavingToCloud] = useState(false);
+
+  // When the URL says ?editor=1, flip the stage store into 'edit'
+  // (MAIC Editor / Pro mode) so the admin / teacher lands directly
+  // in the editing surface instead of the playback surface. The
+  // MAIC Editor flag (NEXT_PUBLIC_MAIC_EDITOR_ENABLED) still gates
+  // whether the EditChromeRoot renders the toggle, so this is a
+  // no-op when the feature flag is off.
+  useEffect(() => {
+    if (editorAutoOpen) {
+      useStageStore.setState({ mode: 'edit' });
+    }
+  }, [editorAutoOpen]);
 const [saveCloudMessage, setSaveCloudMessage] = useState('');
 
   const { loadFromStorage } = useStageStore();

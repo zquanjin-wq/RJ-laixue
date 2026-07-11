@@ -132,12 +132,35 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
-  if (existingUsers?.users?.some((u) => u.email?.toLowerCase() === email)) {
+  const conflictingAuthUser = existingUsers?.users?.find(
+    (u) => u.email?.toLowerCase() === email,
+  );
+  if (conflictingAuthUser) {
+    // Surface the existing role so the admin can act (e.g. ask the
+    // teacher to give up the email, or use a different role-specific
+    // admin screen). We never reveal identifiers beyond role.
+    const { data: conflictingProfile } = await serviceSupabase
+      .from('profiles')
+      .select('role')
+      .eq('id', conflictingAuthUser.id)
+      .maybeSingle();
+    const role = conflictingProfile?.role;
+    let message: string;
+    if (role === 'teacher') {
+      message = `该邮箱已用作老师账号（${conflictingAuthUser.email}），不能同时作为学员邮箱。`;
+    } else if (role === 'admin') {
+      message = `该邮箱已用作管理员账号，不能同时作为学员邮箱。`;
+    } else if (role === 'learner') {
+      message = `该邮箱已用作学员账号（${conflictingAuthUser.email}），请直接登录或先禁用。`;
+    } else {
+      message = `该邮箱已被占用：${conflictingAuthUser.email}`;
+    }
     return NextResponse.json(
       {
         success: false,
         errorCode: 'EMAIL_TAKEN',
-        error: `该邮箱已被占用：${email}`,
+        error: message,
+        existingRole: role ?? null,
       },
       { status: 409 },
     );

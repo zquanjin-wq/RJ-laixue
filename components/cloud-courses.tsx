@@ -76,6 +76,12 @@ export default function CloudCourses() {
             </p>
             <div className="mt-3 flex gap-2">
               <button
+                onClick={() => window.open(`/classroom/${course.id}`, '_blank')}
+                className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
+              >
+                打开
+              </button>
+              <button
                 onClick={() => handleDelete(course.id)}
                 className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-destructive"
               >

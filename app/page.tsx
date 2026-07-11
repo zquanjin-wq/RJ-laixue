@@ -1340,7 +1340,19 @@ function ClassroomCard({
                 size="icon"
                 variant="ghost"
                 className="absolute top-2 right-11 size-7 opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 hover:bg-black/50 text-white hover:text-white backdrop-blur-sm rounded-full"
-                onClick={startRename}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Open the saved course in the classroom so the admin
+                  // (or teacher) can preview it, and toggle on the
+                  // MAIC Editor (Pro mode) once NEXT_PUBLIC_MAIC_EDITOR_ENABLED
+                  // is set. The `?editor=1` query string is a convention
+                  // we propagate to the EditChromeRoot — it auto-enables
+                  // the edit-mode toggle when the MAIC Editor flag is on.
+                  window.open(
+                    `/classroom/${classroom.id}?editor=1`,
+                    '_blank',
+                  );
+                }}
               >
                 <Pencil className="size-3.5" />
               </Button>

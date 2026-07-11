@@ -102,10 +102,11 @@ export function CreateStudentForm() {
           className="w-full"
           type="button"
           onClick={() => {
-            setSuccess(null);
-            setName('');
-            setEmail('');
-            router.refresh();
+            // Hard navigation beats router.refresh() in Next.js 16
+            // dev mode: it guarantees the server component re-runs
+            // with the freshly created roster rather than showing
+            // a stale cached payload.
+            window.location.assign('/admin/students');
           }}
         >
           确认

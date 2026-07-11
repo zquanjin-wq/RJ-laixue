@@ -95,10 +95,11 @@ export function CreateTeacherForm() {
           className="w-full"
           type="button"
           onClick={() => {
-            setSuccess(null);
-            setName('');
-            setEmail('');
-            router.refresh();
+            // Hard navigation beats router.refresh() in Next.js 16
+            // dev mode: forces the server component to re-run with
+            // the new roster rather than showing a stale cached
+            // payload.
+            window.location.assign('/admin/teachers');
           }}
         >
           确认
