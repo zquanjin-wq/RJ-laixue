@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { EditShell } from '@/components/edit/EditShell';
 import { SlideNavRail } from '@/components/edit/SlideNavRail';
 import { ActionsBar } from '@/components/edit/ActionsBar/ActionsBar';
@@ -90,7 +91,13 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
     <HeaderControls
       mode="edit"
       canEdit={isEditable}
-      onToggleEditMode={isMaicEditorEnabled() ? onToggleEditMode : undefined}
+      // Same flag-or-URL gate as components/stage.tsx — so once an admin
+  // enters Pro Mode via ?editor=1 they can also exit back to playback.
+  const searchParams = useSearchParams();
+  const editorAutoOpen = searchParams?.get('editor') === '1';
+      onToggleEditMode={
+        isMaicEditorEnabled() || editorAutoOpen ? onToggleEditMode : undefined
+      }
     />
   );
 

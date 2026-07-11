@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStageStore } from '@/lib/store';
 import { isCurrentSceneEditable } from '@/lib/edit/stage-mode';
@@ -108,7 +109,17 @@ export function Stage({
     if (mode !== 'edit') releaseEditLock();
   }, [mode, releaseEditLock]);
 
-  const toggleHandler = isMaicEditorEnabled() ? handleToggleEditMode : undefined;
+  // Pro Mode toggle is exposed when either the MAIC Editor feature
+  // flag is on (per-deployment whitelist) OR the URL is ?editor=1
+  // (per-navigation intent). The ?editor=1 path lets an operator
+  // hop from the saved-course roster into Pro Mode without needing
+  // NEXT_PUBLIC_MAIC_EDITOR_ENABLED to be set in production.
+  const searchParams = useSearchParams();
+  const editorAutoOpen = searchParams?.get('editor') === '1';
+  const toggleHandler =
+    isMaicEditorEnabled() || editorAutoOpen
+      ? handleToggleEditMode
+      : undefined;
 
   // Mode swap choreography — a clean opacity cross-fade. Both roots layer
   // via `absolute inset-0` so they coexist for the ~280ms window without

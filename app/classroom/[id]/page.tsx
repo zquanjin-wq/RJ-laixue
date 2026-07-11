@@ -360,8 +360,10 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
-{/* 保存到云端 */}
-{!readOnlyShare && generationComplete && (
+{/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
+    the same course via /student/courses doesn't see a 'save to cloud'
+    affordance they shouldn't be using. */}
+{!readOnlyShare && editorAutoOpen && generationComplete && (
   <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
     {saveCloudMessage && (
       <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
