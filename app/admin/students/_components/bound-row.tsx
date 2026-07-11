@@ -60,7 +60,8 @@ export function BoundRow({ studentId, studentName }: Props) {
         return;
       }
       setNewPassword(data.initial_password);
-      router.refresh();
+      // Defer router.refresh() until the admin confirms they've copied
+      // the new password — see the "我已抄下，关闭" button below.
     } catch {
       setError('网络异常，请重试。');
     } finally {
@@ -112,12 +113,16 @@ export function BoundRow({ studentId, studentName }: Props) {
           </div>
         </dl>
         <Button
-          variant="ghost"
+          variant="default"
           size="sm"
-          onClick={() => setNewPassword(null)}
+          className="w-full"
           type="button"
+          onClick={() => {
+            setNewPassword(null);
+            router.refresh();
+          }}
         >
-          关闭
+          我已抄下，关闭
         </Button>
       </div>
     );

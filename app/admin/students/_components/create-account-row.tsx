@@ -72,8 +72,9 @@ export function CreateAccountRow({ studentId, studentName }: Props) {
         return;
       }
       setSuccess({ email: data.email, initial_password: data.initial_password });
-      // Reload the roster so the row flips to "已绑定".
-      router.refresh();
+      // Don't refresh yet — that would unmount this client component
+      // and wipe the password right out from under the admin. The
+      // reload happens when they explicitly click "我已抄下，关闭".
     } catch {
       setError('网络异常，请重试。');
     } finally {
@@ -98,6 +99,20 @@ export function CreateAccountRow({ studentId, studentName }: Props) {
             <dd className="inline font-mono select-all">{success.initial_password}</dd>
           </div>
         </dl>
+        <Button
+          variant="default"
+          size="sm"
+          className="w-full"
+          type="button"
+          onClick={() => {
+            setSuccess(null);
+            setEmail('');
+            setDisplayName(studentName);
+            router.refresh();
+          }}
+        >
+          我已抄下，关闭
+        </Button>
       </div>
     );
   }
