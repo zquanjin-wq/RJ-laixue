@@ -96,11 +96,10 @@ function InviteContent() {
         | { success: true; studentName: string }
         | { success: false; errorCode: string; error: string };
       if (!res.ok || !('studentName' in payload)) {
-        // Prefer the API's precise 'error' field over a local copy
-        // map so business-specific copy (e.g. 'access_code already
-        // used') reaches the admin / learner instead of a generic
-        // fallback. ERROR_COPY only catches unhandled errorCode values.
-        setError(payload.error ?? '绑定失败，请重试。');
+        // TS can't narrow the union via the 'in' guard, so cast
+        // explicitly to the error variant.
+        const errPayload = payload as { success: false; errorCode: string; error: string };
+        setError(errPayload.error ?? '绑定失败，请重试。');
         return;
       }
       router.replace(`/student/courses?bound=${encodeURIComponent(payload.studentName)}`);

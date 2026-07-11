@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 
-export type UserRole = 'admin' | 'learner';
+export type UserRole = 'admin' | 'teacher' | 'learner';
 
 export interface UserProfile {
   id: string;
