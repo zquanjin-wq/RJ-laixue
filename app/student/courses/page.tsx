@@ -73,6 +73,19 @@ export default async function StudentCoursesPage({
 
   const serviceSupabase = getServiceSupabase();
 
+  // Admins are operators, not learners. Bounce them back to /admin so
+  // they don't accidentally end up on the "no student bound" empty
+  // state. The role check is intentionally on the server so we don't
+  // flash the empty card before the redirect kicks in.
+  const { data: callerProfile } = await serviceSupabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (callerProfile?.role === 'admin') {
+    redirect('/admin');
+  }
+
   const { data: student } = (await serviceSupabase
     .from('students')
     .select('id, name, access_code')
