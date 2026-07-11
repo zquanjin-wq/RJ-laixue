@@ -106,7 +106,7 @@ export function CreateStudentForm() {
             // dev mode: it guarantees the server component re-runs
             // with the freshly created roster rather than showing
             // a stale cached payload.
-            window.location.assign('/admin/students');
+            window.location.assign('/admin/students?_=' + Date.now());
           }}
         >
           确认

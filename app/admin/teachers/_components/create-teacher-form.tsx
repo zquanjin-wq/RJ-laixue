@@ -99,7 +99,7 @@ export function CreateTeacherForm() {
             // dev mode: forces the server component to re-run with
             // the new roster rather than showing a stale cached
             // payload.
-            window.location.assign('/admin/teachers');
+            window.location.assign('/admin/teachers?_=' + Date.now());
           }}
         >
           确认

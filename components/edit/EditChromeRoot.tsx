@@ -42,6 +42,9 @@ interface EditChromeRootProps {
  * `mode === 'edit' && currentScene` to satisfy this contract.
  */
 export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChromeRootProps) {
+  const searchParams = useSearchParams();
+  const editorAutoOpen = searchParams?.get('editor') === '1';
+
   // Mark the body while edit mode is mounted, so the editor-scoped CSS
   // rule in globals.css that pins `body.padding-right` to 0 only fires
   // in Pro mode — not on non-editor pages where Radix's
@@ -87,14 +90,12 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
     isSendDisabled: !agentEnabled,
   });
 
-  const headerControls = (
+const headerControls = (
     <HeaderControls
       mode="edit"
       canEdit={isEditable}
       // Same flag-or-URL gate as components/stage.tsx — so once an admin
-  // enters Pro Mode via ?editor=1 they can also exit back to playback.
-  const searchParams = useSearchParams();
-  const editorAutoOpen = searchParams?.get('editor') === '1';
+      // enters Pro Mode via ?editor=1 they can also exit back to playback.
       onToggleEditMode={
         isMaicEditorEnabled() || editorAutoOpen ? onToggleEditMode : undefined
       }
