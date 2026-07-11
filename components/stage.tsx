@@ -109,17 +109,16 @@ export function Stage({
     if (mode !== 'edit') releaseEditLock();
   }, [mode, releaseEditLock]);
 
-  // Pro Mode toggle is exposed when either the MAIC Editor feature
-  // flag is on (per-deployment whitelist) OR the URL is ?editor=1
-  // (per-navigation intent). The ?editor=1 path lets an operator
-  // hop from the saved-course roster into Pro Mode without needing
-  // NEXT_PUBLIC_MAIC_EDITOR_ENABLED to be set in production.
+  // Pro Mode toggle is exposed ONLY when the URL carries ?editor=1.
+  // We intentionally drop the isMaicEditorEnabled() gate so the
+  // '打开' (open) button on the cloud-courses roster — which links
+  // to /classroom/[id] with no query string — never surfaces a
+  // 'professional mode' toggle. Operators get into Pro Mode via
+  // the pencil affordance on the home page, which explicitly appends
+  // ?editor=1 to the URL.
   const searchParams = useSearchParams();
   const editorAutoOpen = searchParams?.get('editor') === '1';
-  const toggleHandler =
-    isMaicEditorEnabled() || editorAutoOpen
-      ? handleToggleEditMode
-      : undefined;
+  const toggleHandler = editorAutoOpen ? handleToggleEditMode : undefined;
 
   // Mode swap choreography — a clean opacity cross-fade. Both roots layer
   // via `absolute inset-0` so they coexist for the ~280ms window without

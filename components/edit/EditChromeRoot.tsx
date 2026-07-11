@@ -94,10 +94,10 @@ const headerControls = (
     <HeaderControls
       mode="edit"
       canEdit={isEditable}
-      // Same flag-or-URL gate as components/stage.tsx — so once an admin
-      // enters Pro Mode via ?editor=1 they can also exit back to playback.
+      // Same URL-only gate as components/stage.tsx — the MAIC Editor
+      // exit button only appears while ?editor=1 is on the URL.
       onToggleEditMode={
-        isMaicEditorEnabled() || editorAutoOpen ? onToggleEditMode : undefined
+        editorAutoOpen ? onToggleEditMode : undefined
       }
     />
   );

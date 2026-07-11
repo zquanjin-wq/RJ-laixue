@@ -14,6 +14,8 @@ function getErrorMessage(error: unknown, fallback: string) {
 export default function CloudCourses() {
   const [courses, setCourses] = useState<CloudCourse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sharing, setSharing] = useState<string | null>(null);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [error, setError] = useState('');
   const fetchCourses = useCallback(async () => {
     try {
@@ -29,6 +31,27 @@ export default function CloudCourses() {
   useEffect(() => {
     fetchCourses();
   }, [fetchCourses]);
+  const handleShare = async (courseId: string) => {
+    setSharing(courseId);
+    setShareMessage(null);
+    try {
+      // Plain /classroom/{id} — no share=1, no editor=1.
+      // A signed-in learner sees pure playback; Pro Mode is hidden
+      // because it isn't triggered by ?editor=1.
+      const url = `${window.location.origin}/classroom/${courseId}`;
+      if (!navigator.clipboard?.writeText) {
+        window.prompt('复制课程链接', url);
+        setShareMessage('已显示链接，请手动复制');
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setShareMessage('✅ 课程链接已复制，发送给学员账号即可观看');
+    } catch (e: unknown) {
+      setShareMessage('❌ 分享失败：' + getErrorMessage(e, '未知错误'));
+    } finally {
+      setSharing(null);
+    }
+  };
   const handleDelete = async (courseId: string) => {
     if (!confirm('确定要从云端删除这门课程吗？')) return;
     try {
@@ -82,12 +105,22 @@ export default function CloudCourses() {
                 打开
               </button>
               <button
+                onClick={() => handleShare(course.id)}
+                disabled={sharing === course.id}
+                className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                {sharing === course.id ? '复制中…' : '分享'}
+              </button>
+              <button
                 onClick={() => handleDelete(course.id)}
                 className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-destructive"
               >
                 🗑 删除
               </button>
             </div>
+            {shareMessage && sharing !== course.id && (
+              <p className="mt-2 text-xs text-muted-foreground">{shareMessage}</p>
+            )}
           </div>
         ))}
       </div>
