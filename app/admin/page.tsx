@@ -55,12 +55,26 @@ export default async function AdminHubPage() {
             <CardHeader>
               <CardTitle>学员管理</CardTitle>
               <CardDescription>
-                列出所有学员、为未绑定的学员开通登录账号、查看绑定状态。
+                列出所有学员、为学员开通登录账号、重置密码或禁用账号。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild>
                 <Link href="/admin/students">进入学员管理</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>老师管理</CardTitle>
+              <CardDescription>
+                创建可登录的老师账号。老师能创作课件、查看课件，但不能管理学员账号。
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/admin/teachers">进入老师管理</Link>
               </Button>
             </CardContent>
           </Card>
@@ -75,20 +89,6 @@ export default async function AdminHubPage() {
             <CardContent>
               <Button asChild>
                 <Link href="/admin/courses">进入课件管理</Link>
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-lg opacity-60">
-            <CardHeader>
-              <CardTitle>课程分配</CardTitle>
-              <CardDescription>
-                把课件分配给指定学员。后续阶段提供。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button asChild variant="outline" disabled>
-                <span>即将开放</span>
               </Button>
             </CardContent>
           </Card>

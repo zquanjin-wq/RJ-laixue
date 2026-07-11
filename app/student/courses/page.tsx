@@ -33,26 +33,18 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
-type AssignmentRow = {
+type CourseRow = {
   id: string;
-  course_id: string;
-  status: 'not_started' | 'in_progress' | 'completed';
-  assigned_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  last_seen_at: string | null;
+  title: string | null;
+  topic: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 type StudentRow = {
   id: string;
   name: string;
   access_code: string;
-};
-
-const STATUS_LABEL: Record<AssignmentRow['status'], string> = {
-  not_started: '未开始',
-  in_progress: '学习中',
-  completed: '已完成',
 };
 
 export const dynamic = 'force-dynamic';
@@ -132,13 +124,14 @@ export default async function StudentCoursesPage({
     );
   }
 
-  const { data: assignments } = (await serviceSupabase
-    .from('course_assignments')
-    .select(
-      'id, course_id, status, assigned_at, started_at, completed_at, last_seen_at',
-    )
-    .eq('student_id', student.id)
-    .order('assigned_at', { ascending: false })) as { data: AssignmentRow[] | null };
+  // Per the new design: every active learner sees every cloud course.
+  // course_assignments is intentionally no longer used here.
+  const { data: coursesData } = (await serviceSupabase
+    .from('courses')
+    .select('id, title, topic, created_at, updated_at')
+    .order('updated_at', { ascending: false })) as { data: CourseRow[] | null };
+
+  const courses = coursesData ?? [];
 
   const sp = await searchParams;
   const welcomeName = sp?.bound ? decodeURIComponent(sp.bound) : '';
@@ -152,59 +145,47 @@ export default async function StudentCoursesPage({
           </h1>
           <p className="text-sm text-muted-foreground">
             欢迎，{welcomeName || student.name}。
-            {student.access_code && (
-              <>
-                {' '}你的访问码：<span className="font-mono">{student.access_code}</span>
-              </>
-            )}
+            下方为所有已保存到云端的课件。
           </p>
         </header>
 
-        {(!assignments || assignments.length === 0) && (
+        {courses.length === 0 && (
           <Card className="rounded-lg">
             <CardHeader>
-              <CardTitle>暂无课程分配</CardTitle>
+              <CardTitle>暂无课件</CardTitle>
               <CardDescription>
-                老师还没有给你分配课程。如果有疑问请联系老师或访问班级分享链接。
+                目前云端还没有任何课件。老师保存课件后，列表会自动更新。
               </CardDescription>
             </CardHeader>
           </Card>
         )}
 
-        {assignments && assignments.length > 0 && (
+        {courses.length > 0 && (
           <div className="space-y-3">
-            {assignments.map((a) => (
-              <Card key={a.id} className="rounded-lg">
+            {courses.map((c) => (
+              <Card key={c.id} className="rounded-lg">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">
-                    课程编号：{a.course_id}
+                    {c.title || '未命名课件'}
                   </CardTitle>
-                  <CardDescription>
-                    分配于 {new Date(a.assigned_at).toLocaleString('zh-CN')}
-                  </CardDescription>
+                  {c.topic && (
+                    <CardDescription className="line-clamp-2">
+                      {c.topic}
+                    </CardDescription>
+                  )}
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-center gap-3">
-                  <Badge variant={a.status === 'completed' ? 'default' : 'secondary'}>
-                    {STATUS_LABEL[a.status]}
-                  </Badge>
-                  {a.last_seen_at && (
+                  <div className="text-xs text-muted-foreground">
+                    ID: <span className="font-mono">{c.id}</span>
+                  </div>
+                  {c.updated_at && (
                     <span className="text-xs text-muted-foreground">
-                      最近活跃：{new Date(a.last_seen_at).toLocaleString('zh-CN')}
+                      更新于 {new Date(c.updated_at).toLocaleString('zh-CN')}
                     </span>
                   )}
-                  <div className="ml-auto flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (typeof window !== 'undefined' && navigator.clipboard) {
-                          void navigator.clipboard.writeText(
-                            `${window.location.origin}/classroom/${a.course_id}?share=1`,
-                          );
-                        }
-                      }}
-                    >
-                      复制分享链接
+                  <div className="ml-auto">
+                    <Button asChild size="sm">
+                      <a href={`/classroom/${c.id}?share=1`}>进入教室</a>
                     </Button>
                   </div>
                 </CardContent>

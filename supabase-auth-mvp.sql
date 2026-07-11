@@ -3,8 +3,9 @@
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  role text not null default 'learner' check (role in ('admin', 'learner')),
+  role text not null default 'learner' check (role in ('admin', 'teacher', 'learner')),
   display_name text,
+  disabled_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

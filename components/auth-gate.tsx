@@ -25,14 +25,14 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (profile.role !== 'admin') {
+  if (profile.role !== 'admin' && profile.role !== 'teacher') {
     return (
       <main className="min-h-screen bg-background flex items-center justify-center px-4">
         <Card className="w-full max-w-md rounded-lg">
           <CardHeader>
             <CardTitle>学习账号已登录</CardTitle>
             <CardDescription>
-              当前账号是学员角色。学员课程入口将在下一阶段开放，请先使用老师分享的课程链接学习。
+              当前账号是学员角色。如需查看已分配的课件，请联系管理员获取访问权限。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex gap-2">
