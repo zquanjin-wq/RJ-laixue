@@ -93,18 +93,20 @@ pnpm dev --webpack
 
 ## 3. 环境变量（`.env.local` 必填项）
 
+> ⚠️ **不要把真实 key 写到 git 仓库**——GitHub 会拒绝 push。下表只列变量名 + 占位符。真值放在 **本机 `.env.local`**（不进 git）和 **Vercel Dashboard → Settings → Environment Variables**（不进 git）。
+
 ```bash
 # Supabase（公开 + service_role 两套）
-NEXT_PUBLIC_SUPABASE_URL=https://aqmktsagfvkikehynpdw.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_9ElsG6pY5s4jFiXEBhS-vQ_TQMjuGfW
-SUPABASE_URL=https://aqmktsagfvkikehynpdw.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_Pz9L6c-2_WvzcxtaeXkTmQ_bMhXqank
+NEXT_PUBLIC_SUPABASE_URL=<your-supabase-url>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-supabase-anon-key>
+SUPABASE_URL=<your-supabase-url>
+SUPABASE_SERVICE_ROLE_KEY=<your-supabase-service-role-key>
 
 # TTS（服务端统一配的 MiniMax TTS）
-TTS_MINIMAX_API_KEY=sk-cp-...你的 TTS API key...
+TTS_MINIMAX_API_KEY=<your-minimax-tts-key>
 
 # LLM（服务端统一配的 MiniMax M2.7 Anthropic 兼容）
-MINIMAX_API_KEY=sk-cp-...你的 LLM API key...
+MINIMAX_API_KEY=<your-minimax-llm-key>
 MINIMAX_BASE_URL=https://api.minimaxi.com/anthropic/v1
 MINIMAX_MODELS=MiniMax-M2.7
 DEFAULT_MODEL=minimax:MiniMax-M2.7
