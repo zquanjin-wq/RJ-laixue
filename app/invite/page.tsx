@@ -49,8 +49,8 @@ function InviteContent() {
             <CardTitle>绑定学员访问码</CardTitle>
             <CardDescription>
               {initialCode
-                ? `检测到访问码 ${initialCode}，请先使用老师分配的邮箱登录后即可绑定。`
-                : '请先使用老师分配的邮箱登录后再访问邀请链接。'}
+                ? `检测到访问码 ${initialCode}。账号由管理员开通，请使用邮件里收到的临时密码登录后再绑定。`
+                : '账号由管理员开通，请使用邮件里收到的临时密码登录后再访问邀请链接。'}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex gap-2">
