@@ -44,8 +44,13 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
   // fewer hooks than expected"). Instead, the redirect fires from
   // this useEffect and the main render below conditionally shows a
   // loading screen when authLoading or !user.
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const authReady = !authLoading && !!user;
+  // Only admin / teacher can save to cloud. Learners never see the
+  // save button — they're viewers, not authors. This replaces the
+  // earlier editorAutoOpen gate which also hid the button from
+  // admins on the post-generation page (where ?editor=1 isn't set).
+  const canSave = profile?.role === 'admin' || profile?.role === 'teacher';
   useEffect(() => {
     if (!authLoading && !user) {
       const returnUrl = window.location.pathname + window.location.search;
@@ -401,7 +406,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
 {/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
     the same course via /student/courses doesn't see a 'save to cloud'
     affordance they shouldn't be using. */}
-{!readOnlyShare && editorAutoOpen && generationComplete && (
+{!readOnlyShare && canSave && generationComplete && (
   <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
     {saveCloudMessage && (
       <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
