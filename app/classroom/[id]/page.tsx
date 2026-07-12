@@ -208,7 +208,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
     } finally {
       setLoading(false);
     }
-  }, [classroomId, loadFromStorage]);
+  }, [classroomId, loadFromStorage, authReady]);
 
   useEffect(() => {
     if (readOnlyShare && !verifiedStudentId) {
