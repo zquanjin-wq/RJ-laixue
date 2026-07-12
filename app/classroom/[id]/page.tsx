@@ -37,29 +37,21 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
   // only barrier to entry is a valid learner / teacher / admin
   // account. Unsigned-in visitors get redirected to /login with
   // a `next` param so they return here after authenticating.
+  //
+  // IMPORTANT: we must NOT early-return here (before the other hooks
+  // below) — React requires hooks to be called in the same order on
+  // every render. An early return would cause error #310 ("Rendered
+  // fewer hooks than expected"). Instead, the redirect fires from
+  // this useEffect and the main render below conditionally shows a
+  // loading screen when authLoading or !user.
   const { user, loading: authLoading } = useAuth();
+  const authReady = !authLoading && !!user;
   useEffect(() => {
     if (!authLoading && !user) {
       const returnUrl = window.location.pathname + window.location.search;
       window.location.assign(`/login?next=${encodeURIComponent(returnUrl)}`);
     }
   }, [authLoading, user]);
-
-  if (authLoading) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-sm text-muted-foreground">正在验证账号...</div>
-      </main>
-    );
-  }
-
-  if (!user) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-sm text-muted-foreground">正在跳转登录页...</div>
-      </main>
-    );
-  }
 
   // When the URL says ?editor=1, flip the stage store into 'edit'
   // (MAIC Editor / Pro mode) so the admin / teacher lands directly
@@ -94,6 +86,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
   });
 
   const loadClassroom = useCallback(async () => {
+    if (!authReady) return;
     try {
       await loadFromStorage(classroomId);
 
@@ -352,6 +345,20 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
       });
     }
   }, [loading, error, generateRemaining]);
+
+  // Auth gate render: show loading screen while auth is resolving,
+  // or while the redirect to /login is in flight. This MUST be
+  // after all hooks (no early returns above) to satisfy React's
+  // rules of hooks.
+  if (authLoading || !user) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">
+          {authLoading ? '正在验证账号...' : '正在跳转登录页...'}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <ThemeProvider>
