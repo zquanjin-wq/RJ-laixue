@@ -15,6 +15,7 @@ import { StudentGate } from '@/components/student-gate';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { migrateScene } from '@/lib/edit/slide-schema';
+import { useAuth } from '@/lib/auth/use-auth';
 import type { Scene } from '@/lib/types/stage';
 
 const log = createLogger('Classroom');
@@ -29,6 +30,36 @@ export default function ClassroomDetailPage() {
   const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
   const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
 const [isSavingToCloud, setIsSavingToCloud] = useState(false);
+
+  // Supabase Auth gate: anyone visiting /classroom/[id] must be
+  // signed in. This replaces OPENMAIC upstream's ACCESS_CODE modal
+  // — once the operator deletes ACCESS_CODE from Vercel env, the
+  // only barrier to entry is a valid learner / teacher / admin
+  // account. Unsigned-in visitors get redirected to /login with
+  // a `next` param so they return here after authenticating.
+  const { user, loading: authLoading } = useAuth();
+  useEffect(() => {
+    if (!authLoading && !user) {
+      const returnUrl = window.location.pathname + window.location.search;
+      window.location.assign(`/login?next=${encodeURIComponent(returnUrl)}`);
+    }
+  }, [authLoading, user]);
+
+  if (authLoading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">正在验证账号...</div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">正在跳转登录页...</div>
+      </main>
+    );
+  }
 
   // When the URL says ?editor=1, flip the stage store into 'edit'
   // (MAIC Editor / Pro mode) so the admin / teacher lands directly
