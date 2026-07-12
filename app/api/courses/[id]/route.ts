@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase/client';
+import { getServiceSupabase } from '@/lib/supabase/server';
 // GET /api/courses/[id] — 获取单个课程完整数据
 export async function GET(
   _request: NextRequest,
@@ -7,7 +7,8 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { data, error } = await supabase
+    const serviceSupabase = getServiceSupabase();
+    const { data, error } = await serviceSupabase
       .from('courses')
       .select('*')
       .eq('id', id)
@@ -33,7 +34,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { error } = await supabase
+    const serviceSupabase = getServiceSupabase();
+    const { error } = await serviceSupabase
       .from('courses')
       .delete()
       .eq('id', id);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase/client';
+import { getServiceSupabase } from '@/lib/supabase/server';
 
 
 export const runtime = 'nodejs';
@@ -8,7 +8,8 @@ export const maxDuration = 300;
 // GET /api/courses — 列出云端课程
 export async function GET() {
   try {
-    const { data, error } = await supabase
+    const serviceSupabase = getServiceSupabase();
+    const { data, error } = await serviceSupabase
       .from('courses')
       .select('id, title, topic, created_at, updated_at')
       .order('updated_at', { ascending: false });
@@ -61,7 +62,8 @@ export async function POST(request: NextRequest) {
       },
     };
 
-    const { error } = await supabase.from('courses').upsert(
+    const serviceSupabase = getServiceSupabase();
+    const { error } = await serviceSupabase.from('courses').upsert(
       {
         id,
         title: title || stage?.name || '',

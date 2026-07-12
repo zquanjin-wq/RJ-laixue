@@ -136,11 +136,16 @@ export async function importCourseFromCloud(courseId: string) {
 // 鍒犻櫎浜戠璇剧▼
 // ============================================================
 export async function deleteCloudCourse(courseId: string) {
-  const { error } = await supabase
-    .from('courses')
-    .delete()
-    .eq('id', courseId);
-  if (error) throw error;
+  // Route through the API (which uses service_role) instead of
+  // deleting directly via the anon browser client. Once RLS is
+  // enabled on public.courses, the anon key can no longer DELETE.
+  const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || '删除云端课程失败');
+  }
 }
 
 export interface StudentRecord {
