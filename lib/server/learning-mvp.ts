@@ -1,4 +1,12 @@
-import { supabase } from '@/lib/supabase/client';
+import { getServiceSupabase } from '@/lib/supabase/server';
+
+// Use service_role so this server-side module can read AND write
+// students / course_assignments / course_progress_events even
+// after RLS is tightened (Wave 1 revoked anon writes). All callers
+// are server-side API routes (app/api/learning/*, app/api/students/*,
+// app/api/courses/[id]/assignments/*) so the service_role key never
+// reaches the browser.
+const supabase = getServiceSupabase();
 
 export interface StudentInput {
   name: string;

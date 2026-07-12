@@ -106,24 +106,24 @@ export async function saveStageToCloud(stageId: string) {
 // 鍒楀嚭浜戠璇剧▼
 // ============================================================
 export async function listCloudCourses() {
-  const { data, error } = await supabase
-    .from('courses')
-    .select('id, title, topic, created_at, updated_at')
-    .order('updated_at', { ascending: false });
-  if (error) throw error;
-  return data;
+  const res = await fetch('/api/courses');
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || '获取云端课程失败');
+  }
+  return json.data;
 }
 // ============================================================
 // 涓嬭浇璇剧▼鍒版湰鍦?IndexedDB
 // ============================================================
 export async function importCourseFromCloud(courseId: string) {
-  const { data, error } = await supabase
-    .from('courses')
-    .select('id, title, data')
-    .eq('id', courseId)
-    .single();
-  if (error) throw error;
-  if (!data) throw new Error('课程不存在');
+  const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || '课程不存在');
+  }
+  const data = json.data;
+  if (!data?.data) throw new Error('课程数据不完整');
   const { stage, scenes, outlines } = data.data;
   await db.transaction('rw', db.stages, db.scenes, db.stageOutlines, async () => {
     await db.stages.put(stage);
