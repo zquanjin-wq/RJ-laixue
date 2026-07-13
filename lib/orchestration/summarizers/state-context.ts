@@ -94,7 +94,10 @@ export function summarizeElements(elements: any[]): string {
 /**
  * Build context string from store state
  */
-export function buildStateContext(storeState: StatelessChatRequest['storeState']): string {
+export function buildStateContext(
+  storeState: StatelessChatRequest['storeState'],
+  concise = false,
+): string {
   const { stage, scenes, currentSceneId, mode, whiteboardOpen, quizResults } = storeState;
 
   const lines: string[] = [];
@@ -124,8 +127,10 @@ export function buildStateContext(storeState: StatelessChatRequest['storeState']
         `Current scene: "${currentScene.title}" (${currentScene.type}, id: ${currentSceneId})`,
       );
 
-      // Slide scene: include element details
-      if (currentScene.content.type === 'slide') {
+      // Slide scene: include element details (skip in concise mode to
+      // prevent the teacher from re-narrating slide content when a
+      // student asks a question — the student has already seen it).
+      if (currentScene.content.type === 'slide' && !concise) {
         const elements = currentScene.content.canvas.elements;
         lines.push(`Current slide elements (${elements.length}):\n${summarizeElements(elements)}`);
       }

@@ -276,6 +276,10 @@ async function runAgentGeneration(
   const effectiveActions = getEffectiveActions(agentConfig.allowedActions, sceneType);
 
   const discussionContext = state.discussionContext || undefined;
+  // Detect if this is a user-initiated Q&A (vs agent-initiated discussion
+  // or lecture narration). When true, the prompt builder will skip slide
+  // element details and append a "answer directly" directive.
+  const isUserQA = state.messages.some((m) => m.role === 'user');
   const systemPrompt = buildStructuredPrompt(
     agentConfig,
     state.storeState,
@@ -283,6 +287,7 @@ async function runAgentGeneration(
     state.whiteboardLedger,
     state.userProfile || undefined,
     state.agentResponses,
+    isUserQA,
   );
   const openaiMessages = convertMessagesToOpenAI(state.messages, agentId);
   const adapter = new AISdkLangGraphAdapter(state.languageModel, state.thinkingConfig ?? undefined);

@@ -129,6 +129,7 @@ export function buildStructuredPrompt(
   whiteboardLedger?: WhiteboardActionRecord[],
   userProfile?: { nickname?: string; bio?: string },
   agentResponses?: AgentTurnSummary[],
+  isUserQA = false,
 ): string {
   // Determine current scene type for action filtering
   const currentScene = storeState.currentSceneId
@@ -152,7 +153,7 @@ export function buildStructuredPrompt(
     actionDescriptions: getActionDescriptions(effectiveActions),
     slideActionGuidelines: hasSlideActions ? SLIDE_ACTION_GUIDELINES : '',
     mutualExclusionNote: hasSlideActions ? MUTUAL_EXCLUSION_NOTE : '',
-    stateContext: buildStateContext(storeState),
+    stateContext: buildStateContext(storeState, isUserQA),
     virtualWhiteboardContext: buildVirtualWhiteboardContext(storeState, whiteboardLedger),
     lengthGuidelines: buildLengthGuidelines(agentConfig.role),
     whiteboardGuidelines: buildWhiteboardGuidelines(agentConfig.role),
@@ -162,6 +163,21 @@ export function buildStructuredPrompt(
   const prompt = buildPrompt(PROMPT_IDS.AGENT_SYSTEM, vars);
   if (!prompt) {
     throw new Error('agent-system template not found');
+  }
+  // When a student asks a question, append a forceful directive so the
+  // model doesn't fall back into "teach the slide" mode. This is appended
+  // AFTER the template (not as a template var) so it's the last thing the
+  // model reads before the conversation history.
+  if (isUserQA) {
+    return (
+      prompt.system +
+      '\n# CRITICAL — STUDENT QUESTION MODE\n' +
+      'A student has asked a specific question. You MUST answer it DIRECTLY.\n' +
+      'Do NOT walk through, explain, narrate, or summarize the slide content — the student has already seen it.\n' +
+      'Do NOT use spotlight/laser to point at slide elements unless the question is specifically about a visual element.\n' +
+      'Skip all preamble like "Let me explain this slide" or "As shown on this page".\n' +
+      'Get straight to the answer in 2-3 sentences.\n'
+    );
   }
   return prompt.system;
 }
