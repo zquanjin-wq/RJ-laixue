@@ -1760,6 +1760,30 @@ if (!res.ok) {
                   ttsProviderId: validTTSProvider as TTSProviderId,
                   ttsVoice: validTTSVoice,
                 }),
+                // RJ-laixue fix: if the user's TTS is still browser-native-tts
+                // but the server has a configured TTS provider (e.g. MiniMax),
+                // override to the server provider regardless of autoConfigApplied.
+                // This fixes the case where a user first visited before TTS was
+                // configured (autoConfigApplied got set to true with browser-native-tts)
+                // and subsequent visits never re-selected the server TTS — causing
+                // real-time Q&A to use the browser's default voice instead of the
+                // MiniMax voice used during course generation.
+                ...(state.ttsProviderId === 'browser-native-tts' &&
+                  (() => {
+                    const serverTtsIds = Object.entries(data.tts)
+                      .filter(([, info]) => !info.disabled)
+                      .map(([id]) => id) as TTSProviderId[];
+                    if (serverTtsIds.length > 0) {
+                      return {
+                        ttsProviderId: serverTtsIds[0] as TTSProviderId,
+                        ttsVoice:
+                          DEFAULT_TTS_VOICES[serverTtsIds[0] as BuiltInTTSProviderId] ||
+                          'default',
+                        ttsEnabled: true,
+                      };
+                    }
+                    return {};
+                  })()),
                 ...(validASRProvider !== state.asrProviderId && {
                   asrProviderId: validASRProvider as ASRProviderId,
                 }),
