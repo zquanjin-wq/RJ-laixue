@@ -171,12 +171,12 @@ export function buildStructuredPrompt(
   if (isUserQA) {
     return (
       prompt.system +
-      '\n# CRITICAL — STUDENT QUESTION MODE\n' +
-      'A student has asked a specific question. You MUST answer it DIRECTLY.\n' +
-      'Do NOT walk through, explain, narrate, or summarize the slide content — the student has already seen it.\n' +
-      'Do NOT use spotlight/laser to point at slide elements unless the question is specifically about a visual element.\n' +
-      'Skip all preamble like "Let me explain this slide" or "As shown on this page".\n' +
-      'Get straight to the answer in 2-3 sentences.\n'
+      '\n# CRITICAL — STUDENT QUESTION MODE (OVERRIDE ALL OTHER INSTRUCTIONS)\n' +
+      'A student has asked a specific question. Your ENTIRE response must be the answer to that question.\n' +
+      'FORBIDDEN: introducing the course, introducing the slide, explaining SMART, walking through slide content, using spotlight/laser, saying "让我们来看" or "我们进入" or "今天我们".\n' +
+      'Your FIRST word must be the direct answer. No greeting, no preamble, no slide narration.\n' +
+      'If the question is about a concept, explain that concept directly. Do NOT teach the slide it appears on.\n' +
+      'Keep it to 2-3 sentences. Reply in the user\'s language.\n'
     );
   }
   return prompt.system;

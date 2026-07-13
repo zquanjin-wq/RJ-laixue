@@ -99,7 +99,7 @@ export default function CloudCourses() {
             </p>
             <div className="mt-3 flex gap-2">
               <button
-                onClick={() => window.open(`/classroom/${course.id}`, '_blank')}
+                onClick={() => window.open(`/classroom/${course.id}?view=1`, '_blank')}
                 className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
               >
                 打开
