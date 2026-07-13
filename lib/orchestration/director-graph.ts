@@ -277,8 +277,10 @@ async function runAgentGeneration(
 
   const discussionContext = state.discussionContext || undefined;
   // Detect if this is a user-initiated Q&A (vs agent-initiated discussion
-  // or lecture narration). When true, the prompt builder will skip slide
-  // element details and append a "answer directly" directive.
+  // or lecture narration). When true: the prompt builder skips slide
+  // element details AND appends a "answer directly" directive. We also
+  // strip all previous AIMessage narration from the conversation history —
+  // otherwise the teacher continues narrating slides it sees in history.
   const isUserQA = state.messages.some((m) => m.role === 'user');
   const systemPrompt = buildStructuredPrompt(
     agentConfig,
@@ -289,7 +291,14 @@ async function runAgentGeneration(
     state.agentResponses,
     isUserQA,
   );
-  const openaiMessages = convertMessagesToOpenAI(state.messages, agentId);
+  // In Q&A mode, keep only the user's most recent message as history. This
+  // removes every previous teacher/assistant narration from the model's
+  // context, so it can't parrot or continue a previous "teach the slide"
+  // turn. In lecture / agent-initiated modes, keep all messages.
+  const historyMessages = isUserQA
+    ? state.messages.filter((m) => m.role === 'user').slice(-1)
+    : state.messages;
+  const openaiMessages = convertMessagesToOpenAI(historyMessages, agentId);
   const adapter = new AISdkLangGraphAdapter(state.languageModel, state.thinkingConfig ?? undefined);
 
   const lcMessages = [

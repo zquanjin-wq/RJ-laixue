@@ -131,7 +131,24 @@ export default function CloudCourses() {
         return;
       }
       await navigator.clipboard.writeText(url);
-      setShareMessage('✅ 课程链接已复制，发送给学员账号即可观看');
+      // ALSO keep the URL on window.lastShareUrl as a recovery hook —
+      // some browsers report navigator.clipboard.writeText as successful
+      // while actually no-op'ing (permission not granted). Users can
+      // retrieve the URL from devtools even after the toast disappears.
+      (window as unknown as { lastShareUrl?: string }).lastShareUrl = url;
+      const msg = '✅ 课程链接已复制：' + url;
+      setShareMessage(msg);
+      // Also toast — keeps it visible while the user navigates.
+      // Skip if navigator.clipboard threw (handled in catch above).
+      const banner = document.createElement('div');
+      banner.textContent = msg;
+      banner.style.cssText =
+        'position:fixed;top:20px;left:50%;transform:translateX(-50%);' +
+        'background:#16a34a;color:white;padding:12px 20px;border-radius:8px;' +
+        'box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;max-width:90vw;' +
+        'font-size:14px;font-family:sans-serif;';
+      document.body.appendChild(banner);
+      setTimeout(() => banner.remove(), 4000);
     } catch (e: unknown) {
       setShareMessage('❌ 分享失败：' + getErrorMessage(e, '未知错误'));
     } finally {
