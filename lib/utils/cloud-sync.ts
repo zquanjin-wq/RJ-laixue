@@ -106,12 +106,35 @@ export async function saveStageToCloud(stageId: string) {
 // 鍒楀嚭浜戠璇剧▼
 // ============================================================
 export async function listCloudCourses() {
-  const res = await fetch('/api/courses');
+  const res = await fetch('/api/courses?scope=all');
   const json = await res.json();
   if (!res.ok || !json.success) {
     throw new Error(json.error || '获取云端课程失败');
   }
-  return json.data;
+  return json.data as Array<{
+    id: string;
+    title: string;
+    topic: string;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+}
+
+export async function listMyCourses() {
+  const res = await fetch('/api/courses?scope=mine');
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || '获取我的课程失败');
+  }
+  return json.data as Array<{
+    id: string;
+    title: string;
+    topic: string;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
 }
 // ============================================================
 // 涓嬭浇璇剧▼鍒版湰鍦?IndexedDB
