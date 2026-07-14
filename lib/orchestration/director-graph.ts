@@ -112,23 +112,51 @@ async function directorNode(
       /* controller closed after abort */
     }
   };
-  const isSingleAgent = state.availableAgentIds.length <= 1;
+const isSingleAgent = state.availableAgentIds.length <= 1;
+  const hasUserMessage = state.messages.some((m) => m.role === 'user');
 
   // ── Single agent: code-only director ──
   if (isSingleAgent) {
     const agentId = state.availableAgentIds[0] || 'default-1';
 
-    if (state.turnCount === 0) {
-      // First turn: dispatch the agent
+    if (state.turnCount === 0 && !hasUserMessage) {
+      // First turn with no user message yet: dispatch the agent
+      // (lecture narration kicks in).
       log.info(`[Director] Single agent: dispatching "${agentId}"`);
       write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
       return { currentAgentId: agentId, shouldEnd: false };
     }
 
-    // Agent already responded: cue user for follow-up
-    log.info(`[Director] Single agent: cueing user after "${agentId}"`);
-    write({ type: 'cue_user', data: { fromAgentId: agentId } });
-    return { shouldEnd: true };
+    // Either: user asked a question (hasUserMessage), OR agent already
+    // responded (turnCount > 0). In both cases dispatch the agent ONCE
+    // and end the session — agent node will use the Q&A directive.
+    log.info(
+      `[Director] Single agent: dispatching "${agentId}" (turnCount=${state.turnCount}, hasUserMessage=${hasUserMessage})`,
+    );
+    write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
+    return { currentAgentId: agentId, shouldEnd: false };
+  }
+
+  // ── Single agent: code-only director ──
+  if (isSingleAgent) {
+    const agentId = state.availableAgentIds[0] || 'default-1';
+
+    if (state.turnCount === 0 && !hasUserMessage) {
+      // First turn with no user message yet: dispatch the agent
+      // (lecture narration kicks in).
+      log.info(`[Director] Single agent: dispatching "${agentId}"`);
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
+      return { currentAgentId: agentId, shouldEnd: false };
+    }
+
+    // Either: user asked a question (hasUserMessage), OR agent already
+    // responded (turnCount > 0). In both cases dispatch the agent ONCE
+    // and end the session — agent node will use the Q&A directive.
+    log.info(
+      `[Director] Single agent: dispatching "${agentId}" (turnCount=${state.turnCount}, hasUserMessage=${hasUserMessage})`,
+    );
+    write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
+    return { currentAgentId: agentId, shouldEnd: false };
   }
 
   // ── Multi agent: fast-path for first turn with trigger ──
@@ -185,6 +213,24 @@ async function directorNode(
     log.info(`[Director] Raw decision: ${content}`);
 
     const decision = parseDirectorDecision(content);
+
+    // Q&A mode: if the user has asked a question, dispatch the agent
+    // ONCE then end the session. Otherwise the director keeps looping,
+    // chaining multiple teacher turns and the user gets multi-paragraph
+    // lecture-style narration instead of a direct answer.
+    if (hasUserMessage) {
+      const targetAgent = decision.nextAgentId && decision.nextAgentId !== 'USER'
+        ? decision.nextAgentId
+        : (state.availableAgentIds.find((id) => id.includes('teacher')) ||
+           state.availableAgentIds[0] || 'default-1');
+      if (!state.availableAgentIds.includes(targetAgent)) {
+        log.warn(`[Director] Q&A target "${targetAgent}" not available, ending`);
+        return { shouldEnd: true };
+      }
+      log.info(`[Director] Q&A mode: single-turn dispatch of "${targetAgent}"`);
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId: targetAgent } });
+      return { currentAgentId: targetAgent, shouldEnd: true };
+    }
 
     if (decision.shouldEnd || !decision.nextAgentId) {
       log.info('[Director] Decision: END');
