@@ -215,9 +215,10 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
     const decision = parseDirectorDecision(content);
 
     // Q&A mode: if the user has asked a question, dispatch the agent
-    // ONCE then end the session. Otherwise the director keeps looping,
-    // chaining multiple teacher turns and the user gets multi-paragraph
-    // lecture-style narration instead of a direct answer.
+    // ONCE then end the session. CRITICAL: must also emit a cue_user
+    // event so the client-side while(true) loop in lib/chat/agent-loop.ts
+    // exits. Returning shouldEnd=true alone is NOT enough — the client
+    // loop only checks for the cue_user SSE event.
     if (hasUserMessage) {
       const targetAgent = decision.nextAgentId && decision.nextAgentId !== 'USER'
         ? decision.nextAgentId
@@ -225,10 +226,18 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
            state.availableAgentIds[0] || 'default-1');
       if (!state.availableAgentIds.includes(targetAgent)) {
         log.warn(`[Director] Q&A target "${targetAgent}" not available, ending`);
+        write({ type: 'cue_user', data: { fromAgentId: state.currentAgentId || undefined } });
         return { shouldEnd: true };
       }
       log.info(`[Director] Q&A mode: single-turn dispatch of "${targetAgent}"`);
       write({ type: 'thinking', data: { stage: 'agent_loading', agentId: targetAgent } });
+      // Don't emit cue_user yet — we still need to run the agent once.
+      // The agent node will run, emit its response, and then this loop
+      // comes back to director — director will see shouldEnd=true and
+      // exit naturally. But we still need to break out of the loop, so
+      // signal end here. (Issue: the client loop only watches cue_user,
+      // not shouldEnd. The agent node handles this by emitting cue_user
+      // after the agent finishes. See runAgentGeneration below.)
       return { currentAgentId: targetAgent, shouldEnd: true };
     }
 
@@ -507,6 +516,20 @@ async function agentGenerateNode(
     log.warn(
       `[AgentGenerate] Agent "${agentConfig?.name || agentId}" produced empty response (no text, no actions)`,
     );
+  }
+
+  // Q&A mode: emit cue_user so the client-side while(true) loop in
+  // lib/chat/agent-loop.ts exits after this single agent turn. Without
+  // this, the client keeps looping back to director, which dispatches
+  // another agent, which narrates more slide content. The director
+  // node's shouldEnd=true is server-only and not visible to the client.
+  const hasUserMessage = state.messages.some((m) => m.role === 'user');
+  if (hasUserMessage) {
+    const rawWrite = config.writer as (chunk: StatelessEvent) => void;
+    rawWrite({
+      type: 'cue_user',
+      data: { fromAgentId: agentId },
+    });
   }
 
   return {
