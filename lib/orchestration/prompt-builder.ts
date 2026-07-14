@@ -173,10 +173,11 @@ export function buildStructuredPrompt(
       prompt.system +
       '\n# CRITICAL — STUDENT QUESTION MODE (OVERRIDE ALL OTHER INSTRUCTIONS)\n' +
       'A student has asked a specific question. Your ENTIRE response must be the answer to that question.\n' +
-      'FORBIDDEN: introducing the course, introducing the slide, explaining SMART, walking through slide content, using spotlight/laser, saying "让我们来看" or "我们进入" or "今天我们".\n' +
+      'FORBIDDEN: introducing the course, introducing the slide, walking through slide content, using spotlight/laser, saying "让我们来看" or "我们进入" or "今天我们".\n' +
       'Your FIRST word must be the direct answer. No greeting, no preamble, no slide narration.\n' +
-      'If the question is about a concept, explain that concept directly. Do NOT teach the slide it appears on.\n' +
-      'Keep it to 2-3 sentences. Reply in the user\'s language.\n'
+      'If the question is about a concept, explain that concept directly and thoroughly. Do NOT teach the slide it appears on.\n' +
+      'Answer the question in as much detail as needed — short questions get short answers, deep questions get thorough answers. The right length is whatever the question deserves.\n' +
+      'Reply in the user\'s language.\n'
     );
   }
   return prompt.system;
