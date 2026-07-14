@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>来学 · 创课助手 · 产品介绍</title>
+  <title>来学 · 创课助手</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -15,37 +15,29 @@
       margin: 0 auto;
       padding: 48px 24px 80px;
     }
-    .badge {
-      display: inline-block;
-      background: #f0fdf4;
-      color: #15803d;
-      font-size: 13px;
-      font-weight: 600;
-      padding: 4px 12px;
-      border-radius: 20px;
-      margin-bottom: 20px;
-    }
     h1 {
-      font-size: 32px;
+      font-size: 30px;
       font-weight: 700;
       color: #14532d;
-      margin-bottom: 12px;
-    }
-    .lede {
-      font-size: 17px;
-      color: #334155;
-      margin: 16px 0 24px;
-      line-height: 1.7;
+      margin: 24px 0 16px;
+      letter-spacing: -0.5px;
     }
     h2 {
-      font-size: 18px;
+      font-size: 22px;
       font-weight: 700;
       color: #14532d;
-      margin: 36px 0 12px;
-      letter-spacing: 0.5px;
+      margin: 40px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #bbf7d0;
+    }
+    h3 {
+      font-size: 17px;
+      font-weight: 700;
+      color: #15803d;
+      margin: 24px 0 8px;
     }
     p { margin: 10px 0; color: #334155; }
-    ul { margin: 8px 0 8px 22px; }
+    ul { margin: 10px 0 10px 22px; }
     li { margin: 6px 0; color: #334155; }
     code {
       font-family: "SF Mono", "Consolas", monospace;
@@ -60,16 +52,16 @@
       color: white;
       padding: 24px 28px;
       border-radius: 12px;
-      margin: 24px 0;
+      margin: 28px 0;
       font-size: 16px;
-      line-height: 1.8;
+      line-height: 1.9;
     }
     .highlight strong { color: white; }
     .feature {
       background: #f8fafc;
       border-left: 3px solid #16a34a;
       padding: 16px 20px;
-      margin: 16px 0;
+      margin: 12px 0;
       border-radius: 0 8px 8px 0;
     }
     .feature h3 {
@@ -78,19 +70,6 @@
       margin-bottom: 6px;
     }
     .feature p { margin: 0; color: #475569; font-size: 15px; }
-    .audience {
-      background: #f0fdf4;
-      padding: 20px 24px;
-      border-radius: 8px;
-      margin: 16px 0;
-    }
-    .audience h3 {
-      color: #14532d;
-      font-size: 16px;
-      margin-bottom: 8px;
-    }
-    .audience ul { margin: 4px 0 0 20px; }
-    .audience li { color: #334155; font-size: 15px; }
     .demo {
       background: #14532d;
       color: white;
@@ -99,15 +78,72 @@
       text-align: center;
       margin: 28px 0;
     }
-    .demo strong { font-size: 18px; }
+    .demo strong { font-size: 18px; display: block; margin-bottom: 8px; }
     .demo code {
       background: rgba(255, 255, 255, 0.2);
       color: white;
-      font-size: 17px;
+      font-size: 16px;
       padding: 4px 14px;
     }
-    .small { font-size: 13px; color: #64748b; margin-top: 8px; }
-    .tag { display: inline-block; background: #fef9c3; color: #854d0e; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+    .small { font-size: 13px; color: #64748b; margin-top: 8px; opacity: 0.9; }
+    .step {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 10px 0;
+    }
+    .step-num {
+      display: inline-block;
+      background: #16a34a;
+      color: white;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      text-align: center;
+      border-radius: 50%;
+      margin-right: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      vertical-align: middle;
+    }
+    .callout {
+      border-left: 4px solid #16a34a;
+      background: #f0fdf4;
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      margin: 16px 0;
+    }
+    .callout-warning {
+      border-left-color: #ca8a04;
+      background: #fef9c3;
+    }
+    .image-placeholder {
+      background: #e2e8f0;
+      border: 2px dashed #94a3b8;
+      border-radius: 8px;
+      padding: 40px 20px;
+      margin: 16px 0;
+      text-align: center;
+      color: #64748b;
+      font-size: 14px;
+    }
+    .toc {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 20px 28px;
+      margin: 24px 0 32px;
+    }
+    .toc h2 {
+      margin-top: 0;
+      border-bottom: none;
+      padding-bottom: 0;
+      font-size: 17px;
+    }
+    .toc ol { margin-left: 20px; }
+    .toc a { color: #15803d; text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
     .footer {
       border-top: 1px solid #e2e8f0;
       padding-top: 24px;
@@ -120,14 +156,9 @@
 </head>
 <body>
 
-<span class="badge">来学 · 创课助手</span>
-<h1>把课程，变成有 AI 角色参与的学习空间</h1>
+<h1>来学 · 创课助手</h1>
 
-<p class="lede">
-  它把传统课件变成了一个有多位 AI 角色参与、可以<strong>实时交互</strong>的学习空间，让学习不止于观看，在互动中深入理解。
-</p>
-
-<h2>两个核心特点</h2>
+<p>把传统课件变成了一个有多位 AI 角色参与、可以<strong>实时交互</strong>的学习空间，让学习不止于观看，在互动中深入理解。</p>
 
 <div class="feature">
   <h3>多角色伴学</h3>
@@ -140,63 +171,152 @@
 </div>
 
 <div class="highlight">
-  <strong>一句话</strong>：让未来的课程，拥有传统开发工具无法实现的交互深度。<br>
-  锐捷大学引入它，是为了让今后的每一门课都能实现「学—练—评」的完整闭环。
+  <strong>一句话</strong>：让未来的课程，拥有传统开发工具无法实现的交互深度。锐捷大学引入它，是为了让今后的每一门课都能实现「学—练—评」的完整闭环。
 </div>
 
-<h2>这是什么</h2>
+<h2>体验 Demo</h2>
+
+<div class="demo">
+  <strong>🌐 来学 · 创课助手 Demo</strong>
+  <p style="margin-bottom: 8px;">访问地址：<code>https://www.laixue.work</code></p>
+  <p>测试账号：<code>laixue@laixue.com</code> · 密码：<code>B8pvqpwg65nD</code></p>
+  <p class="small">建议使用 PC 体验 · 当前内测阶段</p>
+</div>
+
 <p><strong>来学 · 创课助手</strong> 是基于<strong>清华大学开源项目 OpenMAIC</strong>做的部署与定制。目前处于内测阶段，持续打磨中。</p>
 
 <h2>谁适合用</h2>
 
-<div class="audience">
-  <h3>📌 业务负责人</h3>
-  <ul>
-    <li>可以用它把产品知识快速转化成可交互的培训课程，让团队不再靠死记硬背 PPT。</li>
-  </ul>
+<ul>
+  <li>如果你是<strong>业务负责人</strong>，可以用它把产品知识快速转化成可交互的培训课程，让团队不再靠死记硬背 PPT。</li>
+  <li>如果你是<strong>一线主管</strong>，可以用它生成标准化的新人带教内容，让每位新同事都获得一致的入门体验。</li>
+  <li>在<strong>锐捷体系内，任何需要把知识高效传递给他人的场景</strong>——内训、客户赋能、跨部门知识共享——来学 · 创课助手都能帮上忙。</li>
+</ul>
+
+<div class="toc">
+  <h2>📑 目录</h2>
+  <ol>
+    <li><a href="#login">登录</a></li>
+    <li><a href="#creator">课件创作者（admin / teacher）</a></li>
+    <li><a href="#admin">运营管理员（admin）</a></li>
+    <li><a href="#learner">学员</a></li>
+    <li><a href="#faq">常见问题</a></li>
+  </ol>
 </div>
 
-<div class="audience">
-  <h3>📌 一线主管</h3>
-  <ul>
-    <li>可以用它生成标准化的新人带教内容，让每位新同事都获得一致的入门体验。</li>
-  </ul>
-</div>
+<h2 id="login">一、登录</h2>
+<p>登录 <code>https://www.laixue.work</code>，需要管理员为您创建账号并告知初始密码。</p>
 
-<div class="audience">
-  <h3>📌 锐捷体系内任何需要把知识高效传递给他人的场景</h3>
-  <ul>
-    <li>内训</li>
-    <li>客户赋能</li>
-    <li>跨部门知识共享</li>
-  </ul>
-  <p>来学 · 创课助手都能帮上忙。</p>
-</div>
+<div class="image-placeholder">[截图：登录页]</div>
 
-<h2>体验方式</h2>
+<h2 id="creator">二、课件创作者（admin / teacher）</h2>
 
-<div class="demo">
-  <p style="margin-bottom: 8px;"><strong>🌐 Demo 在线体验</strong></p>
-  <p>访问码：<code>9B7719</code></p>
-  <p class="small">建议使用 PC · 当前内测阶段</p>
-</div>
+<p>创作者可以登录后进入"创课"首页，输入课程主题与要求，AI 自动生成大纲、分页内容、配图与讲解。生成完毕后保存到云端，分享给学员。</p>
 
-<p>输入访问码后用 admin / teacher / learner 任一账号登录即可。建议先用一个 <strong>admin 账号</strong>（如 <code>jinzengquan@ruijie.com.cn</code>）体验：能创建课件 → 保存到云端 → 分享给其他同事。三个角色的功能差异见用户手册。</p>
+<div class="image-placeholder">[截图：创作者首页 - 输入主题]</div>
 
-<h2>使用方法（未来正式版）</h2>
+<h3>测试用例（创作者可以试一下）</h3>
+<blockquote style="background:#f1f5f9;border-left:4px solid #64748b;padding:12px 16px;margin:12px 0;border-radius:0 6px 6px 0;color:#475569;">
+<p><strong>主题输入示例：</strong></p>
+<p>任何有效的管理，都源于扎实的管理基本功。"锐捷管理基本功"是指锐捷管理者从事日常管理工作所必须掌握、高频应用、能够组合成复杂管理技能的基础动作，分为"管业务"与"带队伍"两大部分。"制定目标"是管业务的第一门课程。课程内容包括：目标管理的理念、实施流程以及目标设定与拆解的方法，旨在帮助学员掌握目标设定与拆解的原则、要点和工具，提升制定目标的能力。</p>
+<p style="margin-top:8px;"><strong>附加要求：</strong>PPT 不超过 10 页，AI 讲师的名字叫"来学"。</p>
+</blockquote>
 
-<p>课件制作者只需四步：</p>
+<div class="image-placeholder">[截图：AI 生成中]</div>
+<div class="image-placeholder">[截图：生成完成 - 预览课件]</div>
+<div class="image-placeholder">[截图：保存到云端 - 我的课程列表]</div>
+<div class="image-placeholder">[截图：分享 - 复制链接]</div>
 
-<ol style="margin: 8px 0 8px 24px;">
-  <li><strong>输入课程内容和要求</strong> — 用自然语言描述课程主题、目标受众、课时长度</li>
-  <li><strong>AI 生成大纲供审阅</strong> — 系统自动产出课程大纲和分页结构，作者确认后进入下一步</li>
-  <li><strong>查看 AI 讲师与 AI 伴学</strong> — 在编辑模式预览 AI 角色如何讲解、互动、提问</li>
-  <li><strong>生成与编辑每页教学内容</strong> — 逐页精修文字、图片、互动问题，发布后学员即可学习</li>
-</ol>
+<h3>编辑已发布的课件</h3>
+<div class="step"><span class="step-num">1</span>在"我的课程"里悬停课程卡片 → 右上角出现<strong>编辑按钮</strong>（铅笔图标）。</div>
+<div class="step"><span class="step-num">2</span>点击铅笔 → 进入<strong>专业模式（Pro Mode）</strong>，可修改每页文字、配图、AI 讲解。</div>
+<div class="step"><span class="step-num">3</span>改完后点"保存到云端" → 同步给所有学员。</div>
+
+<h2 id="admin">三、运营管理员（admin）</h2>
+<p>管理员负责账号与课件的整体管理：创建学员 / 老师账号、重置密码、禁用 / 启用账号、查看所有云端课件。</p>
+
+<div class="image-placeholder">[截图：管理员后台 - 学员管理]</div>
+<div class="image-placeholder">[截图：创建学员 - 显示初始密码]</div>
+
+<h3>常见操作清单</h3>
+<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
+  <thead>
+    <tr style="background:#f0fdf4;border-bottom:2px solid #bbf7d0;">
+      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">场景</th>
+      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">新员工入职</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">创建学员账号 → 抄下初始密码 → 口头/飞书发给员工</td>
+    </tr>
+    <tr style="background:#f7fee7;">
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">老师需要备课权限</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">创建老师账号 → 老师登录后即可在首页生成课件</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">员工离职</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">学员列表 → 禁用（或删除）该员工</td>
+    </tr>
+    <tr style="background:#f7fee7;">
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">员工忘记密码</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">学员列表 → 重置密码 → 把新密码发给员工</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="learner">四、学员</h2>
+<p>学员用 admin 提供的账号登录后，进入学员首页 → 看到所有可学习的课件 → 进入教室开始学习。</p>
+
+<div class="image-placeholder">[截图：学员首页]</div>
+
+<h3>互动方式</h3>
+<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
+  <thead>
+    <tr style="background:#f0fdf4;border-bottom:2px solid #bbf7d0;">
+      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">操作</th>
+      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">效果</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">点击"下一步"按钮</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">翻到下一页</td>
+    </tr>
+    <tr style="background:#f7fee7;">
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">在右下方输入问题</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">AI 老师立即回答你的问题</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">观看 AI 老师讲解</td>
+      <td style="padding:10px 14px;border:1px solid #d1fae5;">语音 + 文字同步显示，可以重听</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="faq">五、常见问题</h2>
+
+<h3>5.1 我分享了课程链接，对方说打不开？</h3>
+<p>最常见原因：对方没有登录。让他们用 admin 提供的账号先登录（不需要退出当前页面），链接会自动重新跳转。</p>
+
+<h3>5.2 生成的课件质量不理想？</h3>
+<p>在专业模式（点击铅笔）里手动修改每页的文字、配图、AI 讲解。AI 生成的是初稿，人工精修是必走环节。</p>
+
+<h3>5.3 我能让学员只看到某些课程，不看到全部吗？</h3>
+<p>当前阶段所有 active 学员可以看到所有云端课件。后续会支持按学员分配。</p>
+
+<h3>5.4 课程生成要等多久？</h3>
+<p>取决于页数。一般 5 页课程约 3-5 分钟，10 页课程约 8-12 分钟。生成过程中可以最小化窗口，不影响后续使用。</p>
+
+<h3>5.5 数据安全吗？</h3>
+<p>所有课程数据和学员学习记录存在 Supabase PostgreSQL，通过行级安全（RLS）严格隔离。每个学员只能看到自己的数据，admin 可以看到全部。详见技术文档。</p>
+
+<hr>
 
 <div class="footer">
-  <p>来学 · 创课助手 · 内测版 · 由锐捷大学培训部门部署运营</p>
-  <p>联系：jinzengquan@ruijie.com.cn</p>
+  <p><strong>反馈与建议</strong>：试点期间任何使用问题，请联系 <code>jinzengquan@ruijie.com.cn</code>。</p>
+  <p style="margin-top: 12px;">来学 · 创课助手 · 内测版 · 由锐捷大学培训部门部署运营</p>
 </div>
 
 </body>
