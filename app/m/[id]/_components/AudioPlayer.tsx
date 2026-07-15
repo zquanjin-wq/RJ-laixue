@@ -86,17 +86,27 @@ export function AudioPlayer({
   }
 
   return (
-    <div className="mx-auto max-w-md w-full px-4 py-3 border-t">
+    <div className="mx-auto max-w-md w-full px-4 py-3 border-t bg-background">
       <audio
+        key={audioUrl /* force remount on src change so the browser loads + autoplays the new track */}
         ref={audioRef}
         src={audioUrl}
         preload="metadata"
+        autoPlay
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onLoadedMetadata={(e) => {
           const el = e.currentTarget;
           setDuration(el.duration || 0);
           el.playbackRate = rate;
+          // Some browsers (iOS Safari) silently swallow autoPlay when no
+          // user gesture has fired yet. We surface that to the user
+          // rather than letting the UI lie about playback state.
+          el.play().catch((err) => {
+            setError(
+              `自动播放失败，请按播放按钮（iOS 首次需要手动开启）— ${String(err)}`,
+            );
+          });
         }}
         onTimeUpdate={(e) => {
           const el = e.currentTarget;

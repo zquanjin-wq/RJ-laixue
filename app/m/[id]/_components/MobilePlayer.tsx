@@ -245,65 +245,70 @@ export function MobilePlayer({
 
   return (
     <>
-      {/* Main text + chapter heading */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-md w-full px-4 pt-4 pb-2">
-          <h2 className="text-base font-medium">{heading}</h2>
-          {current.sceneType !== 'slide' && (
-            <p className="text-xs text-muted-foreground mt-1">
-              （互动内容仅播放文字稿，不展示互动元素）
-            </p>
-          )}
-        </div>
+      {/* Top: chapter title + status (sticky just below the page header) */}
+      <div className="mx-auto max-w-md w-full px-5 pt-4 pb-2 shrink-0">
+        <h2 className="text-base font-medium leading-tight">{heading}</h2>
+        {current.sceneType !== 'slide' && (
+          <p className="text-xs text-muted-foreground mt-1">
+            （互动内容仅播放文字稿，不展示互动元素）
+          </p>
+        )}
+      </div>
 
-        <div className="flex-1 overflow-y-auto">
-          <TextScript text={current.text} active={!dialogOpen} />
-        </div>
+      {/* Middle: scrolling text. flex-1 + overflow so it takes remaining
+          vertical space between the top heading and the bottom dock. */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <TextScript text={current.text} active={!dialogOpen} />
+      </div>
 
-        <ProgressBar
-          current={sceneIndex + 1}
-          total={chapters.length}
-          completed={Math.min(
-            chapters.length,
-            Math.max(0, chapters.length - getQuestionCount(courseId) * 0 + (sceneIndex + 1)),
-          )}
-        />
+      {/* Bottom dock: progress + audio player + chapter controls.
+          Sticky to the bottom of the viewport so users never have to
+          scroll to find the play button — same pattern as 小宇宙. */}
+      <div className="sticky bottom-0 bg-background border-t shadow-[0_-2px_8px_rgba(0,0,0,0.04)] shrink-0">
+        <div className="mx-auto max-w-md w-full">
+          <ProgressBar
+            current={sceneIndex + 1}
+            total={chapters.length}
+            completed={Math.min(
+              chapters.length,
+              Math.max(0, (sceneIndex + 1)),
+            )}
+          />
 
-        {/* Audio player */}
-        <AudioPlayer
-          audioUrl={current.audioUrl}
-          audioId={current.audioId}
-          fallbackText={current.text}
-          rate={rate}
-          onRateChange={setRate}
-          onTimeUpdate={(t) => setAudioOffset(t)}
-          onEnded={handleEnded}
-          registerAudio={handleAudioRef}
-        />
+          <AudioPlayer
+            audioUrl={current.audioUrl}
+            audioId={current.audioId}
+            fallbackText={current.text}
+            rate={rate}
+            onRateChange={setRate}
+            onTimeUpdate={(t) => setAudioOffset(t)}
+            onEnded={handleEnded}
+            registerAudio={handleAudioRef}
+          />
 
-        {/* Chapter controls */}
-        <div className="mx-auto max-w-md w-full px-4 py-3 flex items-center justify-between border-t">
-          <button
-            onClick={goPrev}
-            disabled={!hasPrev}
-            className="text-sm text-muted-foreground disabled:opacity-40 px-3 py-2"
-          >
-            ◀ 上一章
-          </button>
-          <button
-            onClick={() => setDialogOpen(true)}
-            disabled={questionsLeft <= 0}
-            className="rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40"
-          >
-            💬 提问（{questionsLeft}/{QUESTION_LIMIT}）
-          </button>
-          <button
-            onClick={goNext}
-            disabled={!hasNext}
-            className="text-sm text-muted-foreground disabled:opacity-40 px-3 py-2"
-          >
-            下一章 ▶
-          </button>
+          <div className="px-4 py-3 flex items-center justify-between border-t">
+            <button
+              onClick={goPrev}
+              disabled={!hasPrev}
+              className="text-sm text-muted-foreground disabled:opacity-40 px-3 py-2"
+            >
+              ◀ 上一章
+            </button>
+            <button
+              onClick={() => setDialogOpen(true)}
+              disabled={questionsLeft <= 0}
+              className="rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40"
+            >
+              💬 提问（{questionsLeft}/{QUESTION_LIMIT}）
+            </button>
+            <button
+              onClick={goNext}
+              disabled={!hasNext}
+              className="text-sm text-muted-foreground disabled:opacity-40 px-3 py-2"
+            >
+              下一章 ▶
+            </button>
+          </div>
         </div>
       </div>
 
