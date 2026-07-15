@@ -3,20 +3,23 @@
 /**
  * _components/AudioPlayer.tsx
  *
- * Mini audio player for one chapter. Two playback paths:
+ * Mini audio player for one chapter. Three playback paths:
  *
  *   1. Pre-rendered audio (audioUrl) — <audio> element with rate
  *      control. Cheapest, no LLM / TTS cost at runtime.
  *
- *   2. No audio (no audioUrl) — fetch TTS on demand from the
- *      /api/tts/mobile endpoint. The endpoint is intentionally
- *      not implemented yet (Phase 1.5); for now we show "暂无语音"
- *      and let the user read the text.
+ *   2. No audio (no audioUrl) — fetch TTS on demand from the existing
+ *      /api/generate/tts endpoint. Returns base64 audio, which we
+ *      wrap into a Blob URL and feed to the <audio> element.
+ *      Loading state shown while TTS is generating.
  *
- *  Rate is a single source of truth passed down from MobilePlayer.
+ *   3. TTS generation failed — show inline error + a retry button.
+ *
+ * Rate is a single source of truth passed down from MobilePlayer.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getCurrentModelConfig } from '@/lib/utils/model-config';
 
 interface AudioPlayerProps {
   audioUrl?: string;
@@ -37,10 +40,16 @@ function fmtTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
+interface TtsState {
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  blobUrl?: string;
+  error?: string;
+}
+
 export function AudioPlayer({
   audioUrl,
-  audioId: _audioId,
-  fallbackText: _fallbackText,
+  audioId,
+  fallbackText,
   rate,
   onRateChange,
   onTimeUpdate,
@@ -52,11 +61,14 @@ export function AudioPlayer({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [tts, setTts] = useState<TtsState>({ status: 'idle' });
+  const ttsRequestIdRef = useRef(0);
+  const blobUrlRef = useRef<string | null>(null);
 
   const togglePlay = useCallback(() => {
     const el = audioRef.current;
     if (!el) {
-      setError('暂无预录语音，请联系管理员');
+      setError('暂无语音');
       return;
     }
     if (el.paused) {
@@ -77,7 +89,112 @@ export function AudioPlayer({
     return () => registerAudio(null);
   }, [registerAudio]);
 
-  if (!audioUrl) {
+  // Revoke any prior blob URL when the chapter changes or we unmount.
+  useEffect(() => {
+    return () => {
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  // === TTS fallback: if no audioUrl, request /api/generate/tts ===
+  useEffect(() => {
+    // Skip when audioUrl is provided (cheapest path).
+    if (audioUrl) {
+      // Tear down any prior TTS state.
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+      setTts({ status: 'idle' });
+      return;
+    }
+
+    if (!fallbackText) {
+      setTts({ status: 'error', error: '本章节没有文字稿' });
+      return;
+    }
+
+    const reqId = ++ttsRequestIdRef.current;
+    setTts({ status: 'loading' });
+
+    // Build request body from the user's current provider config.
+    const mc = getCurrentModelConfig();
+    fetch('/api/generate/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: fallbackText.slice(0, 1500), // cap to avoid runaway cost
+        audioId: audioId ?? `mobile-${Date.now()}`,
+        ttsProviderId: mc.providerId,
+        ttsVoice: 'female-yujie', // sensible default; settings store has user override
+        ttsModelId: undefined,
+        ttsSpeed: 1.0,
+        ttsApiKey: mc.apiKey || undefined,
+        ttsBaseUrl: mc.baseUrl || undefined,
+      }),
+    })
+      .then(async (res) => {
+        if (reqId !== ttsRequestIdRef.current) return; // stale
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => null);
+          throw new Error(errBody?.message || `HTTP ${res.status}`);
+        }
+        const json = await res.json();
+        if (!json.success || !json.data?.base64) {
+          throw new Error(json.message || 'TTS 返回数据缺失');
+        }
+        // Decode base64 → Blob → Blob URL
+        const binary = atob(json.data.base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const mime = json.data.format === 'mp3' ? 'audio/mpeg' : 'audio/mpeg';
+        const blob = new Blob([bytes], { type: mime });
+        const url = URL.createObjectURL(blob);
+        blobUrlRef.current = url;
+        setTts({ status: 'ready', blobUrl: url });
+      })
+      .catch((e) => {
+        if (reqId !== ttsRequestIdRef.current) return;
+        setTts({ status: 'error', error: e instanceof Error ? e.message : String(e) });
+      });
+  }, [audioUrl, audioId, fallbackText]);
+
+  // === Render TTS-loading state ===
+  if (!audioUrl && tts.status === 'loading') {
+    return (
+      <div className="mx-auto max-w-md w-full px-4 py-4 border-t flex items-center justify-center text-sm text-muted-foreground gap-2">
+        <span className="inline-block w-3 h-3 rounded-full border-2 border-muted-foreground border-t-transparent animate-spin" />
+        正在生成语音…
+      </div>
+    );
+  }
+
+  if (!audioUrl && tts.status === 'error') {
+    return (
+      <div className="mx-auto max-w-md w-full px-4 py-3 border-t text-center">
+        <p className="text-xs text-destructive">语音生成失败：{tts.error}</p>
+        <button
+          onClick={() => {
+            // Force a re-fetch by toggling fallbackText identity
+            setTts({ status: 'idle' });
+          }}
+          className="mt-2 text-xs text-primary underline"
+        >
+          重试
+        </button>
+      </div>
+    );
+  }
+
+  // === Resolve the actual URL the audio element should play ===
+  const effectiveSrc = audioUrl ?? tts.blobUrl;
+
+  if (!effectiveSrc) {
     return (
       <div className="mx-auto max-w-md w-full px-4 py-4 border-t flex items-center justify-center text-sm text-muted-foreground">
         🎧 暂无语音 — 请阅读文字稿
@@ -88,9 +205,9 @@ export function AudioPlayer({
   return (
     <div className="mx-auto max-w-md w-full px-4 py-3 border-t bg-background">
       <audio
-        key={audioUrl /* force remount on src change so the browser loads + autoplays the new track */}
+        key={effectiveSrc /* force remount when src changes — triggers autoplay for new track */}
         ref={audioRef}
-        src={audioUrl}
+        src={effectiveSrc}
         preload="metadata"
         autoPlay
         onPlay={() => setPlaying(true)}
@@ -99,12 +216,11 @@ export function AudioPlayer({
           const el = e.currentTarget;
           setDuration(el.duration || 0);
           el.playbackRate = rate;
-          // Some browsers (iOS Safari) silently swallow autoPlay when no
-          // user gesture has fired yet. We surface that to the user
-          // rather than letting the UI lie about playback state.
+          // Trigger autoplay after metadata loads (browsers won't autoplay
+          // a freshly-mounted <audio> on its own).
           el.play().catch((err) => {
             setError(
-              `自动播放失败，请按播放按钮（iOS 首次需要手动开启）— ${String(err)}`,
+              `自动播放失败，请按播放按钮（iOS 首次需手动开启）— ${String(err)}`,
             );
           });
         }}
