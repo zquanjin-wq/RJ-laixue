@@ -34,15 +34,29 @@ export default async function MobileCoursesPage() {
 
   const serviceSupabase = getServiceSupabase();
 
-  // Confirm the user has a student row (matches /student/courses policy:
-  // only learners can see this list).
-  const { data: student } = await serviceSupabase
-    .from('students')
-    .select('id, name, disabled_at')
-    .eq('user_id', user.id)
+  // Admin / teacher accounts get implicit access to all courses per the
+  // RJ-laixue policy (no student-row binding required). Mirrors the
+  // role check in /student/courses. Without this an admin who tries to
+  // preview the learner experience on mobile gets the misleading
+  // '还没绑定学员档案' card.
+  const { data: callerProfile } = await serviceSupabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
     .maybeSingle();
+  const isStaff = callerProfile?.role === 'admin' || callerProfile?.role === 'teacher';
 
-  if (!student) {
+  // Confirm the user has a student row (matches /student/courses policy:
+  // only learners need to bind; staff skip this check).
+  const { data: student } = isStaff
+    ? { data: null }
+    : await serviceSupabase
+        .from('students')
+        .select('id, name, disabled_at')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+  if (!isStaff && !student) {
     return (
       <main className="min-h-screen flex items-center justify-center px-6">
         <div className="max-w-sm text-center space-y-3">
@@ -55,7 +69,7 @@ export default async function MobileCoursesPage() {
     );
   }
 
-  if (student.disabled_at) {
+  if (!isStaff && student?.disabled_at) {
     return (
       <main className="min-h-screen flex items-center justify-center px-6">
         <div className="max-w-sm text-center space-y-3">
@@ -80,10 +94,10 @@ export default async function MobileCoursesPage() {
     <main className="min-h-screen px-4 pt-6 pb-10">
       <header className="mx-auto max-w-md mb-6">
         <h1 className="text-xl font-semibold tracking-tight">
-          欢迎，{student.name || '同学'}
+          欢迎，{isStaff ? (user.email?.split('@')[0] || '管理员') : (student?.name || '同学')}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          下方为所有已发布课件
+          {isStaff ? '管理员视角 · ' : ''}下方为所有已发布课件
         </p>
       </header>
 
