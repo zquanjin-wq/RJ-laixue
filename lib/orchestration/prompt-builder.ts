@@ -160,27 +160,95 @@ export function buildStructuredPrompt(
     discussionContextSection: buildDiscussionContextSection(discussionContext, agentResponses),
   };
 
+  // Q&A mode: completely replace the prompt with a focused "answer the
+  // question" system prompt. Previous attempts only appended a CRITICAL
+  // directive at the end, but LLMs weight the BEGINNING of the system
+  // prompt much more heavily than the tail — so a late directive gets
+  // drowned out by the rich template-rendered content above it (state
+  // context, slide narration hints, discussion guidance). The model
+  // ended up saying "同学们好，今天我们进入《制定目标》" because that
+  // was the dominant signal in the template body.
+  //
+  // A lean, purpose-built prompt the model reads top-to-bottom with
+  // only the question in front of it is far more reliable than a
+  // post-hoc override glued to the end of a 600-line template.
+  if (isUserQA) {
+    return buildQASystemPrompt({ agentConfig, storeState, agentResponses });
+  }
+
   const prompt = buildPrompt(PROMPT_IDS.AGENT_SYSTEM, vars);
   if (!prompt) {
     throw new Error('agent-system template not found');
   }
-  // When a student asks a question, append a forceful directive so the
-  // model doesn't fall back into "teach the slide" mode. This is appended
-  // AFTER the template (not as a template var) so it's the last thing the
-  // model reads before the conversation history.
-  if (isUserQA) {
-    return (
-      prompt.system +
-      '\n# CRITICAL — STUDENT QUESTION MODE (OVERRIDE ALL OTHER INSTRUCTIONS)\n' +
-      'A student has asked a specific question. Your ENTIRE response must be the answer to that question.\n' +
-      'FORBIDDEN: introducing the course, introducing the slide, walking through slide content, using spotlight/laser, saying "让我们来看" or "我们进入" or "今天我们".\n' +
-      'Your FIRST word must be the direct answer. No greeting, no preamble, no slide narration.\n' +
-      'If the question is about a concept, explain that concept directly and thoroughly. Do NOT teach the slide it appears on.\n' +
-      'Answer the question in as much detail as needed — short questions get short answers, deep questions get thorough answers. The right length is whatever the question deserves.\n' +
-      'Reply in the user\'s language.\n'
+  return prompt.system;
+}
+
+/**
+ * A focused, self-contained system prompt for the Q&A turn.
+ *
+ * Kept short on purpose. Every line earns its place by either
+ * (a) telling the model what NOT to do (anti-lecture), or
+ * (b) telling it what TO do (answer the question).
+ *
+ * No state context dump — we strip slide content because that's
+ * exactly what triggers narration. The agent's name + role are
+ * the only identity we keep.
+ */
+function buildQASystemPrompt({
+  agentConfig,
+  storeState,
+  agentResponses,
+}: {
+  agentConfig: AgentConfig;
+  storeState: import('@/lib/types/chat').StatelessChatRequest['storeState'];
+  agentResponses?: import('./types').AgentTurnSummary[];
+}): string {
+  const speakerName = agentConfig.name || 'AI 讲师';
+  const currentScene = storeState.currentSceneId
+    ? storeState.scenes.find((s) => s.id === storeState.currentSceneId)
+    : undefined;
+
+  const lines: string[] = [
+    '# ROLE',
+    `You are "${speakerName}", speaking in a live classroom Q&A.`,
+    '',
+    '# ABSOLUTE RULES',
+    '1. Your ENTIRE response is the answer to the student\'s question.',
+    '2. Your FIRST word is the answer. No greeting, no preamble.',
+    '3. NEVER say "同学们好", "今天我们", "让我们来看", "我们进入", "这门课". Those are lecture openers. You are not lecturing.',
+    '4. NEVER use spotlight, laser, wb_*, or any tool call. Just text.',
+    '5. Do NOT narrate slide content. The student has already seen the slide.',
+    '6. Answer in the user\'s language. Chinese question → Chinese answer.',
+    '',
+    '# LENGTH',
+    '- 1 sentence for trivial questions.',
+    '- 2-4 sentences for typical questions.',
+    '- Multi-paragraph only when the question genuinely needs depth.',
+    '',
+    '# ANCHOR (only if the question is specifically about this slide)',
+  ];
+
+  if (currentScene) {
+    lines.push(
+      `The student is currently looking at the slide titled "${currentScene.title}".`,
+    );
+    lines.push(
+      'If and only if their question is specifically about this slide, you may reference its content briefly.',
+    );
+    lines.push('Otherwise, IGNORE the slide title entirely.');
+  } else {
+    lines.push('No active slide. Treat the question as a general question.');
+  }
+
+  if (agentResponses && agentResponses.length > 0) {
+    lines.push('');
+    lines.push('# PRIOR TURNS');
+    lines.push(
+      'Other agents may have already spoken in this Q&A. Do NOT repeat or paraphrase their points. Add a complementary angle if relevant; otherwise stay silent.',
     );
   }
-  return prompt.system;
+
+  return lines.join('\n');
 }
 
 // ==================== Length Guidelines ====================
