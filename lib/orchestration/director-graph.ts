@@ -58,6 +58,14 @@ const OrchestratorState = Annotation.Root({
   discussionContext: Annotation<{ topic: string; prompt?: string } | null>,
   triggerAgentId: Annotation<string | null>,
   userProfile: Annotation<{ nickname?: string; bio?: string } | null>,
+  /** Client-supplied session type ('qa' | 'discussion'). Wired from
+   *  StatelessChatRequest.config.sessionType in buildInitialState.
+   *  Authoritative Q&A signal: the existing isUserQA detection based on
+   *  state.messages.some(role==='user') is unreliable because lecture
+   *  narration can also land user-role messages in the history, which
+   *  causes buildQASystemPrompt to be skipped and the teacher resumes
+   *  narrating the slide. */
+  sessionType: Annotation<'qa' | 'discussion' | null>,
   /** Request-scoped agent configs for generated agents (not in the default registry) */
   agentConfigOverrides: Annotation<Record<string, AgentConfig>>,
 
@@ -113,7 +121,11 @@ async function directorNode(
     }
   };
 const isSingleAgent = state.availableAgentIds.length <= 1;
-  const hasUserMessage = state.messages.some((m) => m.role === 'user');
+  // Authoritative: state.sessionType === 'qa'. Fallback to message-based
+  // detection for legacy clients that don't set sessionType.
+  const hasUserMessage =
+    state.sessionType === 'qa' ||
+    state.messages.some((m) => m.role === 'user');
 
   // ── Single agent: code-only director ──
   if (isSingleAgent) {
@@ -336,7 +348,15 @@ async function runAgentGeneration(
   // element details AND appends a "answer directly" directive. We also
   // strip all previous AIMessage narration from the conversation history —
   // otherwise the teacher continues narrating slides it sees in history.
-  const isUserQA = state.messages.some((m) => m.role === 'user');
+  //
+  // Authoritative signal: state.sessionType === 'qa' (now wired from the
+  // client via buildInitialState). Fallback: any user-role message in
+  // state.messages. The fallback alone is unreliable — lecture narration
+  // can also leave user-role messages in history, which silently disables
+  // buildQASystemPrompt and the teacher resumes narrating the slide.
+  const isUserQA =
+    state.sessionType === 'qa' ||
+    state.messages.some((m) => m.role === 'user');
   const systemPrompt = buildStructuredPrompt(
     agentConfig,
     state.storeState,
@@ -523,7 +543,10 @@ async function agentGenerateNode(
   // this, the client keeps looping back to director, which dispatches
   // another agent, which narrates more slide content. The director
   // node's shouldEnd=true is server-only and not visible to the client.
-  const hasUserMessage = state.messages.some((m) => m.role === 'user');
+  // Authoritative: state.sessionType === 'qa' (fallback: message-based).
+  const hasUserMessage =
+    state.sessionType === 'qa' ||
+    state.messages.some((m) => m.role === 'user');
   if (hasUserMessage) {
     const rawWrite = config.writer as (chunk: StatelessEvent) => void;
     rawWrite({
@@ -620,6 +643,7 @@ export function buildInitialState(
     discussionContext,
     triggerAgentId: request.config.triggerAgentId || null,
     userProfile: request.userProfile || null,
+    sessionType: (request.config.sessionType as 'qa' | 'discussion' | undefined) || null,
     agentConfigOverrides,
     currentAgentId: null,
     turnCount,
