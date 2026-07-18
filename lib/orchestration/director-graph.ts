@@ -149,28 +149,6 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
     return { currentAgentId: agentId, shouldEnd: false };
   }
 
-  // ── Single agent: code-only director ──
-  if (isSingleAgent) {
-    const agentId = state.availableAgentIds[0] || 'default-1';
-
-    if (state.turnCount === 0 && !hasUserMessage) {
-      // First turn with no user message yet: dispatch the agent
-      // (lecture narration kicks in).
-      log.info(`[Director] Single agent: dispatching "${agentId}"`);
-      write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
-      return { currentAgentId: agentId, shouldEnd: false };
-    }
-
-    // Either: user asked a question (hasUserMessage), OR agent already
-    // responded (turnCount > 0). In both cases dispatch the agent ONCE
-    // and end the session — agent node will use the Q&A directive.
-    log.info(
-      `[Director] Single agent: dispatching "${agentId}" (turnCount=${state.turnCount}, hasUserMessage=${hasUserMessage})`,
-    );
-    write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
-    return { currentAgentId: agentId, shouldEnd: false };
-  }
-
   // ── Multi agent: fast-path for first turn with trigger ──
   if (state.turnCount === 0 && state.triggerAgentId) {
     const triggerId = state.triggerAgentId;
@@ -194,6 +172,33 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
 
   if (agents.length === 0) {
     return { shouldEnd: true };
+  }
+
+  // Q&A mode short-circuit: the user asked a direct question. Skip the
+  // director LLM call entirely — "who answers" is already known (the
+  // teacher), and that call was pure overhead on the Q&A path (plus any
+  // failure of it ended the session silently, see the catch below).
+  //
+  // Dispatch the teacher ONCE with shouldEnd=false so the conditional
+  // edge routes to agent_generate. After the agent turn,
+  // agentGenerateNode emits cue_user (hasUserMessage), which exits the
+  // client-side loop — exactly one answer per question.
+  //
+  // History: f74faec returned shouldEnd=true from this branch, intending
+  // "dispatch once, then end". But directorCondition evaluates shouldEnd
+  // BEFORE routing to agent_generate, so the graph went director→END and
+  // the agent never ran — total silence, and the client marked the
+  // session "已结束" (completed, totalAgents=0).
+  if (hasUserMessage) {
+    const targetAgent =
+      state.availableAgentIds.find((id) => id.includes('teacher')) ||
+      state.availableAgentIds[0] ||
+      'default-1';
+    log.info(
+      `[Director] Q&A mode: single-turn dispatch of "${targetAgent}" (director LLM skipped)`,
+    );
+    write({ type: 'thinking', data: { stage: 'agent_loading', agentId: targetAgent } });
+    return { currentAgentId: targetAgent, shouldEnd: false };
   }
 
   write({ type: 'thinking', data: { stage: 'director' } });
@@ -225,33 +230,6 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
     log.info(`[Director] Raw decision: ${content}`);
 
     const decision = parseDirectorDecision(content);
-
-    // Q&A mode: if the user has asked a question, dispatch the agent
-    // ONCE then end the session. CRITICAL: must also emit a cue_user
-    // event so the client-side while(true) loop in lib/chat/agent-loop.ts
-    // exits. Returning shouldEnd=true alone is NOT enough — the client
-    // loop only checks for the cue_user SSE event.
-    if (hasUserMessage) {
-      const targetAgent = decision.nextAgentId && decision.nextAgentId !== 'USER'
-        ? decision.nextAgentId
-        : (state.availableAgentIds.find((id) => id.includes('teacher')) ||
-           state.availableAgentIds[0] || 'default-1');
-      if (!state.availableAgentIds.includes(targetAgent)) {
-        log.warn(`[Director] Q&A target "${targetAgent}" not available, ending`);
-        write({ type: 'cue_user', data: { fromAgentId: state.currentAgentId || undefined } });
-        return { shouldEnd: true };
-      }
-      log.info(`[Director] Q&A mode: single-turn dispatch of "${targetAgent}"`);
-      write({ type: 'thinking', data: { stage: 'agent_loading', agentId: targetAgent } });
-      // Don't emit cue_user yet — we still need to run the agent once.
-      // The agent node will run, emit its response, and then this loop
-      // comes back to director — director will see shouldEnd=true and
-      // exit naturally. But we still need to break out of the loop, so
-      // signal end here. (Issue: the client loop only watches cue_user,
-      // not shouldEnd. The agent node handles this by emitting cue_user
-      // after the agent finishes. See runAgentGeneration below.)
-      return { currentAgentId: targetAgent, shouldEnd: true };
-    }
 
     if (decision.shouldEnd || !decision.nextAgentId) {
       log.info('[Director] Decision: END');
