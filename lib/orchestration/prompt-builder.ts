@@ -112,6 +112,40 @@ Hard rules (these override anything in the rest of this prompt):
 
 After answering, stop. Do not tee up the next slide, do not summarize the page, do not say "我们继续". The director will route back to lecture mode (or cue the user) after this turn.`;
 
+/**
+ * Q&A-mode length rules — REPLACE the role length guidelines.
+ *
+ * The role guidelines cap the teacher at ~100 characters per response.
+ * That cap exists for lecture pacing, but in Q&A it amputates real
+ * answers: the model stops after one short paragraph even when the
+ * question needs depth (observed 2026-07-18: the answer to the SMART
+ * "measurable" question ended right after ~130 chars, mid-thought).
+ */
+const QA_LENGTH_GUIDELINES = `- This is a Q&A ANSWER, not a lecture segment. The ~100-character speech cap from the role guidelines does NOT apply here — it exists for lecture pacing and would amputate a real answer.
+- Match the answer's depth to the question: trivial clarification = 1 sentence; a typical "怎么办 / 为什么 / 怎么写" = 2-5 sentences PLUS at least one concrete example or actionable suggestion; genuinely deep topics = multiple short paragraphs.
+- COMPLETENESS RULE: finish the whole answer before ending your turn. Never stop at the first paragraph of what should be a multi-part answer. If you promised structure ("有两个办法"), deliver all of it.`;
+
+/**
+ * Closing reminder APPENDED at the very END of the system prompt in Q&A
+ * mode. The template's own final line ("Remember: Speak naturally as a
+ * teacher") owns the recency slot — the highest-attention tail position.
+ * In Q&A mode this block takes that slot back, so the last thing the
+ * model reads is "answer the question", not "teach the slide".
+ */
+const QA_MODE_CLOSING = `# Q&A MODE — FINAL REMINDER
+Re-read the student's latest message: it is a DIRECT QUESTION, and your entire response is the answer to it.
+- FIRST sentence = the answer itself. No greeting, no slide recap, no "我们先来看".
+- The slide elements above are BACKGROUND for understanding the question, NOT a script to deliver.
+- Give the COMPLETE answer (see the Length rules above) — do not stop early, do not tee up the next slide, do not say "我们继续".
+- Answer in the student's language.`;
+
+/**
+ * Plain-text format example for Q&A mode. Keeps the JSON-array output
+ * contract intact without priming the "spotlight first, then narrate"
+ * pattern that FORMAT_EXAMPLE_SLIDE demonstrates.
+ */
+const FORMAT_EXAMPLE_QA = `[{"type":"text","content":"Your direct, complete answer to the student's question — in their language, with a concrete example if useful."}]`;
+
 // ==================== Private helpers ====================
 
 function buildStudentProfileSection(userProfile?: { nickname?: string; bio?: string }): string {
@@ -183,25 +217,38 @@ export function buildStructuredPrompt(
     studentProfileSection: buildStudentProfileSection(userProfile),
     peerContext: buildPeerContextSection(agentResponses, agentConfig.name),
     languageConstraint: buildLanguageConstraint(storeState.stage?.languageDirective),
-    formatExample: hasSlideActions ? FORMAT_EXAMPLE_SLIDE : FORMAT_EXAMPLE_WB,
+    // Q&A mode de-primes lecture behavior: plain-text format example, no
+    // spotlight few-shot, no slide-action guidelines — those taught the
+    // model to open with spotlight + slide narration even under Q&A rules.
+    formatExample: isUserQA
+      ? FORMAT_EXAMPLE_QA
+      : hasSlideActions
+        ? FORMAT_EXAMPLE_SLIDE
+        : FORMAT_EXAMPLE_WB,
     orderingPrinciples: hasSlideActions ? ORDERING_SLIDE : ORDERING_WB,
-    spotlightExamples: hasSlideActions ? SPOTLIGHT_EXAMPLES : '',
+    spotlightExamples: isUserQA ? '' : hasSlideActions ? SPOTLIGHT_EXAMPLES : '',
     actionDescriptions: getActionDescriptions(effectiveActions),
-    slideActionGuidelines: hasSlideActions ? SLIDE_ACTION_GUIDELINES : '',
+    slideActionGuidelines: isUserQA ? '' : hasSlideActions ? SLIDE_ACTION_GUIDELINES : '',
     mutualExclusionNote: hasSlideActions ? MUTUAL_EXCLUSION_NOTE : '',
     stateContext: buildStateContext(storeState, isUserQA),
     virtualWhiteboardContext: buildVirtualWhiteboardContext(storeState, whiteboardLedger),
-    lengthGuidelines: buildLengthGuidelines(agentConfig.role),
+    // Q&A mode swaps the lecture length cap for "complete answer" rules —
+    // the ~100-char cap amputated real answers mid-thought.
+    lengthGuidelines: isUserQA ? QA_LENGTH_GUIDELINES : buildLengthGuidelines(agentConfig.role),
     whiteboardGuidelines: buildWhiteboardGuidelines(agentConfig.role),
     discussionContextSection: buildDiscussionContextSection(discussionContext, agentResponses),
   };
 
-  // Q&A mode: keep the full template-rendered system prompt (so the model
-  // still sees its role, persona, action guidelines, slide context, and
-  // history) and PREPEND a short Q&A hard-rule preamble at the TOP. This
-  // puts the anti-lecture directive in the highest-attention region of
-  // the context window while preserving all the context the model needs
-  // to actually answer the question.
+  // Q&A mode: keep the full template-rendered system prompt (role,
+  // persona, slide context, history — the model needs these to answer
+  // concretely) and SANDWICH it:
+  //   - TOP: QA_MODE_PREAMBLE hard rules (attention)
+  //   - BOTTOM: QA_MODE_CLOSING final reminder (recency — the template's
+  //     own last line is "Speak naturally as a teacher", which otherwise
+  //     owns the tail slot and pulls the model back into narration)
+  // Lecture-priming vars (spotlight few-shot, slide-action guidelines,
+  // spotlight-first format example, ~100-char length cap) are swapped
+  // out in `vars` above when isUserQA is true.
   //
   // The previous design (commit 77b6b20, completely replacing the system
   // prompt with buildQASystemPrompt) put the model in an information
@@ -217,7 +264,7 @@ export function buildStructuredPrompt(
     throw new Error('agent-system template not found');
   }
   if (isUserQA) {
-    return `${QA_MODE_PREAMBLE}\n\n${prompt.system}`;
+    return `${QA_MODE_PREAMBLE}\n\n${prompt.system}\n\n${QA_MODE_CLOSING}`;
   }
   return prompt.system;
 }
