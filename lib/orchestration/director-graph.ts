@@ -366,13 +366,12 @@ async function runAgentGeneration(
     state.agentResponses,
     isUserQA,
   );
-  // In Q&A mode, keep only the user's most recent message as history. This
-  // removes every previous teacher/assistant narration from the model's
-  // context, so it can't parrot or continue a previous "teach the slide"
-  // turn. In lecture / agent-initiated modes, keep all messages.
-  const historyMessages = isUserQA
-    ? state.messages.filter((m) => m.role === 'user').slice(-1)
-    : state.messages;
+  // History: keep the full message list in Q&A mode too. The Q&A
+  // preamble in prompt-builder.ts is the anti-lecture enforcement; the
+  // model still needs the prior conversation to understand follow-ups
+  // and to give concrete answers. Stripping history left the model
+  // unable to anchor its answer to anything the student had said before.
+  const historyMessages = state.messages;
   const openaiMessages = convertMessagesToOpenAI(historyMessages, agentId);
   const adapter = new AISdkLangGraphAdapter(state.languageModel, state.thinkingConfig ?? undefined);
 

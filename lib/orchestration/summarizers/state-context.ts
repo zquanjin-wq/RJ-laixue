@@ -127,10 +127,11 @@ export function buildStateContext(
         `Current scene: "${currentScene.title}" (${currentScene.type}, id: ${currentSceneId})`,
       );
 
-      // Slide scene: include element details (skip in concise mode to
-      // prevent the teacher from re-narrating slide content when a
-      // student asks a question — the student has already seen it).
-      if (currentScene.content.type === 'slide' && !concise) {
+      // Slide scene: include element details. The Q&A preamble in
+      // prompt-builder.ts handles anti-lecture; stripping slide elements
+      // here leaves the model in an information vacuum and produces
+      // one-sentence non-answers that latch onto the slide title.
+      if (currentScene.content.type === 'slide') {
         const elements = currentScene.content.canvas.elements;
         lines.push(`Current slide elements (${elements.length}):\n${summarizeElements(elements)}`);
       }

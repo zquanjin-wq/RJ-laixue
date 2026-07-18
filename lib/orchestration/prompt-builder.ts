@@ -76,6 +76,42 @@ const SLIDE_ACTION_GUIDELINES = `- spotlight: Use to focus attention on ONE key 
 const MUTUAL_EXCLUSION_NOTE = `- IMPORTANT — Whiteboard / Canvas mutual exclusion: The whiteboard and slide canvas are mutually exclusive. When the whiteboard is OPEN, the slide canvas is hidden — spotlight and laser actions targeting slide elements will have NO visible effect. If you need to use spotlight or laser, call wb_close first to reveal the slide canvas. Conversely, if the whiteboard is CLOSED, wb_draw_* actions still work (they implicitly open the whiteboard), but be aware that doing so hides the slide canvas.
 - Prefer variety: mix spotlights, laser, and whiteboard for engaging teaching. Don't use the same action type repeatedly.`;
 
+// ==================== Q&A Mode Preamble ====================
+
+/**
+ * Prepended at the TOP of the agent system prompt when isUserQA=true.
+ *
+ * The Q&A mode question/answer works as follows:
+ * - The user typed a question in the Q&A side panel.
+ * - We prepend this block (highest-attention region of the context window)
+ *   so the anti-lecture directive is the first thing the model reads.
+ * - Below it, the FULL template-rendered system prompt still runs — role,
+ *   persona, action guidelines, slide context, history — so the model has
+ *   all the context it needs to answer concretely.
+ *
+ * What this block does NOT do:
+ * - It does NOT strip slide content or history. The model needs that
+ *   context to give a real answer.
+ * - It does NOT lock the model to 1-2 sentences. Real questions deserve
+ *   real answers; truncating produced "我们先来看面试官的四级量表——"
+ *   single-sentence non-answers.
+ * - It does NOT ban spotlight/laser categorically. If pointing at a
+ *   specific slide element genuinely helps the answer, the model may
+ *   use it. It just may NOT use those actions as a lecture substitute.
+ */
+const QA_MODE_PREAMBLE = `# Q&A MODE (User Has Asked a Direct Question — OVERRIDES)
+The user typed a DIRECT QUESTION in the Q&A side panel. Treat answering this question as your ONLY job for this turn.
+
+Hard rules (these override anything in the rest of this prompt):
+1. Your FIRST sentence MUST directly answer the user's question. No greetings ("同学们好", "Welcome"), no lecture openers ("今天我们", "我们先来看", "让我们进入", "这门课"), no meta-commentary about the slide. If your first sentence could appear at the start of a normal lecture turn, you are doing it wrong.
+2. Do NOT continue narrating the current slide. The "Current slide elements" block in this prompt is BACKGROUND CONTEXT for understanding the user's question — not a script to deliver.
+3. You MAY reference slide content if it genuinely helps the answer (e.g. the question is about the current slide's topic). Do NOT force a connection — if the question is unrelated to the slide, ignore the slide entirely.
+4. You MAY use spotlight/laser if pointing at a specific element genuinely helps your answer. Do NOT use them as a lecture substitute.
+5. Match the question's depth with the answer's depth. "怎么做" deserves 2-5 sentences with concrete examples, not a one-sentence deflection.
+6. If you genuinely cannot answer, say so plainly ("我不确定" / "I'm not sure"). Do NOT deflect to slide content as a substitute for an answer.
+
+After answering, stop. Do not tee up the next slide, do not summarize the page, do not say "我们继续". The director will route back to lecture mode (or cue the user) after this turn.`;
+
 // ==================== Private helpers ====================
 
 function buildStudentProfileSection(userProfile?: { nickname?: string; bio?: string }): string {
@@ -160,25 +196,28 @@ export function buildStructuredPrompt(
     discussionContextSection: buildDiscussionContextSection(discussionContext, agentResponses),
   };
 
-  // Q&A mode: completely replace the prompt with a focused "answer the
-  // question" system prompt. Previous attempts only appended a CRITICAL
-  // directive at the end, but LLMs weight the BEGINNING of the system
-  // prompt much more heavily than the tail — so a late directive gets
-  // drowned out by the rich template-rendered content above it (state
-  // context, slide narration hints, discussion guidance). The model
-  // ended up saying "同学们好，今天我们进入《制定目标》" because that
-  // was the dominant signal in the template body.
+  // Q&A mode: keep the full template-rendered system prompt (so the model
+  // still sees its role, persona, action guidelines, slide context, and
+  // history) and PREPEND a short Q&A hard-rule preamble at the TOP. This
+  // puts the anti-lecture directive in the highest-attention region of
+  // the context window while preserving all the context the model needs
+  // to actually answer the question.
   //
-  // A lean, purpose-built prompt the model reads top-to-bottom with
-  // only the question in front of it is far more reliable than a
-  // post-hoc override glued to the end of a 600-line template.
-  if (isUserQA) {
-    return buildQASystemPrompt({ agentConfig, storeState, agentResponses });
-  }
-
+  // The previous design (commit 77b6b20, completely replacing the system
+  // prompt with buildQASystemPrompt) put the model in an information
+  // vacuum: it saw the slide TITLE and a 6-rule prompt with no slide
+  // content, no action guidelines, no prior context. When the user's
+  // question was loosely related to the slide, the model latched onto
+  // the slide title and produced a one-sentence non-answer like
+  // "我们先来看面试官的四级量表——左边这部分". Keeping the full prompt
+  // below the preamble lets the model still reference slide content
+  // when it's actually relevant.
   const prompt = buildPrompt(PROMPT_IDS.AGENT_SYSTEM, vars);
   if (!prompt) {
     throw new Error('agent-system template not found');
+  }
+  if (isUserQA) {
+    return `${QA_MODE_PREAMBLE}\n\n${prompt.system}`;
   }
   return prompt.system;
 }
