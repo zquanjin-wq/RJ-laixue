@@ -136,8 +136,35 @@ const QA_MODE_CLOSING = `# Q&A MODE — FINAL REMINDER
 Re-read the student's latest message: it is a DIRECT QUESTION, and your entire response is the answer to it.
 - FIRST sentence = the answer itself. No greeting, no slide recap, no "我们先来看".
 - The slide elements above are BACKGROUND for understanding the question, NOT a script to deliver.
-- Give the COMPLETE answer (see the Length rules above) — do not stop early, do not tee up the next slide, do not say "我们继续".
+- Give the COMPLETE answer (see the Length rules above) — do not stop early, do not launch into new slide content.
+- After the complete answer, end with ONE short natural transition sentence that hands the floor back — e.g. "没问题的话,我们接着往下看。" or "希望这解答了你的疑问,我们继续。" This is a handoff, NOT new teaching: do not start explaining the next slide, do not add more content after it.
 - Answer in the student's language.`;
+
+/**
+ * Self-contained system prompt for a PEER (role 'student') speaking in Q&A
+ * mode. The peer is NOT answering the question — the teacher just did that.
+ * The peer reacts as a fellow student: a brief resonance, a relatable "me
+ * too", or one short follow-up question. One or two sentences, student voice.
+ *
+ * This is intentionally separate from the teacher's Q&A sandwich: if the peer
+ * received the teacher's "answer the question completely" prompt, it would
+ * re-answer the question at length and the two agents would talk past each
+ * other. The peer's job is classroom texture, not a second answer.
+ */
+function buildPeerQASystemPrompt(agentName: string): string {
+  return `You are "${agentName}", a fellow STUDENT in this classroom (not the teacher, not an assistant).
+
+A classmate just asked the teacher a question, and the teacher has already answered it. You are now chiming in briefly, as one student to another.
+
+Hard rules:
+1. You are NOT answering the question — the teacher already did. Do not re-explain, do not add a second full answer.
+2. Say ONE or TWO short sentences, in a natural student voice. Either:
+   - react / resonate ("我也有这个疑问…" / "原来如此,那个例子挺有用的"), OR
+   - ask ONE short follow-up question a real classmate might ask.
+3. Never lecture, never summarize the slide, never use spotlight/laser/whiteboard.
+4. Match the language the classmate used (Chinese question → Chinese).
+5. Stop after your one or two sentences. Do not say "我们继续" or tee up the next slide.`;
+}
 
 /**
  * Plain-text format example for Q&A mode. Keeps the JSON-array output
@@ -201,6 +228,16 @@ export function buildStructuredPrompt(
   agentResponses?: AgentTurnSummary[],
   isUserQA = false,
 ): string {
+  // Q&A mode, PEER (student) agent: return a self-contained "react as a
+  // classmate" prompt instead of the teacher's Q&A sandwich. Without this
+  // branch the peer would inherit the teacher's "answer the question
+  // completely" instructions and produce a second full-length answer,
+  // talking past the teacher. The peer's job is classroom texture (a brief
+  // resonance or one follow-up question), not another answer.
+  if (isUserQA && agentConfig.role === 'student') {
+    return buildPeerQASystemPrompt(agentConfig.name);
+  }
+
   // Determine current scene type for action filtering
   const currentScene = storeState.currentSceneId
     ? storeState.scenes.find((s) => s.id === storeState.currentSceneId)

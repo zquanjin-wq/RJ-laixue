@@ -175,14 +175,27 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
   }
 
   // Q&A mode short-circuit: the user asked a direct question. Skip the
-  // director LLM call entirely — "who answers" is already known (the
-  // teacher), and that call was pure overhead on the Q&A path (plus any
-  // failure of it ended the session silently, see the catch below).
+  // director LLM call entirely — "who answers" is already known, and
+  // that call was pure overhead on the Q&A path (plus any failure of it
+  // ended the session silently, see the catch below).
   //
-  // Dispatch the teacher ONCE with shouldEnd=false so the conditional
-  // edge routes to agent_generate. After the agent turn,
-  // agentGenerateNode emits cue_user (hasUserMessage), which exits the
-  // client-side loop — exactly one answer per question.
+  // Two-stage flow, driven by the client loop re-issuing requests with
+  // the accumulated directorState.agentResponses:
+  //   Stage 1 — dispatch the TEACHER to answer. shouldEnd=false routes
+  //     to agent_generate. agentGenerateNode does NOT cue_user after the
+  //     teacher, so the client loop comes back for stage 2.
+  //   Stage 2 — the teacher has spoken (present in agentResponses). If a
+  //     peer (role 'student') agent exists and hasn't spoken yet for this
+  //     question, dispatch exactly ONE peer to react (1-2 sentences,
+  //     student voice). After the peer, agentGenerateNode emits cue_user
+  //     and the client loop exits.
+  //
+  // The teacher is found by role==='teacher' (falling back to an id
+  // containing 'teacher', then the first agent). The peer is found by
+  // role==='student'. If no peer exists (single-teacher course), the flow
+  // collapses to teacher-only: the teacher answers, then cue_user fires
+  // on the second pass (peerSpoken stays false but no peer is found, so
+  // we end) — identical to the pre-change behavior for such courses.
   //
   // History: f74faec returned shouldEnd=true from this branch, intending
   // "dispatch once, then end". But directorCondition evaluates shouldEnd
@@ -190,15 +203,41 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
   // the agent never ran — total silence, and the client marked the
   // session "已结束" (completed, totalAgents=0).
   if (hasUserMessage) {
-    const targetAgent =
+    const findByRole = (role: string) =>
+      state.availableAgentIds.find((id) => resolveAgent(state, id)?.role === role);
+
+    const teacherId =
+      findByRole('teacher') ||
       state.availableAgentIds.find((id) => id.includes('teacher')) ||
       state.availableAgentIds[0] ||
       'default-1';
-    log.info(
-      `[Director] Q&A mode: single-turn dispatch of "${targetAgent}" (director LLM skipped)`,
+
+    const teacherSpoken = state.agentResponses.some((r) => r.agentId === teacherId);
+    const peerIds = state.availableAgentIds.filter(
+      (id) => resolveAgent(state, id)?.role === 'student',
     );
-    write({ type: 'thinking', data: { stage: 'agent_loading', agentId: targetAgent } });
-    return { currentAgentId: targetAgent, shouldEnd: false };
+    const peerSpoken = state.agentResponses.some((r) => peerIds.includes(r.agentId));
+
+    // Stage 2: teacher already answered. Dispatch one peer if available
+    // and not yet spoken; otherwise end (cue_user fires in agentGenerateNode).
+    if (teacherSpoken) {
+      const nextPeer = peerIds.find((id) => !state.agentResponses.some((r) => r.agentId === id));
+      if (nextPeer && !peerSpoken) {
+        log.info(`[Director] Q&A mode: dispatching peer "${nextPeer}" to react (stage 2)`);
+        write({ type: 'thinking', data: { stage: 'agent_loading', agentId: nextPeer } });
+        return { currentAgentId: nextPeer, shouldEnd: false };
+      }
+      // No peer to dispatch (or peer already spoke): end the Q&A round.
+      // agentGenerateNode already emitted cue_user after the final agent,
+      // so the client loop has exited; this shouldEnd just closes the graph.
+      log.info('[Director] Q&A mode: round complete, ending');
+      return { shouldEnd: true };
+    }
+
+    // Stage 1: dispatch the teacher to answer the question.
+    log.info(`[Director] Q&A mode: dispatching teacher "${teacherId}" (stage 1)`);
+    write({ type: 'thinking', data: { stage: 'agent_loading', agentId: teacherId } });
+    return { currentAgentId: teacherId, shouldEnd: false };
   }
 
   write({ type: 'thinking', data: { stage: 'director' } });
@@ -360,6 +399,26 @@ async function runAgentGeneration(
     ),
   ];
 
+  // Q&A PEER turn: inject the teacher's just-delivered answer so the peer
+  // can actually react to it. The teacher's answer lives in
+  // state.agentResponses (appended by the previous request's
+  // agentGenerateNode), NOT in state.messages — so without this the peer
+  // would "react" to an answer it never saw and produce generic filler.
+  // contentPreview is capped at 300 chars, which is enough for the peer to
+  // grasp the gist and respond in 1-2 sentences.
+  if (isUserQA && agentConfig.role === 'student') {
+    const teacherAnswer = [...state.agentResponses]
+      .reverse()
+      .find((r) => resolveAgent(state, r.agentId)?.role === 'teacher');
+    if (teacherAnswer?.contentPreview) {
+      lcMessages.push(
+        new HumanMessage(
+          `The teacher ("${teacherAnswer.agentName}") just answered the classmate's question with:\n\n"${teacherAnswer.contentPreview}"\n\nNow react briefly as a fellow student, per your instructions.`,
+        ),
+      );
+    }
+  }
+
   // Ensure the message list ends with a HumanMessage.
   // After agent-aware role mapping, other agents' messages become user role,
   // so trailing AIMessage is less likely. But guard against edge cases
@@ -516,20 +575,54 @@ async function agentGenerateNode(
   }
 
   // Q&A mode: emit cue_user so the client-side while(true) loop in
-  // lib/chat/agent-loop.ts exits after this single agent turn. Without
-  // this, the client keeps looping back to director, which dispatches
-  // another agent, which narrates more slide content. The director
-  // node's shouldEnd=true is server-only and not visible to the client.
+  // lib/chat/agent-loop.ts exits — but only after the FINAL speaker of
+  // the Q&A round. The round is: teacher answers, then (optionally) one
+  // peer reacts. cue_user must NOT fire after the teacher when a peer is
+  // still pending, otherwise the client loop exits before the peer speaks
+  // and the peer never appears (this was the pre-change behavior: cue fired
+  // on every agent turn, so the round always ended after the teacher).
+  //
+  // This node runs AFTER agentId's turn, but state.agentResponses does NOT
+  // yet include the just-finished turn (it's appended in the return value
+  // below, and reducers apply after the node completes). So compute "who
+  // has spoken" as agentResponses + agentId.
   // Authoritative: state.sessionType === 'qa' (fallback: message-based).
   const hasUserMessage =
     state.sessionType === 'qa' ||
     state.messages.some((m) => m.role === 'user');
   if (hasUserMessage) {
-    const rawWrite = config.writer as (chunk: StatelessEvent) => void;
-    rawWrite({
-      type: 'cue_user',
-      data: { fromAgentId: agentId },
-    });
+    const spokenIds = new Set(state.agentResponses.map((r) => r.agentId));
+    spokenIds.add(agentId); // the turn that just finished
+
+    const teacherId =
+      state.availableAgentIds.find((id) => resolveAgent(state, id)?.role === 'teacher') ||
+      state.availableAgentIds.find((id) => id.includes('teacher')) ||
+      state.availableAgentIds[0] ||
+      'default-1';
+    const peerIds = state.availableAgentIds.filter(
+      (id) => resolveAgent(state, id)?.role === 'student',
+    );
+
+    const teacherSpoken = spokenIds.has(teacherId);
+    const peerPending = peerIds.some((id) => !spokenIds.has(id));
+
+    // The round is finished when the teacher has spoken AND no peer is
+    // still waiting to react. Single-teacher courses have no peers, so
+    // peerPending is false and cue fires right after the teacher — same
+    // as the pre-change behavior for those courses.
+    const roundFinished = teacherSpoken && !peerPending;
+
+    if (roundFinished) {
+      const rawWrite = config.writer as (chunk: StatelessEvent) => void;
+      rawWrite({
+        type: 'cue_user',
+        data: { fromAgentId: agentId },
+      });
+    } else {
+      log.info(
+        `[AgentGenerate] Q&A round not finished (teacherSpoken=${teacherSpoken}, peerPending=${peerPending}); withholding cue_user so the client loop dispatches the next speaker`,
+      );
+    }
   }
 
   return {
