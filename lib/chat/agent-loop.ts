@@ -140,13 +140,10 @@ export async function runAgentLoop(
     // whiteboard, scene, or mode between turns
     const freshStoreState = callbacks.getStoreState();
     const currentMessages = callbacks.getMessages();
-
-    const messagesForRequest =
-      currentMessages.length > 0 ? currentMessages : request.messages;
+    const messagesForRequest = currentMessages;
 
     if (request.config.sessionType === 'qa' && messagesForRequest.length === 0) {
       console.error('[AgentLoop] Q&A messages is empty before POST', {
-        requestMessagesLength: request.messages?.length ?? 0,
         currentMessagesLength: currentMessages.length,
         agentIds: request.config.agentIds,
       });

@@ -398,7 +398,7 @@ export async function* statelessGenerate(
       null;
     if (!qaQuestion) {
       for (let i = request.messages.length - 1; i >= 0; i--) {
-        const msg = request.messages[i] as Record<string, unknown>;
+        const msg = request.messages[i] as unknown as Record<string, unknown>;
         if (msg.role !== 'user') continue;
 
         let raw: string;

@@ -148,12 +148,11 @@ function extractLatestStudentQuestion(
   for (let i = state.messages.length - 1; i >= 0; i--) {
     const msg = state.messages[i];
     if (msg.role !== 'user') continue;
-    const content =
-      typeof msg.content === 'string'
-        ? msg.content
-        : (msg as unknown as { parts?: Array<{ text?: string }> }).parts
-            ?.map((p) => p.text || '')
-            .join('\n') || '';
+    const content = Array.isArray((msg as unknown as { parts?: Array<{ text?: string }> }).parts)
+      ? ((msg as unknown as { parts: Array<{ text?: string }> }).parts
+          .map((p) => p.text || '')
+          .join('\n'))
+      : '';
     const cleaned = content
       .replace(/^\[学生\]\s*[:：]\s*/g, '')
       .replace(/^学生\s*[:：]\s*/g, '')
@@ -293,7 +292,13 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
         log.error('[Director] Q&A: cannot extract student question from messages');
         // Dump state.messages for debugging
         state.messages.forEach((m, i) => {
-          log.error(`  [${i}] role=${m.role} content=${typeof m.content === 'string' ? m.content.slice(0, 100) : '[complex]'}`);
+          const partText = Array.isArray((m as unknown as { parts?: Array<{ text?: string }> }).parts)
+            ? ((m as unknown as { parts: Array<{ text?: string }> }).parts
+                .map((p) => p.text || '')
+                .join(' '))
+                .slice(0, 100)
+            : '[complex]';
+          log.error(`  [${i}] role=${m.role} content=${partText}`);
         });
       }
       log.info(
@@ -972,7 +977,7 @@ export function buildInitialState(
   let currentQAQuestion: string | null = incoming?.currentQAQuestion ?? null;
   if (!currentQAQuestion) {
     for (let i = request.messages.length - 1; i >= 0; i--) {
-      const msg = request.messages[i] as Record<string, unknown>;
+      const msg = request.messages[i] as unknown as Record<string, unknown>;
       if (msg.role !== 'user') continue;
 
       // UIMessage: parts[{type:'text', text:'...'}]
