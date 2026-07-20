@@ -141,9 +141,20 @@ export async function runAgentLoop(
     const freshStoreState = callbacks.getStoreState();
     const currentMessages = callbacks.getMessages();
 
+    const messagesForRequest =
+      currentMessages.length > 0 ? currentMessages : request.messages;
+
+    if (request.config.sessionType === 'qa' && messagesForRequest.length === 0) {
+      console.error('[AgentLoop] Q&A messages is empty before POST', {
+        requestMessagesLength: request.messages?.length ?? 0,
+        currentMessagesLength: currentMessages.length,
+        agentIds: request.config.agentIds,
+      });
+    }
+
     // Build request body
     const body: Record<string, unknown> = {
-      messages: currentMessages,
+      messages: messagesForRequest,
       storeState: freshStoreState,
       config: request.config,
       directorState,

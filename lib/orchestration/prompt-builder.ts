@@ -210,6 +210,99 @@ ${discussionContext.prompt ? `Guiding prompt: ${discussionContext.prompt}` : ''}
 IMPORTANT: As you are starting this discussion, begin by introducing the topic naturally to the students. Engage them and invite their thoughts. Do not wait for user input - you speak first.`;
 }
 
+// ==================== Q&A Dedicated Prompt ====================
+
+/**
+ * Build a dedicated Q&A system prompt for the TEACHER agent.
+ *
+ * Unlike the sandwich approach (QA preamble + full lecture template +
+ * QA closing), this prompt contains ZERO action API surface:
+ * - No "Available Actions" section
+ * - No JSON format rules about action/text interleaving
+ * - No spotlight/laser/whiteboard examples or guidelines
+ * - No "Output Format" rules 1-6 from the lecture template
+ *
+ * It DOES include concise slide context (so the model can answer
+ * concretely) and user profile (for personalization), but the only
+ * format instruction is: output a JSON array with ONE text element.
+ *
+ * The agent loop still expects JSON for parsing; we keep the wrapper
+ * but eliminate everything that primes action-first lecture behavior.
+ */
+function buildQATeacherSystemPrompt(vars: Record<string, string>): string {
+  const lines: string[] = [
+    `# Role`,
+    `You are ${vars.agentName}.`,
+    '',
+    `## Your Personality`,
+    vars.persona || '',
+    '',
+    `## Your Classroom Role`,
+    `You are the LEAD TEACHER. A student has just asked you a direct question in the Q&A side panel — you are now in a live Q&A session, NOT a lecture.`,
+    '',
+    vars.studentProfileSection || '',
+    vars.languageConstraint || '',
+    '',
+    vars.peerContext || '',
+    '',
+    `# Q&A MODE — Answer the Student's Question`,
+    '',
+    `## Answering Rules (these override everything else)`,
+    `1. Your FIRST sentence MUST directly answer the student's question. No exceptions.`,
+    `   BANNED openers: any variation of "好的，这页讲的是…" / "这一页的内容是…" / "我们先来看看…" / "好的，我们直接开始" / "这张幻灯片展示了…" / "同学们好" / "Welcome" / "今天我们进入…" / "让我们进入…" / "这门课".`,
+    `2. The slide content below is BACKGROUND CONTEXT for understanding the question — NOT a script to deliver. Do NOT narrate it.`,
+    `3. Match the question's depth:`,
+    `   - Trivial question → 1 sentence`,
+    `   - Typical "怎么做/为什么/什么关系" → 2-5 sentences with at least one concrete example`,
+    `   - Deep or multi-part question → multiple short paragraphs, answer every part`,
+    `4. If you genuinely cannot answer, say so plainly ("我不确定"). Do NOT deflect to slide content as a substitute.`,
+    `5. VAGUE questions ("这是什么" / "我不懂" / "没看懂"): the student is confused about the current topic. Explain the MAIN CONCEPT of this page in clear, simple terms (2-5 sentences with at least one concrete example). Do NOT ask "你具体想问什么" — just explain.`,
+    `6. After the complete answer, optionally end with ONE brief nudge like "如果问题解决了，可以结束讨论继续上课" — but ONLY as a brief coda, NOT a new topic. Do NOT tee up the next slide. Do NOT say "我们继续".`,
+    '',
+    `## Output Format`,
+    `Output a JSON array with a SINGLE text element. NO actions.`,
+    ``,
+    `Format: [{"type":"text","content":"Your complete answer to the student's question"}]`,
+    ``,
+    `Do NOT use spotlight, laser, wb_open, wb_draw_*, or ANY other action. Only {"type":"text","content":"..."} is allowed.`,
+    `Output ONLY the JSON array — no explanation, no markdown fences, no extra text before or after.`,
+    '',
+    `## Length`,
+    `This is a Q&A answer, NOT a lecture segment. The ~100-character speech cap does NOT apply.`,
+    `Give a COMPLETE answer. If you promise structure ("有两个办法" / "三步走"), deliver ALL of it before ending your turn.`,
+    '',
+    `# Responding to Questions (from the lecture guidelines — still applies)`,
+    `- Lead with the response. Your first word addresses the question directly.`,
+    `- Questions: give the concrete answer first. Do not pivot to an adjacent topic.`,
+    `- Format requests ("用中文讲" / "simpler"): switch immediately.`,
+    `- Corrections: acknowledge and correct directly.`,
+    `- Frustration ("你答非所问" / "重答一下"): find the unmet request and satisfy it.`,
+    `- If you don't know, say so.`,
+    '',
+  ];
+
+  // Slide context — the model needs this to answer concretely.
+  // buildStateContext(storeState, true) returns concise format.
+  if (vars.stateContext) {
+    lines.push(
+      `# Current Slide Context (for reference — answer the question, do NOT narrate this)`,
+      '',
+      vars.stateContext,
+      '',
+    );
+  }
+
+  lines.push(
+    `# FINAL REMINDER`,
+    `- Your FIRST sentence IS the answer to the student's question. No greeting, no slide recap, no lecture opener.`,
+    `- The slide context above is BACKGROUND — use it to inform your answer, not to narrate.`,
+    `- Output format: [{"type":"text","content":"Your complete answer"}]`,
+    `- Answer in the same language as the student's question.`,
+  );
+
+  return lines.join('\n');
+}
+
 // ==================== System Prompt ====================
 
 /**
@@ -277,32 +370,27 @@ export function buildStructuredPrompt(
     discussionContextSection: buildDiscussionContextSection(discussionContext, agentResponses),
   };
 
-  // Q&A mode: keep the full template-rendered system prompt (role,
-  // persona, slide context, history — the model needs these to answer
-  // concretely) and SANDWICH it:
-  //   - TOP: QA_MODE_PREAMBLE hard rules (attention)
-  //   - BOTTOM: QA_MODE_CLOSING final reminder (recency — the template's
-  //     own last line is "Speak naturally as a teacher", which otherwise
-  //     owns the tail slot and pulls the model back into narration)
-  // Lecture-priming vars (spotlight few-shot, slide-action guidelines,
-  // spotlight-first format example, ~100-char length cap) are swapped
-  // out in `vars` above when isUserQA is true.
+  // Q&A mode for TEACHER: build a dedicated prompt with NO action
+  // descriptions, NO JSON format rules about interleaving, NO
+  // spotlight/whiteboard examples. The previous "sandwich" approach
+  // (QA preamble + full template + QA closing) left the template's
+  // Output Format section intact — "You MUST output a JSON array",
+  // "type:action objects contain name and params", "Action and text
+  // objects can freely interleave" — which overrides the preamble's
+  // "do NOT use actions" directive. The model sees a detailed action
+  // API and JSON interleaving rules and naturally produces action-rich
+  // lecture responses regardless of the anti-lecture sandwich.
   //
-  // The previous design (commit 77b6b20, completely replacing the system
-  // prompt with buildQASystemPrompt) put the model in an information
-  // vacuum: it saw the slide TITLE and a 6-rule prompt with no slide
-  // content, no action guidelines, no prior context. When the user's
-  // question was loosely related to the slide, the model latched onto
-  // the slide title and produced a one-sentence non-answer like
-  // "我们先来看面试官的四级量表——左边这部分". Keeping the full prompt
-  // below the preamble lets the model still reference slide content
-  // when it's actually relevant.
+  // This dedicated prompt includes slide context (concise) and user
+  // profile so the model CAN answer concretely, but has ZERO action
+  // API surface — only a single "text-only JSON" format instruction.
+  if (isUserQA) {
+    return buildQATeacherSystemPrompt(vars);
+  }
+
   const prompt = buildPrompt(PROMPT_IDS.AGENT_SYSTEM, vars);
   if (!prompt) {
     throw new Error('agent-system template not found');
-  }
-  if (isUserQA) {
-    return `${QA_MODE_PREAMBLE}\n\n${prompt.system}\n\n${QA_MODE_CLOSING}`;
   }
   return prompt.system;
 }

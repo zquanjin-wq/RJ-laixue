@@ -49,8 +49,13 @@ const log = createLogger('DirectorGraph');
  * LangGraph state annotation for the orchestration graph
  */
 const OrchestratorState = Annotation.Root({
-  // Input (set once at graph entry)
-  messages: Annotation<StatelessChatRequest['messages']>,
+  // Input (set once at graph entry).
+  // explicit (prev, update) => update ?? prev reducer so values from
+  // initialState are not dropped between nodes.
+  messages: Annotation<StatelessChatRequest['messages']>({
+    reducer: (prev, update) => (update === undefined || update === null ? prev : update),
+    default: () => [],
+  }),
   storeState: Annotation<StatelessChatRequest['storeState']>,
   availableAgentIds: Annotation<string[]>,
   languageModel: Annotation<LanguageModel>,
@@ -58,16 +63,16 @@ const OrchestratorState = Annotation.Root({
   discussionContext: Annotation<{ topic: string; prompt?: string } | null>,
   triggerAgentId: Annotation<string | null>,
   userProfile: Annotation<{ nickname?: string; bio?: string } | null>,
-  /** Client-supplied session type ('qa' | 'discussion'). Wired from
-   *  StatelessChatRequest.config.sessionType in buildInitialState.
-   *  Authoritative Q&A signal: the existing isUserQA detection based on
-   *  state.messages.some(role==='user') is unreliable because lecture
-   *  narration can also land user-role messages in the history, which
-   *  causes buildQASystemPrompt to be skipped and the teacher resumes
-   *  narrating the slide. */
+  /** Client-supplied session type ('qa' | 'discussion'). */
   sessionType: Annotation<'qa' | 'discussion' | null>,
-  /** Request-scoped agent configs for generated agents (not in the default registry) */
+  /** Request-scoped agent configs for generated agents. */
   agentConfigOverrides: Annotation<Record<string, AgentConfig>>,
+  /** Student's current Q&A question. Persisted via directorState across
+   *  teacher/peer/closing turns. */
+  currentQAQuestion: Annotation<string | null | undefined>({
+    reducer: (prev, update) => (update === undefined || update === null ? prev : update),
+    default: () => undefined,
+  }),
 
   // Mutable (updated by nodes)
   currentAgentId: Annotation<string | null>,
@@ -92,6 +97,71 @@ type OrchestratorStateType = typeof OrchestratorState.State;
  */
 function resolveAgent(state: OrchestratorStateType, agentId: string): AgentConfig | undefined {
   return state.agentConfigOverrides[agentId] ?? useAgentRegistry.getState().getAgent(agentId);
+}
+
+/**
+ * Extract plain text from a JSON-array agent response (e.g.
+ * `[{"type":"text","content":"Hello"},{"type":"action",...}]`).
+ *
+ * Returns null if the content is not a parseable JSON array with text
+ * entries — falls back to the original content untouched.
+ */
+function _extractTextFromJsonResponse(content: string): string | null {
+  if (!content || !content.trim().startsWith('[')) return null;
+  try {
+    const arr = JSON.parse(content);
+    if (!Array.isArray(arr)) return null;
+    const texts = arr
+      .filter((item: { type: string; content?: string }) => item.type === 'text' && item.content)
+      .map((item: { content: string }) => item.content);
+    if (texts.length === 0) return null;
+    return texts.join('\n');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the student's latest Q&A question from state.
+ *
+ * Priority (when skipStored=false, the default):
+ *   1. state.currentQAQuestion (set by director on first Q&A turn, persisted
+ *      across teacher/peer/closing turns via DirectorState)
+ *   2. Fallback: scan state.messages in reverse for the last user-role message
+ *
+ * When skipStored=true: bypass priority 1 and always scan messages.
+ * Used by the director on the FIRST Q&A turn (spokenCount===0) so a new
+ * round's question is extracted fresh, not inherited from a previous round.
+ *
+ * Returns null if no question can be found.
+ */
+function extractLatestStudentQuestion(
+  state: OrchestratorStateType,
+  skipStored = false,
+): string | null {
+  // Priority 1: dedicated field (set by director, persisted via DirectorState)
+  if (!skipStored && state.currentQAQuestion && state.currentQAQuestion.trim()) {
+    return state.currentQAQuestion.trim();
+  }
+
+  // Priority 2: fallback — scan history in reverse for user-role messages
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const msg = state.messages[i];
+    if (msg.role !== 'user') continue;
+    const content =
+      typeof msg.content === 'string'
+        ? msg.content
+        : (msg as unknown as { parts?: Array<{ text?: string }> }).parts
+            ?.map((p) => p.text || '')
+            .join('\n') || '';
+    const cleaned = content
+      .replace(/^\[学生\]\s*[:：]\s*/g, '')
+      .replace(/^学生\s*[:：]\s*/g, '')
+      .trim();
+    if (cleaned) return cleaned;
+  }
+
+  return null;
 }
 
 // ==================== Director Node ====================
@@ -215,9 +285,28 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
 
     // Stage 1: teacher answers the student's question.
     if (spokenCount === 0) {
-      log.info(`[Director] Q&A mode: dispatching teacher "${teacherId}"`);
+      // NEW Q&A round — extract the latest student question from messages.
+      // skipStored=true: bypass state.currentQAQuestion which may hold a
+      // previous Q&A round's question inherited from directorState.
+      const question = extractLatestStudentQuestion(state, true);
+      if (!question) {
+        log.error('[Director] Q&A: cannot extract student question from messages');
+        // Dump state.messages for debugging
+        state.messages.forEach((m, i) => {
+          log.error(`  [${i}] role=${m.role} content=${typeof m.content === 'string' ? m.content.slice(0, 100) : '[complex]'}`);
+        });
+      }
+      log.info(
+        `[Director] Q&A mode: dispatching teacher "${teacherId}" (question="${question?.slice(0, 60)}")`,
+      );
       write({ type: 'thinking', data: { stage: 'agent_loading', agentId: teacherId } });
-      return { currentAgentId: teacherId, shouldEnd: false };
+      // Override currentQAQuestion with this round's question (even if
+      // null — downstream will still try the messages fallback).
+      return {
+        currentAgentId: teacherId,
+        shouldEnd: false,
+        currentQAQuestion: question || null,
+      };
     }
 
     // Stage 2: teacher has spoken — dispatch each peer who hasn't yet.
@@ -396,6 +485,19 @@ async function runAgentGeneration(
   // model still needs the prior conversation to understand follow-ups
   // and to give concrete answers. Stripping history left the model
   // unable to anchor its answer to anything the student had said before.
+  //
+  // Q&A multi-round contamination: after round 1, the history contains
+  // the teacher's own responses as AIMessage entries with JSON-array
+  // format (e.g. [{"type":"text","content":"..."}]). On round 2 the model
+  // sees these as in-context few-shot examples and reproduces the JSON
+  // format AND the lecture-narration pattern embedded in those examples,
+  // even though the Q&A system prompt says "output plain text" and
+  // "answer directly". In-context examples beat system instructions.
+  //
+  // Fix: strip the JSON wrapper from previous AIMessage entries in Q&A
+  // mode, keeping only the plain text. User-role messages (student
+  // questions, peer comments attributed as [name]: content) are left
+  // intact — they provide the follow-up anchoring the model needs.
   const historyMessages = state.messages;
   const openaiMessages = convertMessagesToOpenAI(historyMessages, agentId);
   const adapter = new AISdkLangGraphAdapter(state.languageModel, state.thinkingConfig ?? undefined);
@@ -406,6 +508,23 @@ async function runAgentGeneration(
       m.role === 'user' ? new HumanMessage(m.content) : new AIMessage(m.content),
     ),
   ];
+
+  // Post-process AIMessage entries in Q&A mode: strip JSON-array
+  // formatting so they don't override the Q&A prompt's plain-text
+  // instruction through in-context few-shot. Only applies to non-student
+  // agents (students get a separate buildPeerQASystemPrompt).
+  if (isUserQA && agentConfig.role !== 'student') {
+    for (let i = 0; i < lcMessages.length; i++) {
+      const msg = lcMessages[i];
+      if (msg instanceof AIMessage) {
+        const raw = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        const cleaned = _extractTextFromJsonResponse(raw);
+        if (cleaned !== null) {
+          lcMessages[i] = new AIMessage(cleaned);
+        }
+      }
+    }
+  }
 
   // Q&A PEER turn: inject the teacher's just-delivered answer so the peer
   // can actually react to it. The teacher's answer lives in
@@ -427,15 +546,145 @@ async function runAgentGeneration(
     }
   }
 
-  // Ensure the message list ends with a HumanMessage.
-  // After agent-aware role mapping, other agents' messages become user role,
-  // so trailing AIMessage is less likely. But guard against edge cases
-  // (e.g. agent's own previous response is last in history).
-  const lastMsg = lcMessages[lcMessages.length - 1];
-  if (!lcMessages.some((m) => m instanceof HumanMessage)) {
-    lcMessages.push(new HumanMessage('Please begin.'));
-  } else if (lastMsg instanceof AIMessage) {
-    lcMessages.push(new HumanMessage("It's your turn to speak. Respond from your perspective."));
+  // ─── Ensure last message is HumanMessage ───
+  //
+  // Q&A teacher path (isUserQA && role !== 'student'):
+  //   The last HumanMessage MUST contain the student's actual question.
+  //   Generic cues like "It's your turn to speak" or "请直接回答" without
+  //   the question text cause the model to fall back to lecture narration.
+  //   We ALWAYS append a new HumanMessage with the question — even if a
+  //   HumanMessage already exists — because existing ones may be generic
+  //   cues, peer injections, or contaminated history.
+  //
+  // Non-Q&A / student path:
+  //   Use the generic fallback (lecture narration / discussion cue).
+  if (isUserQA && agentConfig.role !== 'student') {
+    // ─── Q&A teacher: inject student question as last HumanMessage ───
+
+    const latestStudentQuestion = extractLatestStudentQuestion(state);
+
+    if (!latestStudentQuestion) {
+      console.error(
+        `[Q&A] FATAL: cannot extract latest student question ` +
+        `agent="${agentConfig.name}" messages.length=${state.messages.length} ` +
+        `currentQAQuestion=${state.currentQAQuestion ? '"' + state.currentQAQuestion.slice(0, 60) + '"' : 'null'} ` +
+        `state.keys=${Object.keys(state).join(',')}`,
+      );
+      throw new Error(
+        `[Q&A] Cannot answer — latest student question is missing ` +
+        `(agent="${agentConfig.name}", messages=${state.messages.length}).`,
+      );
+    }
+
+    // Remove any trailing generic HumanMessage cue left by previous
+    // processing (peer injection, "It's your turn", etc.) so the
+    // model's last instruction is ALWAYS the student question.
+    const genericCues = [
+      "It's your turn to speak",
+      'Please begin',
+      '请直接回答学生的最新问题',
+      'Please continue',
+    ];
+    while (lcMessages.length > 0) {
+      const last = lcMessages[lcMessages.length - 1];
+      if (!(last instanceof HumanMessage)) break;
+      const content = typeof last.content === 'string' ? last.content : '';
+      if (genericCues.some((cue) => content.includes(cue))) {
+        lcMessages.pop();
+      } else {
+        break;
+      }
+    }
+
+    // Detect teacher closing: the teacher has already spoken AND at least
+    // one peer has responded. In this case the message must include peer
+    // summaries so the teacher can address their follow-up points.
+    const teacherId = resolveAgent(state, agentId)?.role === 'teacher' ? agentId : null;
+    const isTeacherClosing =
+      teacherId !== null &&
+      state.agentResponses.some((r) => r.agentId === teacherId) &&
+      state.agentResponses.some(
+        (r) => r.agentId !== teacherId && resolveAgent(state, r.agentId)?.role === 'student',
+      );
+
+    if (isTeacherClosing) {
+      // ─── Teacher closing: include peer responses ───
+      const peerResponses = state.agentResponses.filter(
+        (r) => r.agentId !== teacherId && resolveAgent(state, r.agentId)?.role === 'student',
+      );
+      const peerText =
+        peerResponses.length > 0
+          ? peerResponses
+              .map((r) => `[${r.agentName}]: ${r.contentPreview || '(no content)'}`)
+              .join('\n')
+          : '无';
+
+      lcMessages.push(
+        new HumanMessage(
+          [
+            '你正在 Q&A 模式下做老师的最后补充。',
+            '',
+            '学生原始问题：',
+            latestStudentQuestion,
+            '',
+            '刚才同学/其他角色的补充：',
+            peerText,
+            '',
+            '请你围绕学生原始问题做一个简短补充。',
+            '第一句话必须继续回答问题，不要重新开课，不要讲 PPT，不要说"好的"。',
+          ].join('\n'),
+        ),
+      );
+    } else {
+      // ─── Teacher first answer: question only ───
+      lcMessages.push(
+        new HumanMessage(
+          [
+            '学生刚刚提出了一个具体问题。你现在必须回答这个问题。',
+            '',
+            '学生问题：',
+            latestStudentQuestion,
+            '',
+            '回答要求：',
+            '1. 第一句话必须直接给出答案、判断、方法或结论。',
+            '2. 不要寒暄，不要说"好的"。',
+            '3. 不要说"我们直接开始"。',
+            '4. 不要说"今天我们进入"。',
+            '5. 不要复述或讲解 PPT 页面。',
+            '6. 可以结合当前幻灯片作为背景，但只能用来回答问题。',
+          ].join('\n'),
+        ),
+      );
+    }
+
+    // ─── Q&A Guard: validate last message ───
+    const guardLast = lcMessages[lcMessages.length - 1];
+    if (!(guardLast instanceof HumanMessage)) {
+      throw new Error('[Q&A GUARD] Last message is not HumanMessage after injection');
+    }
+    const guardContent = typeof guardLast.content === 'string' ? guardLast.content : '';
+    const questionSubstring = latestStudentQuestion.slice(
+      0,
+      Math.min(30, latestStudentQuestion.length),
+    );
+    if (!guardContent.includes(questionSubstring)) {
+      console.error(
+        `[Q&A GUARD] Last HumanMessage does NOT contain student question!\n` +
+        `  expected substring: "${questionSubstring}"\n` +
+        `  actual content (first 500 chars): "${guardContent.slice(0, 500)}"`,
+      );
+      throw new Error('[Q&A GUARD] Last HumanMessage does not contain latest student question');
+    }
+  } else {
+    // ─── Non-Q&A / Student: generic fallback ───
+    const lastMsg = lcMessages[lcMessages.length - 1];
+    if (!lcMessages.some((m) => m instanceof HumanMessage)) {
+      lcMessages.push(new HumanMessage('Please begin.'));
+    } else if (lastMsg instanceof AIMessage) {
+      lcMessages.push(
+        new HumanMessage("It's your turn to speak. Respond from your perspective."),
+      );
+    }
   }
 
   const parserState = createParserState();
@@ -713,6 +962,44 @@ export function buildInitialState(
   const incoming = request.directorState;
   const turnCount = incoming?.turnCount ?? 0;
 
+  // Q&A mode: extract the student's current question from the request.
+  // First turn: directorState hasn't been populated yet; scan messages.
+  // Subsequent turns: directorState carries it from the previous DONE event.
+  //
+  // NOTE: UIMessage from Vercel AI SDK uses `parts`, NOT `content`. The
+  // scan must handle both shapes because the same flow is reused in
+  // extractLatestStudentQuestion, stateless-generate DONE event, and here.
+  let currentQAQuestion: string | null = incoming?.currentQAQuestion ?? null;
+  if (!currentQAQuestion) {
+    for (let i = request.messages.length - 1; i >= 0; i--) {
+      const msg = request.messages[i] as Record<string, unknown>;
+      if (msg.role !== 'user') continue;
+
+      // UIMessage: parts[{type:'text', text:'...'}]
+      // Legacy format: content string
+      let raw: string;
+      if (Array.isArray(msg.parts)) {
+        raw = (msg.parts as Array<{ type?: string; text?: string }>)
+          .filter((p) => p.type === 'text' && p.text)
+          .map((p) => p.text!)
+          .join('\n');
+      } else if (typeof msg.content === 'string') {
+        raw = msg.content;
+      } else {
+        continue;
+      }
+
+      const cleaned = raw
+        .replace(/^\[学生\]\s*[:：]\s*/g, '')
+        .replace(/^学生\s*[:：]\s*/g, '')
+        .trim();
+      if (cleaned) {
+        currentQAQuestion = cleaned;
+        break;
+      }
+    }
+  }
+
   return {
     messages: request.messages,
     storeState: request.storeState,
@@ -731,6 +1018,7 @@ export function buildInitialState(
     turnCount,
     agentResponses: incoming?.agentResponses ?? [],
     whiteboardLedger: incoming?.whiteboardLedger ?? [],
+    currentQAQuestion,
     shouldEnd: false,
     totalActions: 0,
   };

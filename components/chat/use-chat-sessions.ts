@@ -538,7 +538,19 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
 
           getMessages: () => {
             const currentSession = sessionsRef.current.find((s) => s.id === sessionId);
-            return currentSession?.messages ?? requestTemplate.messages;
+
+            const currentMessages = currentSession?.messages ?? [];
+            const templateMessages = requestTemplate.messages ?? [];
+
+            if (currentMessages.length > 0) {
+              return currentMessages;
+            }
+
+            if (templateMessages.length > 0) {
+              return templateMessages;
+            }
+
+            return [];
           },
 
           fetchChat: (body, signal) =>

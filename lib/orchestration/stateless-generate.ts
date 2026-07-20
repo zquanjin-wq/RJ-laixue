@@ -388,6 +388,42 @@ export async function* statelessGenerate(
     const prevLedger = incoming?.whiteboardLedger ?? [];
     const prevTurnCount = incoming?.turnCount ?? 0;
 
+    // Carry forward currentQAQuestion so subsequent Q&A turns (peer,
+    // teacher closing) can reference it without guessing from history.
+    // On the first Q&A turn the client may not set it — fall back to
+    // scanning request.messages for the last user-role message.
+    // NOTE: UIMessage uses `parts`, not `content`. Handle both formats.
+    let qaQuestion =
+      incoming?.currentQAQuestion ||
+      null;
+    if (!qaQuestion) {
+      for (let i = request.messages.length - 1; i >= 0; i--) {
+        const msg = request.messages[i] as Record<string, unknown>;
+        if (msg.role !== 'user') continue;
+
+        let raw: string;
+        if (Array.isArray(msg.parts)) {
+          raw = (msg.parts as Array<{ type?: string; text?: string }>)
+            .filter((p) => p.type === 'text' && p.text)
+            .map((p) => p.text!)
+            .join('\n');
+        } else if (typeof msg.content === 'string') {
+          raw = msg.content;
+        } else {
+          continue;
+        }
+
+        const cleaned = raw
+          .replace(/^\[学生\]\s*[:：]\s*/g, '')
+          .replace(/^学生\s*[:：]\s*/g, '')
+          .trim();
+        if (cleaned) {
+          qaQuestion = cleaned;
+          break;
+        }
+      }
+    }
+
     const directorState =
       totalAgents > 0
         ? {
@@ -403,12 +439,23 @@ export async function* statelessGenerate(
               },
             ],
             whiteboardLedger: [...prevLedger, ...agentWbActions],
+            ...(qaQuestion ? { currentQAQuestion: qaQuestion } : {}),
           }
         : {
             turnCount: prevTurnCount,
             agentResponses: prevResponses,
             whiteboardLedger: prevLedger,
+            ...(qaQuestion ? { currentQAQuestion: qaQuestion } : {}),
           };
+
+    yield {
+      type: 'done',
+      data: { totalActions, totalAgents, agentHadContent, directorState },
+    };
+
+    log.info(
+      `[StatelessGenerate] Completed. Agents: ${totalAgents}, Actions: ${totalActions}, hadContent: ${agentHadContent}, turnCount: ${directorState.turnCount}`,
+    );
 
     yield {
       type: 'done',

@@ -225,6 +225,10 @@ export interface DirectorState {
   turnCount: number;
   agentResponses: AgentTurnSummary[];
   whiteboardLedger: WhiteboardActionRecord[];
+  /** Student's current Q&A question — extracted once and persisted across
+   *  teacher answer / peer react / teacher closing turns so the final
+   *  HumanMessage always contains the original question, not a generic cue. */
+  currentQAQuestion?: string;
 }
 
 /**

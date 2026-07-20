@@ -89,6 +89,69 @@ export function summarizeElements(elements: any[]): string {
   return lines.join('\n');
 }
 
+// ==================== Concise Slide Summary (Q&A mode) ====================
+
+/**
+ * Summarize slide elements as plain-text content — no numbering, no IDs,
+ * no coordinates, no sizes. Those metadata primed the model to walk through
+ * the list one element at a time like a lecture script. In Q&A mode the
+ * model needs the slide's TEXTUAL CONTENT to answer questions intelligently
+ * but must NOT feel like it's delivering a numbered slide tour.
+ *
+ * Design:
+ * - All text content at FULL length (no 60-char truncation — the lecture
+ *   summarizer truncates, which is fine for slide narration but starves Q&A
+ *   answers of detail).
+ * - Visual elements (images, charts, tables) summarized in one compact line.
+ * - Clear header: "for reference, do NOT narrate."
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- PPTElement variants have heterogeneous shapes
+function summarizeSlideConcise(elements: any[]): string {
+  if (elements.length === 0) return '  (empty)';
+
+  const textBlocks: string[] = [];
+  const visualLabels: string[] = [];
+
+  for (const el of elements) {
+    if (el.type === 'text') {
+      const content = stripHtml(el.content || '');
+      if (content) textBlocks.push(content);
+    } else if (el.type === 'shape') {
+      const shapeText = el.text?.content ? stripHtml(el.text.content) : '';
+      if (shapeText) textBlocks.push(shapeText);
+    } else if (el.type === 'image') {
+      visualLabels.push('image');
+    } else if (el.type === 'chart') {
+      visualLabels.push(`chart (${el.chartType || 'unknown'})`);
+    } else if (el.type === 'table') {
+      visualLabels.push('table');
+    } else if (el.type === 'code') {
+      visualLabels.push('code block');
+    } else if (el.type === 'latex') {
+      visualLabels.push(`formula: ${(el.latex || '').slice(0, 60)}`);
+    } else if (el.type === 'video') {
+      visualLabels.push('video');
+    } else if (el.type === 'audio') {
+      visualLabels.push('audio');
+    }
+    // lines are meaningless as standalone context — skip
+  }
+
+  const parts: string[] = [];
+
+  if (textBlocks.length > 0) {
+    // Block-quote each text segment so it reads as slide content,
+    // not as numbered action items.
+    parts.push(textBlocks.map((t) => `  ${t}`).join('\n\n'));
+  }
+
+  if (visualLabels.length > 0) {
+    parts.push(`  [Other elements: ${visualLabels.join(', ')}]`);
+  }
+
+  return parts.length > 0 ? parts.join('\n\n') : '  (no readable content)';
+}
+
 // ==================== State Context ====================
 
 /**
@@ -127,13 +190,20 @@ export function buildStateContext(
         `Current scene: "${currentScene.title}" (${currentScene.type}, id: ${currentSceneId})`,
       );
 
-      // Slide scene: include element details. The Q&A preamble in
-      // prompt-builder.ts handles anti-lecture; stripping slide elements
-      // here leaves the model in an information vacuum and produces
-      // one-sentence non-answers that latch onto the slide title.
+      // Slide scene: lecture mode gets the full numbered element
+      // inventory (IDs, coordinates, sizes) — the model needs those
+      // for spotlight/laser actions and slide narration. Q&A mode
+      // gets a plain-text content summary — all the text, none of
+      // the metadata that primes "walk through elements one by one."
       if (currentScene.content.type === 'slide') {
         const elements = currentScene.content.canvas.elements;
-        lines.push(`Current slide elements (${elements.length}):\n${summarizeElements(elements)}`);
+        if (concise) {
+          lines.push(
+            `Current slide content (for reference — answer the student's question directly, do NOT narrate this):\n\n${summarizeSlideConcise(elements)}`,
+          );
+        } else {
+          lines.push(`Current slide elements (${elements.length}):\n${summarizeElements(elements)}`);
+        }
       }
 
       // Quiz scene: include question summary, or post-submit results when the
