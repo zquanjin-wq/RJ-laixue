@@ -211,6 +211,7 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
     );
 
     const spokenCount = state.agentResponses.length;
+    const teacherSpeechCount = state.agentResponses.filter((r) => r.agentId === teacherId).length;
 
     // Stage 1: teacher answers the student's question.
     if (spokenCount === 0) {
@@ -230,9 +231,19 @@ const isSingleAgent = state.availableAgentIds.length <= 1;
       return { currentAgentId: nextPeer, shouldEnd: false };
     }
 
-    // All agents have spoken for this round. agentGenerateNode emitted
-    // cue_user after the last speaker — this shouldEnd is just a
-    // safety net for edge cases.
+    // Stage 3: all peers have spoken. If there are peers, give the
+    // teacher one final "closing" turn to address any peer follow-up
+    // questions or comments. Without this the teacher goes silent after
+    // a peer asks a question, breaking the Q&A flow.
+    if (peerIds.length > 0 && teacherSpeechCount === 1) {
+      log.info(`[Director] Q&A mode: teacher closing (addressing peer comments)`);
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId: teacherId } });
+      return { currentAgentId: teacherId, shouldEnd: false };
+    }
+
+    // All speakers done (teacher answer + all peers + teacher closing).
+    // agentGenerateNode emitted cue_user after the last speaker — this
+    // shouldEnd is just a safety net for edge cases.
     log.info('[Director] Q&A mode: round complete, waiting for student');
     return { shouldEnd: true };
   }
@@ -599,9 +610,16 @@ async function agentGenerateNode(
     const teacherSpoken = spokenIds.has(teacherId);
     const peerPending = peerIds.some((id) => !spokenIds.has(id));
 
-    // Round is finished when the teacher AND all peers have spoken.
-    // Single-teacher courses have no peers → finishes after teacher.
-    const roundFinished = teacherSpoken && !peerPending;
+    // Count how many times the teacher has spoken (including the
+    // just-finished turn, which hasn't been appended to agentResponses
+    // yet). With peers: teacher must speak twice (initial answer +
+    // closing). Without peers: once is enough.
+    const teacherSpeechCount =
+      state.agentResponses.filter((r) => r.agentId === teacherId).length +
+      (agentId === teacherId ? 1 : 0);
+    const hasPeers = peerIds.length > 0;
+    const teacherDoneSpeaking = hasPeers ? teacherSpeechCount >= 2 : teacherSpeechCount >= 1;
+    const roundFinished = teacherSpoken && !peerPending && teacherDoneSpeaking;
 
     if (roundFinished) {
       const rawWrite = config.writer as (chunk: StatelessEvent) => void;

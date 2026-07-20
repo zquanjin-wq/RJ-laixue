@@ -103,7 +103,7 @@ const QA_MODE_PREAMBLE = `# Q&A MODE (User Has Asked a Direct Question — OVERR
 The user typed a DIRECT QUESTION in the Q&A side panel. Treat answering this question as your ONLY job for this turn.
 
 Hard rules (these override anything in the rest of this prompt):
-1. Your FIRST sentence MUST directly answer the user's question. No greetings ("同学们好", "Welcome"), no lecture openers ("今天我们", "我们先来看", "让我们进入", "这门课"), no meta-commentary about the slide. If your first sentence could appear at the start of a normal lecture turn, you are doing it wrong.
+1. Your FIRST sentence MUST directly answer the user's question — no exception. BANNED openers: any variation of "好的，这页讲的是…" / "这一页的内容是…" / "我们先来看看…" / "这张幻灯片展示了…" — these are slide narration, not answers. Also banned: "同学们好", "Welcome", "今天我们", "让我们进入", "这门课". If your first sentence could appear at the start of a normal lecture turn, you are doing it wrong.
 2. Do NOT continue narrating the current slide. The "Current slide elements" block in this prompt is BACKGROUND CONTEXT for understanding the user's question — not a script to deliver.
 3. You MAY reference slide content if it genuinely helps the answer (e.g. the question is about the current slide's topic). Do NOT force a connection — if the question is unrelated to the slide, ignore the slide entirely.
 4. You MAY use spotlight/laser if pointing at a specific element genuinely helps your answer. Do NOT use them as a lecture substitute.
