@@ -1093,7 +1093,13 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
       const sessionMessages: UIMessage<ChatMessageMetadata>[] = existingSession
         ? [...existingSession.messages, userMessage]
         : [userMessage];
-      const sessionType: SessionType = existingSession?.type || 'qa';
+      // Force 'qa' when the existing session is 'lecture' — typing a message
+      // during a lecture IS a Q&A interaction. Without this, the server receives
+      // sessionType='lecture' and the authoritative state.sessionType==='qa' check
+      // fails, causing the Q&A system prompt to be skipped even though the
+      // message-based fallback should technically catch it.
+      const sessionType: SessionType =
+        existingSession?.type === 'lecture' ? 'qa' : (existingSession?.type || 'qa');
 
       // Pure updater — no side effects
       setSessions((prev) => {

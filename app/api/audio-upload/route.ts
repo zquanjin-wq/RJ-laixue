@@ -5,6 +5,17 @@ export const runtime = 'nodejs';
 
 const BUCKET_NAME = 'course-audio';
 
+function stringifyDetails(details: unknown) {
+  if (!details) return undefined;
+  if (typeof details === 'string') return details;
+  if (details instanceof Error) return details.message;
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return String(details);
+  }
+}
+
 function getFileExtension(fileName: string, fallback = 'mp3') {
   const parts = fileName.split('.');
   const ext = parts.length > 1 ? parts.pop() : '';
@@ -37,6 +48,28 @@ function getAudioContentType(ext: string, fallback?: string) {
   if (normalized === 'm4a') return 'audio/mp4';
 
   return `audio/${normalized || 'mpeg'}`;
+}
+
+async function ensureAudioBucket(supabase: ReturnType<typeof createClient>) {
+  const { error: getError } = await supabase.storage.getBucket(BUCKET_NAME);
+  if (!getError) return;
+
+  const { error: createError } = await supabase.storage.createBucket(BUCKET_NAME, {
+    public: true,
+    fileSizeLimit: '50MB',
+    allowedMimeTypes: [
+      'audio/mpeg',
+      'audio/mp3',
+      'audio/wav',
+      'audio/ogg',
+      'audio/webm',
+      'audio/mp4',
+    ],
+  });
+
+  if (createError) {
+    throw new Error(`Storage bucket "${BUCKET_NAME}" is not available: ${createError.message}`);
+  }
 }
 
 export async function POST(request: NextRequest) {

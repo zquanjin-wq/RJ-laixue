@@ -1318,7 +1318,11 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
               });
             }}
             onCueUser={(_fromAgentId, _prompt) => {
-              setIsCueUser(true);
+              // Q&A mode: never show "Your turn" — the student should feel free
+              // to type whenever without the system pausing and prompting.
+              if (chatSessionType !== 'qa') {
+                setIsCueUser(true);
+              }
             }}
             onLiveSessionError={handleLiveSessionError}
             onStopSession={doSessionCleanup}

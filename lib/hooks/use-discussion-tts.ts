@@ -6,6 +6,7 @@ import { useBrowserTTS } from '@/lib/hooks/use-browser-tts';
 import {
   resolveAgentVoice,
   getSelectableProvidersWithVoices,
+  getServerVoiceList,
   type ResolvedVoice,
 } from '@/lib/audio/voice-resolver';
 import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
@@ -105,9 +106,9 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
   const resolveVoiceForAgent = useCallback(
     (agentId: string | null): ResolvedVoice | null => {
       // ONE selectable-provider list shared with the AgentBar picker: enabled
-      // server/custom providers + opt-in browser-native. Students resolve against
-      // it (fixes the #665 student-silence bug); the teacher uses the global
-      // lecture voice (below).
+      // server/custom providers + opt-in browser-native. Students resolve via
+      // resolveAgentVoice; the teacher resolves through override → voiceConfig →
+      // global lecture voice → firstVoice fallback chain.
       const providers = getSelectableProvidersWithVoices(
         ttsProvidersConfig,
         voxcpmProfiles,
@@ -124,13 +125,54 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
       const agent = agentId ? agents.find((a) => a.id === agentId) : undefined;
       if (!agent) return firstVoice();
 
-      // Teacher's voice = the global lecture selection, honored VERBATIM (incl.
-      // its model) whenever that provider is enabled — identical to what the
-      // pre-generated lecture sends (use-scene-generator), so lecture and
-      // discussion teacher never diverge. No voiceId re-validation/fallback that
-      // could swap the user's chosen voice. Only if the global provider is itself
-      // disabled does the teacher fall back to an enabled provider.
+      // Teacher voice resolution: per-agent override → agent voiceConfig →
+      // global lecture voice → first enabled provider. This lets the user pin a
+      // specific voice for the teacher (via agent override or course-design
+      // voiceConfig) while still falling back to the lecture voice when neither
+      // is set — keeping Q&A teacher and lecture narration in sync by default.
       if (agent.role === 'teacher') {
+        // Teacher voice resolution priority:
+        //   1. Per-agent override (settings store)
+        //   2. Agent's own voiceConfig (course design)
+        //   3. Global lecture voice (matches lecture narration)
+        //   4. First enabled provider (last resort)
+        const validateChoice = (
+          choice: { providerId: TTSProviderId; modelId?: string; voiceId: string } | undefined,
+        ): ResolvedVoice | null => {
+          if (!choice) return null;
+          if (!isTTSProviderEnabled(choice.providerId, ttsProvidersConfig[choice.providerId]))
+            return null;
+          if (choice.providerId === 'browser-native-tts') {
+            if (providers.some((p) => p.providerId === 'browser-native-tts')) {
+              return { providerId: choice.providerId, modelId: choice.modelId, voiceId: choice.voiceId };
+            }
+            return null;
+          }
+          const prov = providers.find((p) => p.providerId === choice.providerId);
+          if (!prov) return null;
+          const voiceIds = new Set([
+            ...getServerVoiceList(choice.providerId),
+            ...prov.voices.map((v) => v.id),
+          ]);
+          if (voiceIds.has(choice.voiceId)) {
+            return {
+              providerId: choice.providerId,
+              modelId: choice.modelId,
+              voiceId: choice.voiceId,
+            };
+          }
+          return null;
+        };
+
+        // 1. Per-agent override from settings
+        const override = validateChoice(agentVoiceOverrides?.[agent.id]);
+        if (override) return override;
+
+        // 2. Agent's own voiceConfig from course design
+        const agentCfg = validateChoice(agent.voiceConfig);
+        if (agentCfg) return agentCfg;
+
+        // 3. Global lecture voice fallback
         if (isTTSProviderEnabled(globalTtsProviderId, ttsProvidersConfig[globalTtsProviderId])) {
           return {
             providerId: globalTtsProviderId,
