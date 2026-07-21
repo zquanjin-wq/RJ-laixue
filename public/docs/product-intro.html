@@ -1,323 +1,509 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>来学 · 创课助手</title>
+  <title>来学 · 创课助手 · 产品介绍</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="description" content="来学·创课助手 — 多角色 AI 伴学 · 交互式课程，把传统课件变成一个有多位 AI 角色参与、可以实时交互的学习空间。">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            background: 'hsl(220 20% 97%)',
+            foreground: 'hsl(215 25% 15%)',
+            card: 'hsl(0 0% 100%)',
+            'card-foreground': 'hsl(215 25% 15%)',
+            primary: 'hsl(215 70% 42%)',
+            'primary-foreground': 'hsl(0 0% 100%)',
+            secondary: 'hsl(215 60% 95%)',
+            'secondary-foreground': 'hsl(215 70% 35%)',
+            muted: 'hsl(220 15% 94%)',
+            'muted-foreground': 'hsl(215 12% 50%)',
+            accent: 'hsl(215 60% 95%)',
+            'accent-foreground': 'hsl(215 70% 35%)',
+            border: 'hsl(215 15% 90%)',
+          },
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', '"PingFang SC"', '"Microsoft YaHei"', 'sans-serif'],
+            mono: ['"SF Mono"', 'Consolas', 'monospace'],
+          },
+          animation: {
+            'fade-in-up': 'fadeInUp 0.6s ease-out forwards',
+          },
+          keyframes: {
+            fadeInUp: {
+              '0%': { opacity: '0', transform: 'translateY(20px)' },
+              '100%': { opacity: '1', transform: 'translateY(0)' },
+            },
+          },
+        },
+      },
+    };
+  </script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: #ffffff;
-      color: #1e293b;
-      line-height: 1.8;
-      max-width: 760px;
-      margin: 0 auto;
-      padding: 48px 24px 80px;
-    }
-    h1 {
-      font-size: 30px;
-      font-weight: 700;
-      color: #14532d;
-      margin: 24px 0 16px;
-      letter-spacing: -0.5px;
-    }
-    h2 {
-      font-size: 22px;
-      font-weight: 700;
-      color: #14532d;
-      margin: 40px 0 14px;
-      padding-bottom: 8px;
-      border-bottom: 2px solid #bbf7d0;
-    }
-    h3 {
-      font-size: 17px;
-      font-weight: 700;
-      color: #15803d;
-      margin: 24px 0 8px;
-    }
-    p { margin: 10px 0; color: #334155; }
-    ul { margin: 10px 0 10px 22px; }
-    li { margin: 6px 0; color: #334155; }
-    code {
-      font-family: "SF Mono", "Consolas", monospace;
-      background: #f0fdf4;
-      padding: 2px 8px;
-      border-radius: 4px;
-      color: #15803d;
-      font-size: 0.95em;
-    }
-    .highlight {
-      background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
-      color: white;
-      padding: 24px 28px;
-      border-radius: 12px;
-      margin: 28px 0;
-      font-size: 16px;
-      line-height: 1.9;
-    }
-    .highlight strong { color: white; }
-    .feature {
-      background: #f8fafc;
-      border-left: 3px solid #16a34a;
-      padding: 16px 20px;
-      margin: 12px 0;
-      border-radius: 0 8px 8px 0;
-    }
-    .feature h3 {
-      color: #14532d;
-      font-size: 16px;
-      margin-bottom: 6px;
-    }
-    .feature p { margin: 0; color: #475569; font-size: 15px; }
-    .demo {
-      background: #14532d;
-      color: white;
-      padding: 20px 24px;
-      border-radius: 12px;
-      text-align: center;
-      margin: 28px 0;
-    }
-    .demo strong { font-size: 18px; display: block; margin-bottom: 8px; }
-    .demo code {
-      background: rgba(255, 255, 255, 0.2);
-      color: white;
-      font-size: 16px;
-      padding: 4px 14px;
-    }
-    .small { font-size: 13px; color: #64748b; margin-top: 8px; opacity: 0.9; }
-    .step {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 14px 18px;
-      margin: 10px 0;
-    }
-    .step-num {
-      display: inline-block;
-      background: #16a34a;
-      color: white;
-      width: 24px;
-      height: 24px;
-      line-height: 24px;
-      text-align: center;
-      border-radius: 50%;
-      margin-right: 8px;
-      font-weight: 600;
-      font-size: 13px;
-      vertical-align: middle;
-    }
-    .callout {
-      border-left: 4px solid #16a34a;
-      background: #f0fdf4;
-      padding: 14px 18px;
-      border-radius: 0 8px 8px 0;
-      margin: 16px 0;
-    }
-    .callout-warning {
-      border-left-color: #ca8a04;
-      background: #fef9c3;
-    }
-    .image-placeholder {
-      background: #e2e8f0;
-      border: 2px dashed #94a3b8;
-      border-radius: 8px;
-      padding: 40px 20px;
-      margin: 16px 0;
-      text-align: center;
-      color: #64748b;
-      font-size: 14px;
-    }
-    .toc {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 20px 28px;
-      margin: 24px 0 32px;
-    }
-    .toc h2 {
-      margin-top: 0;
-      border-bottom: none;
-      padding-bottom: 0;
-      font-size: 17px;
-    }
-    .toc ol { margin-left: 20px; }
-    .toc a { color: #15803d; text-decoration: none; }
-    .toc a:hover { text-decoration: underline; }
-    .footer {
-      border-top: 1px solid #e2e8f0;
-      padding-top: 24px;
-      margin-top: 48px;
-      color: #64748b;
-      font-size: 14px;
-      text-align: center;
-    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .prose-content p { margin: 10px 0; color: hsl(215 25% 15%); }
+    .scroll-mt-20 { scroll-margin-top: 5rem; }
+    html { scroll-behavior: smooth; }
   </style>
 </head>
-<body>
 
-<h1>来学 · 创课助手</h1>
+<body class="bg-background text-foreground min-h-screen">
 
-<p>把传统课件变成了一个有多位 AI 角色参与、可以<strong>实时交互</strong>的学习空间，让学习不止于观看，在互动中深入理解。</p>
+<!-- ========== Header ========== -->
+<header class="sticky top-0 z-40 bg-background/85 backdrop-blur-md border-b border-border/60">
+  <div class="max-w-3xl mx-auto px-4 md:px-6">
+    <nav class="flex items-center justify-between h-14">
+      <a href="#hero" class="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <span class="inline-flex items-center justify-center size-7 rounded-md bg-primary text-primary-foreground text-xs font-bold">来</span>
+        <span>来学 · 创课助手</span>
+      </a>
+      <div class="hidden md:flex items-center gap-1">
+        <a href="#intro" class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">工具介绍</a>
+        <a href="#audience" class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">谁适合用</a>
+        <a href="#howto" class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">如何使用</a>
+        <a href="#faq" class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">常见问题</a>
+        <a href="#contact" class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">联系</a>
+      </div>
+      <a href="http://www.laixue.work" target="_blank" rel="noopener noreferrer" class="md:hidden text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground">体验</a>
+    </nav>
+  </div>
+</header>
 
-<div class="feature">
-  <h3>多角色伴学</h3>
-  <p>AI 讲师负责讲解，AI 助教随时答疑，AI 同学可以跟你辩论。课堂不再是单向灌输，而是多角色协作的对话场。</p>
-</div>
+<!-- ========== Hero ========== -->
+<section id="hero" class="w-full bg-gradient-to-b from-primary/15 via-background to-background py-12 md:py-20 scroll-mt-20">
+  <div class="max-w-3xl mx-auto px-4 md:px-6 space-y-8">
+    <div class="text-center space-y-4 animate-fade-in-up">
+      <span class="inline-block text-xs px-3 py-1 rounded-full bg-secondary text-secondary-foreground font-medium">
+        基于清华 OpenMAIC 部署定制
+      </span>
+      <h1 class="text-4xl md:text-5xl font-bold text-foreground tracking-tight">
+        来学 · 创课助手
+      </h1>
+      <p class="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+        多角色 AI 伴学 · 交互式课程
+      </p>
+      <p class="text-base text-muted-foreground max-w-2xl mx-auto">
+        把传统课件变成一个有多位 AI 角色参与、可以实时交互的学习空间，让学习不止于观看，在互动中深入理解。
+      </p>
+    </div>
 
-<div class="feature">
-  <h3>交互即思考</h3>
-  <p>课程中嵌入随堂测试、拖拽归类、实时问答。每一次作答，都在确认理解的深度，而不只是"看完"。</p>
-</div>
+    <div class="flex justify-center animate-fade-in-up" style="animation-delay: 0.1s">
+      <a
+        href="http://www.laixue.work"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="inline-flex items-center gap-2 text-base px-8 py-3.5 rounded-md bg-primary text-primary-foreground font-semibold hover:opacity-90 transition-opacity shadow-sm"
+      >
+        立即体验 Demo
+        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
+      </a>
+    </div>
 
-<div class="highlight">
-  <strong>一句话</strong>：让未来的课程，拥有传统开发工具无法实现的交互深度。锐捷大学引入它，是为了让今后的每一门课都能实现「学—练—评」的完整闭环。
-</div>
+    <div class="animate-fade-in-up" style="animation-delay: 0.2s">
+      <div class="bg-card/80 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm">
+        <div class="px-5 py-4 border-b border-border/40">
+          <h3 class="text-base font-semibold text-foreground flex items-center gap-2">
+            <svg class="size-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            测试账号
+          </h3>
+          <p class="text-sm text-muted-foreground mt-1">使用以下账号登录体验完整功能</p>
+        </div>
+        <div class="p-5 space-y-3">
+          <div class="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/60">
+            <div class="flex-1 min-w-0">
+              <span class="text-muted-foreground text-xs">账号：</span>
+              <span class="font-mono text-foreground">laixue@laixue.com</span>
+            </div>
+            <button onclick="copyText('laixue@laixue.com', this)" class="text-xs text-primary hover:underline shrink-0">复制</button>
+          </div>
+          <div class="flex items-center justify-between gap-3 p-3 rounded-md bg-muted/60">
+            <div class="flex-1 min-w-0">
+              <span class="text-muted-foreground text-xs">密码：</span>
+              <span class="font-mono text-foreground">B8pvqpwg65nD</span>
+            </div>
+            <button onclick="copyText('B8pvqpwg65nD', this)" class="text-xs text-primary hover:underline shrink-0">复制</button>
+          </div>
+          <button
+            onclick="copyAccount()"
+            class="w-full inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-md border border-border bg-background hover:bg-accent transition-colors"
+          >
+            <svg id="copy-icon" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <svg id="check-icon" class="size-4 text-primary hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            <span id="copy-text">一键复制账号信息</span>
+          </button>
+          <p class="text-xs text-muted-foreground text-center">建议使用 PC 端访问，获得最佳体验</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-<h2>体验 Demo</h2>
+<!-- ========== Intro Section ========== -->
+<section id="intro" class="w-full py-12 md:py-16 scroll-mt-20">
+  <div class="max-w-3xl mx-auto px-4 md:px-6">
+    <div class="mb-8">
+      <h2 class="text-2xl md:text-3xl font-bold text-foreground mb-2">工具介绍</h2>
+      <div class="h-1 w-12 rounded-full bg-primary"></div>
+    </div>
 
-<div class="demo">
-  <strong>🌐 来学 · 创课助手 Demo</strong>
-  <p style="margin-bottom: 8px;">访问地址：<code>https://www.laixue.work</code></p>
-  <p>测试账号：<code>laixue@laixue.com</code> · 密码：<code>B8pvqpwg65nD</code></p>
-  <p class="small">建议使用 PC 体验 · 当前内测阶段</p>
-</div>
+    <p class="text-base md:text-lg leading-relaxed text-foreground/85 mb-6">
+      <span class="font-semibold text-primary">来学 · 创课助手</span>，把传统课件变成了一个有多位 AI 角色参与、可以实时交互的学习空间，让学习不止于观看，在互动中深入理解。
+    </p>
 
-<p><strong>来学 · 创课助手</strong> 是基于<strong>清华大学开源项目 OpenMAIC</strong>做的部署与定制。目前处于内测阶段，持续打磨中。</p>
+    <div class="space-y-4 mb-8">
+      <div class="flex items-start gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+        <div class="shrink-0 mt-0.5 flex items-center justify-center size-9 rounded-lg bg-primary/10 text-primary">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-foreground mb-1">多角色伴学</h3>
+          <p class="text-sm leading-relaxed text-muted-foreground">AI 讲师负责讲解，AI 助教随时答疑，AI 同学可以跟你辩论。课堂不再是单向灌输，而是多角色协作的对话场。</p>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+        <div class="shrink-0 mt-0.5 flex items-center justify-center size-9 rounded-lg bg-primary/10 text-primary">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-foreground mb-1">交互即思考</h3>
+          <p class="text-sm leading-relaxed text-muted-foreground">课程中嵌入随堂测试、拖拽归类、实时问答。每一次作答，都在确认理解的深度，而不只是"看完"。</p>
+        </div>
+      </div>
+      <div class="flex items-start gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+        <div class="shrink-0 mt-0.5 flex items-center justify-center size-9 rounded-lg bg-primary/10 text-primary">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0112 4.5v15a2.5 2.5 0 11-5 0V18a3 3 0 00-3-3 2.5 2.5 0 010-5 3 3 0 003-3V4.5A2.5 2.5 0 019.5 2z"/><path d="M14.5 2A2.5 2.5 0 0012 4.5v15a2.5 2.5 0 105 0V18a3 3 0 013-3 2.5 2.5 0 000-5 3 3 0 01-3-3V4.5A2.5 2.5 0 0014.5 2z"/></svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-foreground mb-1">学—练—评闭环</h3>
+          <p class="text-sm leading-relaxed text-muted-foreground">让未来的课程拥有传统开发工具无法实现的交互深度，实现从学习到练习到评估的完整闭环。</p>
+        </div>
+      </div>
+    </div>
 
-<h2>谁适合用</h2>
+    <div class="mb-8 flex items-center gap-2 flex-wrap">
+      <span class="inline-block text-xs px-3 py-1 rounded-full border border-border text-foreground font-medium">基于清华开源项目 OpenMAIC 部署与定制</span>
+      <span class="text-xs text-muted-foreground">内测阶段，持续打磨中</span>
+    </div>
 
-<ul>
-  <li>如果你是<strong>业务负责人</strong>，可以用它把产品知识快速转化成可交互的培训课程，让团队不再靠死记硬背 PPT。</li>
-  <li>如果你是<strong>一线主管</strong>，可以用它生成标准化的新人带教内容，让每位新同事都获得一致的入门体验。</li>
-  <li>在<strong>锐捷体系内，任何需要把知识高效传递给他人的场景</strong>——内训、客户赋能、跨部门知识共享——来学 · 创课助手都能帮上忙。</li>
-</ul>
+    <div class="space-y-5">
+      <figure class="overflow-hidden rounded-xl border border-border/50 shadow-sm">
+        <img src="/docs/images/laixue-01.png" alt="目标管理实施流程 — 四大阶段概览" class="w-full h-auto block">
+        <figcaption class="px-3 py-2 text-xs text-muted-foreground bg-muted/40">示例课程：目标管理实施流程四大阶段</figcaption>
+      </figure>
+      <figure class="overflow-hidden rounded-xl border border-border/50 shadow-sm">
+        <img src="/docs/images/laixue-02.png" alt="来学·创课助手 Demo 平台首页" class="w-full h-auto block">
+        <figcaption class="px-3 py-2 text-xs text-muted-foreground bg-muted/40">来学·创课助手 Demo 平台首页</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
 
-<div class="toc">
-  <h2>📑 目录</h2>
-  <ol>
-    <li><a href="#login">登录</a></li>
-    <li><a href="#creator">课件创作者（admin / teacher）</a></li>
-    <li><a href="#admin">运营管理员（admin）</a></li>
-    <li><a href="#learner">学员</a></li>
-    <li><a href="#faq">常见问题</a></li>
-  </ol>
-</div>
+<!-- ========== Audience Section ========== -->
+<section id="audience" class="w-full bg-muted/40 py-12 md:py-16 scroll-mt-20">
+  <div class="max-w-3xl mx-auto px-4 md:px-6">
+    <div class="text-center mb-8 md:mb-10">
+      <h2 class="text-2xl md:text-3xl font-bold text-foreground tracking-tight">谁适合用</h2>
+      <p class="mt-2 text-sm md:text-base text-muted-foreground">三类高频场景，一套解决方案</p>
+    </div>
 
-<h2 id="login">一、登录</h2>
-<p>登录 <code>https://www.laixue.work</code>，需要管理员为您创建账号并告知初始密码。</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+      <div class="bg-card border border-border/60 rounded-xl shadow-sm p-5 md:p-6 space-y-3">
+        <div class="inline-flex items-center justify-center size-10 rounded-lg bg-primary/10 text-primary">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
+        </div>
+        <h3 class="text-base md:text-lg font-semibold text-foreground">业务负责人</h3>
+        <p class="text-sm text-muted-foreground leading-relaxed">把产品知识快速转化成可交互的培训课程，让团队不再靠死记硬背 PPT，实现「学—练—评」完整闭环。</p>
+      </div>
+      <div class="bg-card border border-border/60 rounded-xl shadow-sm p-5 md:p-6 space-y-3">
+        <div class="inline-flex items-center justify-center size-10 rounded-lg bg-primary/10 text-primary">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        </div>
+        <h3 class="text-base md:text-lg font-semibold text-foreground">一线主管</h3>
+        <p class="text-sm text-muted-foreground leading-relaxed">生成标准化的新人带教内容，让每位新同事都获得一致的入门体验，带教质量不再因人而异。</p>
+      </div>
+      <div class="bg-card border border-border/60 rounded-xl shadow-sm p-5 md:p-6 space-y-3">
+        <div class="inline-flex items-center justify-center size-10 rounded-lg bg-primary/10 text-primary">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        </div>
+        <h3 class="text-base md:text-lg font-semibold text-foreground">知识共享场景</h3>
+        <p class="text-sm text-muted-foreground leading-relaxed">内训、客户赋能、跨部门知识共享——任何需要把知识高效传递给他人的场景，都能帮上忙。</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-<img src="/docs/screenshots/login.png" alt="登录来学" style="width:100%; max-width:600px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.08); margin:12px 0; display:block;">
+<!-- ========== HowTo Section ========== -->
+<section id="howto" class="w-full py-12 md:py-16 scroll-mt-20">
+  <div class="max-w-3xl mx-auto px-4 md:px-6 space-y-8">
+    <div class="text-center space-y-3">
+      <span class="inline-block text-xs font-semibold tracking-wider text-primary uppercase">How to Use</span>
+      <h2 class="text-2xl md:text-3xl font-bold text-foreground">如何使用</h2>
+      <p class="text-sm md:text-base text-muted-foreground max-w-xl mx-auto">四个步骤，从登录到学习，快速上手来学·创课助手</p>
+    </div>
 
-<h2 id="creator">二、课件创作者（admin / teacher）</h2>
+    <div class="w-full overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
+      <div class="inline-flex gap-1 p-1 bg-muted/60 rounded-xl min-w-full" role="tablist">
+        <button data-tab="login" class="tab-btn shrink-0 inline-flex items-center gap-1.5 text-xs md:text-sm px-3 py-2 rounded-lg data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-sm text-muted-foreground font-medium">
+          <svg class="size-3.5 md:size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          <span class="whitespace-nowrap">一、登录</span>
+        </button>
+        <button data-tab="create" class="tab-btn shrink-0 inline-flex items-center gap-1.5 text-xs md:text-sm px-3 py-2 rounded-lg data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-sm text-muted-foreground font-medium">
+          <svg class="size-3.5 md:size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          <span class="whitespace-nowrap">二、课件创作</span>
+        </button>
+        <button data-tab="admin" class="tab-btn shrink-0 inline-flex items-center gap-1.5 text-xs md:text-sm px-3 py-2 rounded-lg data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-sm text-muted-foreground font-medium">
+          <svg class="size-3.5 md:size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          <span class="whitespace-nowrap">三、运营管理</span>
+        </button>
+        <button data-tab="learn" class="tab-btn shrink-0 inline-flex items-center gap-1.5 text-xs md:text-sm px-3 py-2 rounded-lg data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-sm text-muted-foreground font-medium">
+          <svg class="size-3.5 md:size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 1.1 2.7 2 6 2s6-.9 6-2v-5"/></svg>
+          <span class="whitespace-nowrap">四、学员学习</span>
+        </button>
+      </div>
+    </div>
 
-<p>创作者可以登录后进入"创课"首页，输入课程主题与要求，AI 自动生成大纲、分页内容、配图与讲解。生成完毕后保存到云端，分享给学员。</p>
+    <!-- Tab Panels -->
+    <div id="tabpanel-login" class="tab-panel mt-6 space-y-6">
+      <p class="text-sm md:text-base text-foreground/90 leading-relaxed border-l-2 border-primary/40 pl-4">打开 www.laixue.work，使用管理员分配的邮箱账号和初始密码登录。如未收到账号，请联系培训管理员。</p>
+      <div class="space-y-6">
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3">
+            <span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">1</span>
+            <div class="flex-1 min-w-0">
+              <h4 class="text-sm md:text-base font-semibold text-foreground">登录界面</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">在登录页输入邮箱和密码即可进入来学·创课助手。账号由管理员开通，如未收到请联系培训管理员。</p>
+            </div>
+          </div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30">
+            <img src="/docs/images/laixue-03.png" alt="登录界面" class="w-full h-auto block">
+          </div>
+        </div>
+      </div>
+    </div>
 
-<img src="/docs/screenshots/creator-home.png" alt="创作者首页 - 输入主题" style="width:100%; max-width:600px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.08); margin:12px 0; display:block;">
+    <div id="tabpanel-create" class="tab-panel mt-6 space-y-6 hidden">
+      <p class="text-sm md:text-base text-foreground/90 leading-relaxed border-l-2 border-primary/40 pl-4">课件创作者（admin / teacher）可以通过以下步骤创建、编辑和管理交互式课程：</p>
+      <div class="space-y-6">
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">1</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">创课助手首页</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">登录后进入来学·创课助手首页，即可看到课程创作入口和「我的课程」列表。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-04.png" alt="创课助手首页" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">2</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">创建一门新课</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">在首页输入框填写课程描述，系统按 5 个环节自动生成可交互的课程内容。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-05.png" alt="创建一门新课" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">3</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">编辑已发布课件</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">在「我的课程」中悬停课程卡片，点击右上角铅笔图标进入专业模式，即可精修每页内容。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-06.png" alt="编辑已发布课件" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">4</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">课程操作菜单</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">「我的课程」页面提供打开、分享、删除三种操作，方便日常课程管理。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-07.png" alt="课程操作菜单" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">5</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">专业模式编辑</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">开启专业模式后，可逐页编辑课程的文字、配图、AI 讲解脚本和互动环节。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-08.png" alt="专业模式编辑" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">6</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">AI 对话修改</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">通过 AI 对话直接修改 PPT 页面、讲解脚本、互动页等，快速迭代课程内容。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-09.png" alt="AI 对话修改" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">7</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">删除课件</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">只有课件创建者可以删除课程，在「我的课程」中点击删除按钮即可操作。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-10.png" alt="删除课件" class="w-full h-auto block"></div>
+        </div>
+      </div>
+    </div>
 
-<h3>测试用例（创作者可以试一下）</h3>
-<blockquote style="background:#f1f5f9;border-left:4px solid #64748b;padding:12px 16px;margin:12px 0;border-radius:0 6px 6px 0;color:#475569;">
-<p><strong>主题输入示例：</strong></p>
-<p>任何有效的管理，都源于扎实的管理基本功。"锐捷管理基本功"是指锐捷管理者从事日常管理工作所必须掌握、高频应用、能够组合成复杂管理技能的基础动作，分为"管业务"与"带队伍"两大部分。"制定目标"是管业务的第一门课程。课程内容包括：目标管理的理念、实施流程以及目标设定与拆解的方法，旨在帮助学员掌握目标设定与拆解的原则、要点和工具，提升制定目标的能力。</p>
-<p style="margin-top:8px;"><strong>附加要求：</strong>PPT 不超过 10 页，AI 讲师的名字叫"来学"。</p>
-</blockquote>
+    <div id="tabpanel-admin" class="tab-panel mt-6 space-y-6 hidden">
+      <p class="text-sm md:text-base text-foreground/90 leading-relaxed border-l-2 border-primary/40 pl-4">运营管理员（admin）负责学员账号创建、权限分配和日常运营：</p>
+      <div class="space-y-6">
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">1</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">学员管理</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">进入「管理后台 → 学员管理」，在顶部表单输入姓名 + 邮箱提交，系统自动生成初始密码和账号。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-11.png" alt="学员管理" class="w-full h-auto block"></div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">2</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">常见运营操作</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">覆盖新员工入职、老师备课权限、员工离职、密码重置等常见场景的标准操作流程。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-12.png" alt="常见运营操作" class="w-full h-auto block"></div>
+        </div>
+      </div>
+    </div>
 
-<div class="image-placeholder">[截图：AI 生成中]</div>
-<div class="image-placeholder">[截图：生成完成 - 预览课件]</div>
-<div class="image-placeholder">[截图：保存到云端 - 我的课程列表]</div>
-<div class="image-placeholder">[截图：分享 - 复制链接]</div>
+    <div id="tabpanel-learn" class="tab-panel mt-6 space-y-6 hidden">
+      <p class="text-sm md:text-base text-foreground/90 leading-relaxed border-l-2 border-primary/40 pl-4">学员收到分享链接后即可开始沉浸式学习，与 AI 讲师、助教、同学实时互动：</p>
+      <div class="space-y-6">
+        <div class="space-y-3 rounded-xl border border-border/60 bg-card p-4 md:p-5 shadow-sm">
+          <div class="flex items-start gap-3"><span class="shrink-0 flex items-center justify-center size-6 md:size-7 rounded-full bg-primary text-primary-foreground text-xs md:text-sm font-bold">1</span>
+            <div class="flex-1 min-w-0"><h4 class="text-sm md:text-base font-semibold text-foreground">开始学习</h4>
+              <p class="mt-1 text-xs md:text-sm text-muted-foreground leading-relaxed">点击课程链接 → 未登录时跳转登录页 → 用 admin 提供的邮箱和初始密码登录 → 自动回到课程页面，体验多角色 AI 伴学的交互课程。</p></div></div>
+          <div class="rounded-lg overflow-hidden border border-border/40 bg-muted/30"><img src="/docs/images/laixue-13.png" alt="开始学习" class="w-full h-auto block"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-<h3>编辑已发布的课件</h3>
-<div class="step"><span class="step-num">1</span>在"我的课程"里悬停课程卡片 → 右上角出现<strong>编辑按钮</strong>（铅笔图标）。</div>
-<div class="step"><span class="step-num">2</span>点击铅笔 → 进入<strong>专业模式（Pro Mode）</strong>，可修改每页文字、配图、AI 讲解。</div>
-<div class="step"><span class="step-num">3</span>改完后点"保存到云端" → 同步给所有学员。</div>
+<!-- ========== FAQ Section ========== -->
+<section id="faq" class="w-full py-12 md:py-16 scroll-mt-20">
+  <div class="max-w-3xl mx-auto px-4 md:px-6">
+    <div class="mb-8 md:mb-10">
+      <h2 class="text-2xl md:text-3xl font-bold text-foreground tracking-tight">常见问题</h2>
+      <p class="mt-3 text-sm md:text-base text-muted-foreground">试用期间被问得最多的几个问题，如有其他疑问欢迎邮件反馈</p>
+    </div>
 
-<h2 id="admin">三、运营管理员（admin）</h2>
-<p>管理员负责账号与课件的整体管理：创建学员 / 老师账号、重置密码、禁用 / 启用账号、查看所有云端课件。</p>
+    <div class="space-y-3">
+      <details class="group rounded-xl border border-border/60 bg-card shadow-sm">
+        <summary class="cursor-pointer list-none px-4 md:px-5 py-4 text-[15px] md:text-base font-medium text-foreground flex items-center justify-between gap-3">
+          <span>如何获取测试账号？</span>
+          <svg class="size-4 text-muted-foreground transition-transform group-open:rotate-180 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="px-4 md:px-5 pb-4 text-sm md:text-[15px] leading-relaxed text-muted-foreground">
+          使用统一测试账号 laixue@laixue.com，密码 B8pvqpwg65nD 即可登录体验。
+        </div>
+      </details>
+      <details class="group rounded-xl border border-border/60 bg-card shadow-sm">
+        <summary class="cursor-pointer list-none px-4 md:px-5 py-4 text-[15px] md:text-base font-medium text-foreground flex items-center justify-between gap-3">
+          <span>支持哪些课程格式导入？</span>
+          <svg class="size-4 text-muted-foreground transition-transform group-open:rotate-180 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="px-4 md:px-5 pb-4 text-sm md:text-[15px] leading-relaxed text-muted-foreground">
+          目前支持上传 PDF 文档，系统会自动解析并生成多角色 AI 伴学课程。
+        </div>
+      </details>
+      <details class="group rounded-xl border border-border/60 bg-card shadow-sm">
+        <summary class="cursor-pointer list-none px-4 md:px-5 py-4 text-[15px] md:text-base font-medium text-foreground flex items-center justify-between gap-3">
+          <span>AI 伴学包含哪些角色？</span>
+          <svg class="size-4 text-muted-foreground transition-transform group-open:rotate-180 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="px-4 md:px-5 pb-4 text-sm md:text-[15px] leading-relaxed text-muted-foreground">
+          包含 AI 讲师、AI 助教和 AI 同学三种角色，提供沉浸式交互学习体验。
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
 
-<div class="image-placeholder">[截图：管理员后台 - 学员管理]</div>
-<div class="image-placeholder">[截图：创建学员 - 显示初始密码]</div>
+<!-- ========== Contact Section ========== -->
+<section id="contact" class="w-full bg-gradient-to-b from-background to-muted/50 py-12 md:py-16 scroll-mt-20">
+  <div class="max-w-3xl mx-auto px-4 md:px-6">
+    <div class="text-center space-y-8">
+      <div class="space-y-3">
+        <h2 class="text-2xl md:text-3xl font-bold text-foreground tracking-tight">反馈与联系</h2>
+        <p class="text-muted-foreground text-sm md:text-base">试点期间任何使用问题，欢迎随时联系我们</p>
+      </div>
 
-<h3>常见操作清单</h3>
-<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
-  <thead>
-    <tr style="background:#f0fdf4;border-bottom:2px solid #bbf7d0;">
-      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">场景</th>
-      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">操作</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">新员工入职</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">创建学员账号 → 抄下初始密码 → 口头/飞书发给员工</td>
-    </tr>
-    <tr style="background:#f7fee7;">
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">老师需要备课权限</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">创建老师账号 → 老师登录后即可在首页生成课件</td>
-    </tr>
-    <tr>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">员工离职</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">学员列表 → 禁用（或删除）该员工</td>
-    </tr>
-    <tr style="background:#f7fee7;">
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">员工忘记密码</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">学员列表 → 重置密码 → 把新密码发给员工</td>
-    </tr>
-  </tbody>
-</table>
+      <div class="bg-card border border-border/60 rounded-xl shadow-sm">
+        <div class="pt-6 pb-6 px-5 md:px-8">
+          <div class="flex flex-col items-center gap-4">
+            <div class="size-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <svg class="size-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            </div>
+            <div class="space-y-1 text-center">
+              <p class="text-sm text-muted-foreground">反馈邮箱</p>
+              <a href="mailto:jinzengquan@ruijie.com.cn" class="inline-flex items-center gap-2 text-base md:text-lg font-semibold text-primary hover:text-primary/80 transition-colors break-all">
+                <span>jinzengquan@ruijie.com.cn</span>
+                <svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
 
-<h2 id="learner">四、学员</h2>
-<p>学员用 admin 提供的账号登录后，进入学员首页 → 看到所有可学习的课件 → 进入教室开始学习。</p>
+      <div class="space-y-4">
+        <p class="text-sm text-muted-foreground">准备好体验 AI 伴学了吗？</p>
+        <a href="http://www.laixue.work" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-8 py-3.5 text-base font-semibold rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-sm">
+          <svg class="size-4 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
+          立即体验 Demo
+        </a>
+        <p class="text-xs text-muted-foreground">建议使用 PC 端体验，效果更佳</p>
+      </div>
 
-<img src="/docs/screenshots/classroom.png" alt="教室播放界面" style="width:100%; max-width:600px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.08); margin:12px 0; display:block;">
+      <div class="pt-8 border-t border-border/40">
+        <p class="text-xs text-muted-foreground/80">锐捷大学 · 锐捷网络股份有限公司</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-<h3>互动方式</h3>
-<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
-  <thead>
-    <tr style="background:#f0fdf4;border-bottom:2px solid #bbf7d0;">
-      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">操作</th>
-      <th style="text-align:left;padding:10px 14px;border:1px solid #bbf7d0;">效果</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">点击"下一步"按钮</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">翻到下一页</td>
-    </tr>
-    <tr style="background:#f7fee7;">
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">在右下方输入问题</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">AI 老师立即回答你的问题</td>
-    </tr>
-    <tr>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">观看 AI 老师讲解</td>
-      <td style="padding:10px 14px;border:1px solid #d1fae5;">语音 + 文字同步显示，可以重听</td>
-    </tr>
-  </tbody>
-</table>
+<script>
+  // Tab 切换
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabPanels = document.querySelectorAll('.tab-panel');
+  tabBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.tab;
+      tabBtns.forEach((b) => b.dataset.active = (b === btn).toString());
+      tabPanels.forEach((p) => {
+        p.classList.toggle('hidden', p.id !== `tabpanel-${target}`);
+      });
+    });
+  });
+  // 默认激活第一个
+  tabBtns[0]?.click();
 
-<h2 id="faq">五、常见问题</h2>
+  // 复制文本
+  function copyText(text, btn) {
+    navigator.clipboard?.writeText(text).then(() => {
+      const old = btn.textContent;
+      btn.textContent = '已复制 ✓';
+      btn.classList.add('text-success');
+      setTimeout(() => { btn.textContent = old; btn.classList.remove('text-success'); }, 1500);
+    }).catch(() => {
+      // fallback：选中文本让用户手动复制
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+    });
+  }
 
-<h3>5.1 我分享了课程链接，对方说打不开？</h3>
-<p>最常见原因：对方没有登录。让他们用 admin 提供的账号先登录（不需要退出当前页面），链接会自动重新跳转。</p>
-
-<h3>5.2 生成的课件质量不理想？</h3>
-<p>在专业模式（点击铅笔）里手动修改每页的文字、配图、AI 讲解。AI 生成的是初稿，人工精修是必走环节。</p>
-
-<h3>5.3 我能让学员只看到某些课程，不看到全部吗？</h3>
-<p>当前阶段所有 active 学员可以看到所有云端课件。后续会支持按学员分配。</p>
-
-<h3>5.4 课程生成要等多久？</h3>
-<p>取决于页数。一般 5 页课程约 3-5 分钟，10 页课程约 8-12 分钟。生成过程中可以最小化窗口，不影响后续使用。</p>
-
-<h3>5.5 数据安全吗？</h3>
-<p>所有课程数据和学员学习记录存在 Supabase PostgreSQL，通过行级安全（RLS）严格隔离。每个学员只能看到自己的数据，admin 可以看到全部。详见技术文档。</p>
-
-<hr>
-
-<div class="footer">
-  <p><strong>反馈与建议</strong>：试点期间任何使用问题，请联系 <code>jinzengquan@ruijie.com.cn</code>。</p>
-  <p style="margin-top: 12px;">来学 · 创课助手 · 内测版 · 由锐捷大学培训部门部署运营</p>
-</div>
+  // 一键复制完整账号信息
+  function copyAccount() {
+    const text = '账号：laixue@laixue.com\n密码：B8pvqpwg65nD';
+    const icon = document.getElementById('copy-icon');
+    const check = document.getElementById('check-icon');
+    const label = document.getElementById('copy-text');
+    navigator.clipboard?.writeText(text).then(() => {
+      icon.classList.add('hidden');
+      check.classList.remove('hidden');
+      label.textContent = '已复制账号信息';
+      setTimeout(() => {
+        icon.classList.remove('hidden');
+        check.classList.add('hidden');
+        label.textContent = '一键复制账号信息';
+      }, 2000);
+    }).catch(() => {
+      // 老浏览器 fallback：弹窗显示让用户复制
+      window.prompt('请手动复制账号信息：', text);
+    });
+  }
+</script>
 
 </body>
 </html>
