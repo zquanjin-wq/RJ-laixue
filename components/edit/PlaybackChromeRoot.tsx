@@ -99,6 +99,13 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         modelId?: string;
       };
     };
+    // ─── [VOICE DEBUG] dump the stage's teacherVoiceConfig so we can tell
+    // whether the course-design pick survived IndexedDB load and into playback. ───
+    console.log(
+      `[VOICE DEBUG][Stage TeacherVoiceConfig Loaded] stageId="${stage?.id ?? 'null'}" ` +
+        `stageTeacherVoiceConfig=${JSON.stringify(stage?.teacherVoiceConfig ?? null)} ` +
+        `rawStageKeys=${JSON.stringify(rawStage ? Object.keys(rawStage) : null)}`,
+    );
     const generationComplete = useStageStore.use.generationComplete();
 
     const currentScene = getCurrentScene();
