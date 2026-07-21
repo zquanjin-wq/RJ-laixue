@@ -13,6 +13,7 @@ import { useStageStore } from '@/lib/store/stage';
 import { useSettingsStore } from '@/lib/store/settings';
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
 import { getEnabledProvidersWithVoices } from '@/lib/audio/voice-resolver';
+import { TTS_PROVIDERS } from '@/lib/audio/constants';
 import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
 import { useVoxCPMVoiceProfiles } from '@/lib/audio/voxcpm-voices';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -467,6 +468,29 @@ function GenerationPreviewContent() {
         interactiveMode: !!currentSession.requirements.interactiveMode,
         taskEngineMode: currentSession.taskEngineMode === true,
       };
+      // ─── [VOICE DEBUG] snapshot the AI teacher voice into the stage ───
+      {
+        const s = useSettingsStore.getState();
+        const cfgModelId = s.ttsProvidersConfig?.[s.ttsProviderId]?.modelId;
+        // Fallback to the provider's built-in defaultModelId when the user's
+        // current selection did not pin a specific model (e.g. settings store
+        // only carries providerId+voiceId without a modelId).
+        const providerDefaults = (TTS_PROVIDERS as Record<string, { defaultModelId?: string } | undefined>)[s.ttsProviderId];
+        const fallbackModelId = providerDefaults?.defaultModelId;
+        const teacherVoiceConfig = {
+          providerId: s.ttsProviderId,
+          voiceId: s.ttsVoice,
+          modelId: cfgModelId ?? fallbackModelId ?? undefined,
+        };
+        // Allow runtime extra field on Stage (DSL Stage contract is closed;
+        // we cast to a local intersection to keep TypeScript honest).
+        (stage as Stage & { teacherVoiceConfig?: unknown }).teacherVoiceConfig = teacherVoiceConfig;
+        console.log(
+          `[VOICE DEBUG][Create Course Payload Teacher Voice] providerId="${teacherVoiceConfig.providerId}" ` +
+            `voiceId="${teacherVoiceConfig.voiceId}" modelId="${teacherVoiceConfig.modelId ?? ''}" ` +
+            `source=settings.ttsProviderId/settings.ttsVoice/modelId=settings.ttsProvidersConfig[...].modelId|provider.defaultModelId`,
+        );
+      }
 
       // ── Generate outlines first (infers languageDirective) ──
       let outlines = currentSession.sceneOutlines;

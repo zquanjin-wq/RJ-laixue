@@ -26,6 +26,7 @@ import { useDiscussionTTS } from '@/lib/hooks/use-discussion-tts';
 import { useWidgetIframeStore } from '@/lib/store/widget-iframe';
 import type { AudioIndicatorState } from '@/components/roundtable/audio-indicator';
 import type { Action, DiscussionAction, SpeechAction } from '@/lib/types/action';
+import type { TTSProviderId } from '@/lib/audio/types';
 import { cn } from '@/lib/utils';
 // Playback state persistence removed — refresh always starts from the beginning
 import { ChatArea, type ChatAreaRef } from '@/components/chat/chat-area';
@@ -84,8 +85,20 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
       setCurrentSceneId,
       generatingOutlines,
       outlines,
+      stage: rawStage,
     } = useStageStore();
     const failedOutlines = useStageStore.use.failedOutlines();
+    // Runtime extension: Stage carries an extra teacherVoiceConfig field on
+    // RJ-laixue (written by app/generation-preview/page.tsx at course creation
+    // and persisted to IndexedDB). The DSL Stage contract is closed, so we cast
+    // through `unknown` to read it without touching the upstream type.
+    const stage = rawStage as typeof rawStage & {
+      teacherVoiceConfig?: {
+        providerId: string;
+        voiceId: string;
+        modelId?: string;
+      };
+    };
     const generationComplete = useStageStore.use.generationComplete();
 
     const currentScene = getCurrentScene();
@@ -166,21 +179,53 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     );
 
     // Resolved AgentConfig array for hooks that need full agent objects
-    // Subscribe to the agents record so voiceConfig changes trigger re-resolution
-    const agentsRecord = useAgentRegistry((s) => s.agents);
+    // The teacher voice now flows from stage.teacherVoiceConfig directly into
+    // `useDiscussionTTS` (see `teacherVoiceConfigForDiscussion` below) — no
+    // selectedAgent-side override needed. selectedAgents still flows through
+    // `useDiscussionTTS` so the hook can read each agent's `voiceDesign`.
     const selectedAgents = useMemo(
       () =>
-        selectedAgentIds.map((id) => agentsRecord[id]).filter((a): a is AgentConfig => a != null),
-      [agentsRecord, selectedAgentIds],
+        selectedAgentIds
+          .map((id) => useAgentRegistry.getState().agents[id])
+          .filter((a): a is AgentConfig => a != null),
+      [selectedAgentIds],
     );
 
     // Discussion TTS: audio indicator state
     const [audioIndicatorState, setAudioIndicatorState] = useState<AudioIndicatorState>('idle');
     const [audioAgentId, setAudioAgentId] = useState<string | null>(null);
 
+    // ─── Build teacherVoiceConfig from stage.teacherVoiceConfig (authoritative source) ───
+    // The teacher's voice is decided at course-creation time and persisted on
+    // stage.teacherVoiceConfig. Reading it from `selectedAgents[teacher].voiceConfig`
+    // instead would re-introduce the LLM-generated voice whenever the registry is
+    // seeded fresh (which is every render, since the registry hydrates from
+    // DEFAULT_AGENTS / saved IndexedDB agents). Read straight from stage so the
+    // teacher's voice cannot regress to a stale registry entry.
+    const teacherVoiceConfigForDiscussion = useMemo(() => {
+      if (!stage.teacherVoiceConfig) return undefined;
+      const cfg: {
+        providerId: import('@/lib/audio/types').TTSProviderId;
+        voiceId: string;
+        modelId?: string;
+      } = {
+        providerId: stage.teacherVoiceConfig.providerId as import('@/lib/audio/types').TTSProviderId,
+        voiceId: stage.teacherVoiceConfig.voiceId,
+        ...(stage.teacherVoiceConfig.modelId
+          ? { modelId: stage.teacherVoiceConfig.modelId }
+          : {}),
+      };
+      console.log(
+        `[VOICE DEBUG][Teacher VoiceConfig For Discussion] teacherAgentId="(stage-source)" ` +
+          `teacherVoiceConfig=${JSON.stringify(cfg)} sourcePath="stage.teacherVoiceConfig"`,
+      );
+      return cfg;
+    }, [stage?.teacherVoiceConfig]);
+
     const discussionTTS = useDiscussionTTS({
       enabled: ttsEnabled && !ttsMuted,
       agents: selectedAgents,
+      teacherVoiceConfig: teacherVoiceConfigForDiscussion,
       onAudioStateChange: (agentId, state) => {
         setAudioAgentId(agentId);
         setAudioIndicatorState(state);

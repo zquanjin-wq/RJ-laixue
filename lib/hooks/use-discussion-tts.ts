@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSettingsStore } from '@/lib/store/settings';
 import { useBrowserTTS } from '@/lib/hooks/use-browser-tts';
 import {
@@ -16,11 +16,22 @@ import type { AgentConfig } from '@/lib/orchestration/registry/types';
 import type { TTSProviderId } from '@/lib/audio/types';
 import type { AudioIndicatorState } from '@/components/roundtable/audio-indicator';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { applyTeacherVoiceConfigToAgents } from '@/lib/teacher/apply-teacher-voice';
 
 interface DiscussionTTSOptions {
   enabled: boolean;
   agents: AgentConfig[];
   onAudioStateChange?: (agentId: string | null, state: AudioIndicatorState) => void;
+  /**
+   * Course-design-time teacher voice selection (the "Classroom Role
+   * Config" pick for the AI teacher). When set, the teacher voice
+   * resolver prefers this over the global ttsVoice fallback.
+   */
+  teacherVoiceConfig?: {
+    providerId: TTSProviderId;
+    voiceId: string;
+    modelId?: string;
+  };
 }
 
 interface QueueItem {
@@ -33,7 +44,12 @@ interface QueueItem {
   voiceId: string;
 }
 
-export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: DiscussionTTSOptions) {
+export function useDiscussionTTS({
+  enabled,
+  agents,
+  onAudioStateChange,
+  teacherVoiceConfig,
+}: DiscussionTTSOptions) {
   const { locale } = useI18n();
   const ttsProvidersConfig = useSettingsStore((s) => s.ttsProvidersConfig);
   const ttsSpeed = useSettingsStore((s) => s.ttsSpeed);
@@ -86,11 +102,20 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
 
   // Build agent index map for deterministic voice resolution
   const agentIndexMap = useRef<Map<string, number>>(new Map());
+  // Project the course-design-time teacher voice onto the agent list. This
+  // runs here (and not at the callsite) because Q&A's actual `useDiscussionTTS`
+  // entry point is the only one that needs the override; the override is
+  // additive, so PlaybackChromeRoot's separate UI-only override is harmless
+  // and we get a single source of truth.
+  const effectiveAgents = useMemo(
+    () => applyTeacherVoiceConfigToAgents(agents, teacherVoiceConfig),
+    [agents, teacherVoiceConfig],
+  );
   useEffect(() => {
     const map = new Map<string, number>();
-    agents.forEach((agent, i) => map.set(agent.id, i));
+    effectiveAgents.forEach((agent, i) => map.set(agent.id, i));
     agentIndexMap.current = map;
-  }, [agents]);
+  }, [effectiveAgents]);
 
   // Browser-native voices (dynamic, client-only) — same source the AgentBar
   // picker uses, so discussion resolution and the picker stay in sync.
@@ -122,7 +147,7 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
             }
           : null;
 
-      const agent = agentId ? agents.find((a) => a.id === agentId) : undefined;
+      const agent = agentId ? effectiveAgents.find((a) => a.id === agentId) : undefined;
       if (!agent) return firstVoice();
 
       // Teacher voice resolution: per-agent override → agent voiceConfig →
@@ -166,34 +191,71 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
 
         // 1. Per-agent override from settings
         const override = validateChoice(agentVoiceOverrides?.[agent.id]);
-        if (override) return override;
+        if (override) {
+          console.log(
+            `[VOICE DEBUG][Discussion TTS Final] source=override ` +
+              `providerId="${override.providerId}" voiceId="${override.voiceId}" ` +
+              `modelId="${override.modelId ?? ''}"`,
+          );
+          return override;
+        }
 
         // 2. Agent's own voiceConfig from course design
         const agentCfg = validateChoice(agent.voiceConfig);
-        if (agentCfg) return agentCfg;
+        if (agentCfg) {
+          console.log(
+            `[VOICE DEBUG][Discussion TTS Final] source=agent.voiceConfig ` +
+              `providerId="${agentCfg.providerId}" voiceId="${agentCfg.voiceId}" ` +
+              `modelId="${agentCfg.modelId ?? ''}"`,
+          );
+          return agentCfg;
+        }
 
-        // 3. Global lecture voice fallback
+        // 3. Course-design-time teacher voice (from "Classroom Role Config")
+        const teacherCfg = validateChoice(teacherVoiceConfig);
+        if (teacherCfg) {
+          console.log(
+            `[VOICE DEBUG][Discussion TTS Final] source=teacherVoiceConfig ` +
+              `providerId="${teacherCfg.providerId}" voiceId="${teacherCfg.voiceId}" ` +
+              `modelId="${teacherCfg.modelId ?? ''}"`,
+          );
+          return teacherCfg;
+        }
+
+        // 4. Global lecture voice fallback
         if (isTTSProviderEnabled(globalTtsProviderId, ttsProvidersConfig[globalTtsProviderId])) {
+          console.log(
+            `[VOICE DEBUG][Discussion TTS Final] source=globalTtsVoice ` +
+              `providerId="${globalTtsProviderId}" voiceId="${globalTtsVoice}" ` +
+              `modelId="${ttsProvidersConfig[globalTtsProviderId]?.modelId ?? ''}"`,
+          );
           return {
             providerId: globalTtsProviderId,
             voiceId: globalTtsVoice,
             modelId: ttsProvidersConfig[globalTtsProviderId]?.modelId,
           };
         }
-        return firstVoice();
+        const fb = firstVoice();
+        console.log(
+          `[VOICE DEBUG][Discussion TTS Final] source=firstVoice ` +
+            `providerId="${fb?.providerId ?? 'null'}" voiceId="${fb?.voiceId ?? 'null'}" ` +
+            `modelId="${fb?.modelId ?? ''}"`,
+        );
+        return fb;
       }
 
       const index = agentIndexMap.current.get(agentId!) ?? 0;
       return resolveAgentVoice(agent, index, providers, agentVoiceOverrides);
     },
     [
-      agents,
+      effectiveAgents,
       ttsProvidersConfig,
       voxcpmProfiles,
       browserVoices,
       globalTtsProviderId,
       globalTtsVoice,
       agentVoiceOverrides,
+      teacherVoiceConfig,
     ],
   );
 
@@ -224,7 +286,7 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
 
     try {
       const providerConfig = ttsProvidersConfig[item.providerId];
-      const agent = item.agentId ? agents.find((a) => a.id === item.agentId) : undefined;
+      const agent = item.agentId ? effectiveAgents.find((a) => a.id === item.agentId) : undefined;
       const providerOptions = await resolveAgentVoiceOptions(agent, {
         providerId: item.providerId,
         providerConfig: { ...providerConfig, modelId: item.modelId || providerConfig?.modelId },
@@ -300,7 +362,7 @@ export function useDiscussionTTS({ enabled, agents, onAudioStateChange }: Discus
         queueMicrotask(() => processQueueRef.current());
       }
     }
-  }, [agents, enabled, locale, ttsMuted, ttsVolume, ttsProvidersConfig, ttsSpeed, playbackSpeed]);
+  }, [effectiveAgents, enabled, locale, ttsMuted, ttsVolume, ttsProvidersConfig, ttsSpeed, playbackSpeed]);
 
   processQueueRef.current = processQueue;
 
