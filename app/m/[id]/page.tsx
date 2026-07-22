@@ -15,10 +15,13 @@ import { MobilePlayer } from './_components/MobilePlayer';
 
 interface PageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ share?: string; student?: string; view?: string }>;
 }
 
-export default async function MobilePlayerPage({ params }: PageProps) {
+export default async function MobilePlayerPage({ params, searchParams }: PageProps) {
   const { id } = await params;
+  const sp = await searchParams;
+  const isShareMode = sp.share === '1';
 
   const serverSupabase = await getServerSupabase();
   const {
@@ -61,6 +64,7 @@ export default async function MobilePlayerPage({ params }: PageProps) {
         courseId={course.id}
         courseTitle={course.title || '未命名课件'}
         chapters={chapters}
+        isShareMode={isShareMode}
       />
     </main>
   );

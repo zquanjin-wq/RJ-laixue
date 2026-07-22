@@ -30,6 +30,7 @@ export default function ClassroomDetailPage() {
   const studentId = searchParams.get('student') || undefined;
   const editorAutoOpen = searchParams.get('editor') === '1';
   const viewMode = searchParams.get('view') === '1';
+  const explicitSceneId = searchParams.get('sceneId') || undefined;
   const { isMobile } = useMobileDetection();
   const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
   const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
@@ -138,6 +139,96 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
     try {
       await loadFromStorage(classroomId);
 
+      // ── Initial scene resolution ───────────────────────────────
+      // Priority (see CLASSROOM INIT log below for reason field):
+      //   1. URL explicit sceneId (if valid)
+      //   2. Editor mode + stage.currentSceneId (resume edit position)
+      //   3. Default: sortedScenes[0] (learner / share / open)
+      //
+      // BUG FIX: Previously loadFromStorage restored stage.currentSceneId
+      // from IndexedDB unconditionally, so "open" or share links landed on
+      // whatever page the admin last edited (e.g. page 9). Now we force
+      // learner/share entry to start from page 1.
+      {
+        const storeState = useStageStore.getState();
+        const rawScenes = storeState.scenes;
+
+        // Stable sort by order; missing order falls back to original array index.
+        const sortedScenes = rawScenes
+          .map((scene, idx) => ({ scene, index: idx }))
+          .sort((a, b) => {
+            const ao = typeof a.scene.order === 'number' ? a.scene.order : a.index;
+            const bo = typeof b.scene.order === 'number' ? b.scene.order : b.index;
+            return ao - bo;
+          })
+          .map((item) => item.scene);
+
+        const sortedFirst = sortedScenes[0];
+        const isEditorMode = editorAutoOpen;
+        const isShareMode = readOnlyShare;
+        const isLearnerEntry = !isEditorMode && (!canSave || isShareMode);
+
+        let selectedInitialSceneId: string | null = null;
+        let reason: string;
+
+        // Priority 1: explicit sceneId from URL
+        if (explicitSceneId) {
+          const valid = sortedScenes.some((s) => s.id === explicitSceneId);
+          if (valid) {
+            selectedInitialSceneId = explicitSceneId;
+            reason = 'explicit sceneId from URL';
+          } else {
+            // Invalid sceneId — fallback to default
+            selectedInitialSceneId = sortedFirst?.id ?? null;
+            reason = 'fallback first scene (invalid explicit sceneId)';
+          }
+        }
+        // Priority 2: editor mode may resume last position
+        else if (isEditorMode && storeState.currentSceneId) {
+          const exists = sortedScenes.some((s) => s.id === storeState.currentSceneId);
+          if (exists) {
+            selectedInitialSceneId = storeState.currentSceneId;
+            reason = 'editor currentSceneId';
+          } else {
+            // Stale currentSceneId (scene was deleted) — fallback
+            selectedInitialSceneId = sortedFirst?.id ?? null;
+            reason = 'fallback first scene (stale editor currentSceneId)';
+          }
+        }
+        // Priority 3: learner / share / open → always start from beginning
+        else {
+          selectedInitialSceneId = sortedFirst?.id ?? null;
+          reason = isLearnerEntry
+            ? 'learner/share default first scene'
+            : 'fallback first scene';
+        }
+
+        // Apply if different from what IndexedDB restored (avoid unnecessary re-render)
+        if (selectedInitialSceneId !== storeState.currentSceneId) {
+          useStageStore.setState({ currentSceneId: selectedInitialSceneId });
+        }
+
+        const selectedScene = sortedScenes.find((s) => s.id === selectedInitialSceneId);
+
+        log.info('[CLASSROOM INIT][Initial Scene]', {
+          stageId: classroomId,
+          isEditorMode,
+          isShareMode,
+          isLearnerEntry,
+          explicitSceneId,
+          explicitSceneIdValid: explicitSceneId ? sortedScenes.some((s) => s.id === explicitSceneId) : undefined,
+          restoredCurrentSceneId: storeState.currentSceneId, // value BEFORE our override
+          selectedInitialSceneId,
+          selectedInitialSceneTitle: selectedScene?.title,
+          selectedInitialSceneOrder: selectedScene?.order,
+          sortedFirstSceneId: sortedFirst?.id,
+          sortedFirstSceneTitle: sortedFirst?.title,
+          sortedFirstSceneOrder: sortedFirst?.order,
+          totalScenes: sortedScenes.length,
+          reason,
+        });
+      }
+
       // If IndexedDB had no data, try server-side storage (API-generated classrooms)
       if (!useStageStore.getState().stage) {
         log.info('No IndexedDB data, trying server-side storage for:', classroomId);
@@ -152,9 +243,17 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
               // way in, same as the store's setScenes/loadFromStorage paths —
               // server snapshots predate the schema field.
               const migrated = (scenes as Scene[]).map(migrateScene);
+              const sortedMigrated = migrated
+                .map((s, idx) => ({ s, index: idx }))
+                .sort((a, b) => {
+                  const ao = typeof a.s.order === 'number' ? a.s.order : a.index;
+                  const bo = typeof b.s.order === 'number' ? b.s.order : b.index;
+                  return ao - bo;
+                })
+                .map((item) => item.s);
               useStageStore.setState({
                 scenes: migrated,
-                currentSceneId: migrated[0]?.id ?? null,
+                currentSceneId: sortedMigrated[0]?.id ?? null,
                 // Match `loadFromStorage` semantics: mode is transient UI
                 // state, not persisted with the stage. Reset on every
                 // classroom load so SPA navigation doesn't carry Pro
@@ -188,6 +287,14 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
             if (json.success && courseData?.stage) {
               const { stage, scenes = [], outlines = [] } = courseData;
               const migrated = (scenes as Scene[]).map(migrateScene);
+              const sortedMigrated = migrated
+                .map((s, idx) => ({ s, index: idx }))
+                .sort((a, b) => {
+                  const ao = typeof a.s.order === 'number' ? a.s.order : a.index;
+                  const bo = typeof b.s.order === 'number' ? b.s.order : b.index;
+                  return ao - bo;
+                })
+                .map((item) => item.s);
               useStageStore.getState().setStage(stage);
               // Hydrate generated agents from cloud course into IndexedDB + registry
               if (stage.generatedAgentConfigs?.length) {
@@ -198,7 +305,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
               useStageStore.setState({
                 scenes: migrated,
                 outlines,
-                currentSceneId: migrated[0]?.id ?? null,
+                currentSceneId: sortedMigrated[0]?.id ?? null,
                 mode: 'playback',
                 generationComplete: true,
                 generatingOutlines: [],

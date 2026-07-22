@@ -165,9 +165,17 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     // the store boundary.
     const migrated = scenes.map(migrateScene);
     set({ scenes: migrated });
-    // Auto-select first scene if no current scene
+    // Auto-select first scene (by order) if no current scene.
+    // Sort ensures we pick order=0 even if the input array is unsorted.
     if (!get().currentSceneId && migrated.length > 0) {
-      set({ currentSceneId: migrated[0].id });
+      const firstByOrder = migrated
+        .map((s, idx) => ({ s, index: idx }))
+        .sort((a, b) => {
+          const ao = typeof a.s.order === 'number' ? a.s.order : a.index;
+          const bo = typeof b.s.order === 'number' ? b.s.order : b.index;
+          return ao - bo;
+        })[0].s;
+      set({ currentSceneId: firstByOrder.id });
     }
     debouncedSave();
   },

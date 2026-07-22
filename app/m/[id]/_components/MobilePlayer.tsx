@@ -38,12 +38,15 @@ interface MobilePlayerProps {
   courseId: string;
   courseTitle: string;
   chapters: MobileChapter[];
+  /** When true, always start from chapter 0 (ignore localStorage progress) */
+  isShareMode?: boolean;
 }
 
 export function MobilePlayer({
   courseId,
   courseTitle,
   chapters,
+  isShareMode = false,
 }: MobilePlayerProps) {
   // === Hydrate from localStorage ===
   const [hydrated, setHydrated] = useState(false);
@@ -51,13 +54,22 @@ export function MobilePlayer({
   const [audioOffset, setAudioOffset] = useState(0);
 
   useEffect(() => {
+    // Share/learner mode: always start from chapter 0, don't restore progress.
+    // This matches the classroom page fix where share=1 forces first scene.
+    if (isShareMode) {
+      setSceneIndex(0);
+      setAudioOffset(0);
+      setHydrated(true);
+      return;
+    }
+
     const saved = getProgress(courseId);
     if (saved && saved.totalScenes === chapters.length) {
       setSceneIndex(Math.min(saved.sceneIndex, chapters.length - 1));
       setAudioOffset(saved.audioOffset ?? 0);
     }
     setHydrated(true);
-  }, [courseId, chapters.length]);
+  }, [courseId, chapters.length, isShareMode]);
 
   // Persist whenever sceneIndex or audioOffset changes (after hydration).
   useEffect(() => {
