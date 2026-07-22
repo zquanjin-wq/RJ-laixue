@@ -2,6 +2,7 @@
 import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
+import { splitLongSpeechText } from './tts-utils';
 
 const log = createLogger('AudioPublish');
 
@@ -306,6 +307,94 @@ async function generateTTSForText(
   const format = json.data.format || 'mp3';
 
   return { data: bytes.buffer as ArrayBuffer, format };
+}
+
+// ─── Chunked TTS for long narration text ────────────────────────
+// MiniMax (and most TTS APIs) have a per-call text length limit.
+// Full-chapter narration can be 1000-3000+ chars — far beyond the
+// limit. This function splits text into sentence-aware chunks,
+// generates each chunk sequentially, then concatenates the audio.
+
+/** Max chars per TTS call for MiniMax. Conservative based on observed truncation. */
+const NARRATION_TTS_CHUNK_SIZE = 500;
+
+async function generateChunkedTTSForText(
+  text: string,
+  baseAudioId: string,
+  teacherVoiceConfig?: TeacherVoiceConfig | null,
+  sceneId?: string,
+): Promise<{
+  data: ArrayBuffer;
+  format: string;
+  chunkCount: number;
+}> {
+  // Short text doesn't need chunking — use the direct path.
+  if (text.length <= NARRATION_TTS_CHUNK_SIZE) {
+    const result = await generateTTSForText(text, baseAudioId, teacherVoiceConfig, sceneId);
+    return { ...result, chunkCount: 1 };
+  }
+
+  // Split into chunks respecting sentence boundaries.
+  const chunks = splitLongSpeechText(text, NARRATION_TTS_CHUNK_SIZE);
+
+  console.info('[TTS CHUNK][Narration Start]', JSON.stringify({
+    sceneId: sceneId ?? '(unknown)',
+    totalTextLength: text.length,
+    chunkCount: chunks.length,
+    chunkSizeLimit: NARRATION_TTS_CHUNK_SIZE,
+    timestamp: new Date().toISOString(),
+  }));
+
+  const audioParts: Uint8Array[] = [];
+  let format = 'mp3';
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkAudioId = `${baseAudioId}_c${i + 1}`;
+
+    try {
+      const part = await generateTTSForText(chunk, chunkAudioId, teacherVoiceConfig, sceneId);
+      audioParts.push(new Uint8Array(part.data));
+      format = part.format;
+
+      console.info('[TTS CHUNK][Narration Progress]', JSON.stringify({
+        sceneId,
+        chunkIndex: i + 1,
+        chunkCount: chunks.length,
+        chunkTextLength: chunk.length,
+        chunkAudioSize: part.data.byteLength,
+        timestamp: new Date().toISOString(),
+      }));
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log.error(`Narration TTS chunk ${i + 1}/${chunks.length} failed: ${errMsg}`);
+      // Re-throw so the caller knows the whole generation failed.
+      throw new Error(
+        `整章旁白音频分块生成失败（第 ${i + 1}/${chunks.length} 块，${chunk.length} 字）: ${errMsg}`,
+      );
+    }
+  }
+
+  // Concatenate all chunk audio buffers into one.
+  let totalLength = 0;
+  for (const p of audioParts) totalLength += p.length;
+
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const p of audioParts) {
+    combined.set(p, offset);
+    offset += p.length;
+  }
+
+  console.info('[TTS CHUNK][Narration Done]', JSON.stringify({
+    sceneId,
+    chunkCount: chunks.length,
+    totalAudioBytes: totalLength,
+    format,
+    timestamp: new Date().toISOString(),
+  }));
+
+  return { data: combined.buffer as ArrayBuffer, format, chunkCount: chunks.length };
 }
 
 /**
@@ -634,7 +723,7 @@ export async function publishSceneAudioAssets(
             `Generating narration TTS for scene=${scene.id} (${fullText.length} chars, ${allSpeechActions.length} speeches)`,
           );
 
-          const { data: narrData, format: narrFormat } = await generateTTSForText(
+          const { data: narrData, format: narrFormat, chunkCount } = await generateChunkedTTSForText(
             fullText,
             narrationAudioId,
             teacherVoiceConfig,
@@ -658,6 +747,7 @@ export async function publishSceneAudioAssets(
             narrationAudioUrl: narrAudioUrl.slice(0, 80),
             narrationAudioId,
             inputTextLength: fullText.length,
+            chunkCount,
             textHash,
             timestamp: new Date().toISOString(),
           }));
