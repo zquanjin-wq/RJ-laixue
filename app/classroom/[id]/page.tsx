@@ -64,16 +64,22 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
   }, [authLoading, user]);
 
   // ── Mobile auto-redirect ──────────────────────────────────────
-  // When a learner opens /classroom/[id] on a mobile device and is
-  // NOT in editor mode (?editor=1), redirect to the podcast-style
-  // mobile player at /m/[id]. Admins/teachers with ?editor=1 are
-  // never redirected — they always get the desktop editor.
+  // When a **learner** opens /classroom/[id] on a mobile device and
+  // is NOT in editor mode (?editor=1), redirect to the podcast-style
+  // mobile player at /m/[id].
+  //
+  // Admins/teachers are NEVER redirected — they always stay on the
+  // desktop page regardless of screen size or device. This prevents
+  // a narrowed browser window or DevTools mobile simulation from
+  // sending an editor to a 404 at /m/[courseId].
   //
   // The redirect preserves share/student/view query params so the
   // mobile page can reconstruct the same context.
   useEffect(() => {
-    // Only redirect after auth resolves and we're sure about mobile
-    if (!authReady || !isMobile || editorAutoOpen) return;
+    // Only redirect after auth resolves, we're sure about mobile,
+    // the user is NOT an admin/teacher, and NOT in editor mode
+    const isAdminOrTeacher = profile?.role === 'admin' || profile?.role === 'teacher';
+    if (!authReady || !isMobile || isAdminOrTeacher || editorAutoOpen) return;
 
     const params = new URLSearchParams();
     if (readOnlyShare) params.set('share', '1');
@@ -81,7 +87,7 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
     if (viewMode) params.set('view', '1');
     const qs = params.toString();
     router.replace(`/m/${classroomId}${qs ? `?${qs}` : ''}`);
-  }, [authReady, isMobile, editorAutoOpen, classroomId, readOnlyShare, studentId, viewMode, router]);
+  }, [authReady, isMobile, editorAutoOpen, classroomId, readOnlyShare, studentId, viewMode, router, profile]);
 
   // When the URL says ?editor=1, flip the stage store into 'edit'
   // (MAIC Editor / Pro mode) so the admin / teacher lands directly
