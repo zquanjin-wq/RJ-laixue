@@ -309,7 +309,7 @@ async function generateTTSForText(
 }
 
 /**
- * Extract narration text from a scene for TTS regeneration.
+ * Extract narration text from a single speech action for TTS regeneration.
  *
  * Priority:
  *   1. speechAction.text (the original narration script)
@@ -329,6 +329,21 @@ function extractNarrationTextForTTS(scene: Scene, speechAction: SpeechAction): s
     | undefined;
   if (content?.trim()) return content.trim();
   return '';
+}
+
+/**
+ * Extract FULL chapter narration by joining ALL speech actions' text.
+ * Used to generate a single combined audio per scene for mobile podcast mode.
+ */
+function extractFullNarrationText(scene: Scene): string {
+  const actions = scene.actions ?? [];
+  const speechActions = actions.filter((a) => isSpeechAction(a));
+  const parts: string[] = [];
+  for (const a of speechActions) {
+    const sa = a as SpeechAction;
+    if (sa.text?.trim()) parts.push(sa.text.trim());
+  }
+  return parts.join('\n\n').trim();
 }
 
 // ─── Interactive scene filter (mirrors lib/mobile/scene-helpers) ────
@@ -475,6 +490,16 @@ export async function publishSceneAudioAssets(
       // ── Tier 3: No audioUrl, no blob → regenerate TTS ──
       const narrationText = extractNarrationTextForTTS(scene, speechAction);
 
+      console.info('[TTS INPUT][Scene Audio]', JSON.stringify({
+        sceneId,
+        sceneTitle: scene.title || `(order ${sceneOrder})`,
+        speechActionCount: (actions as unknown as SpeechAction[]).filter(isSpeechAction).length,
+        firstSpeechTextLength: narrationText.length,
+        fullTextLength: narrationText.length, // single-action = same as first
+        fullTextPreview: narrationText.slice(0, 120),
+        sourceField: `speechAction[${actionId}].text (individual)`,
+      }));
+
       if (!narrationText) {
         missing.push({
           sceneId,
@@ -510,6 +535,14 @@ export async function publishSceneAudioAssets(
         speechAction.audioId = regenAudioId;
         speechAction.audioUrl = audioUrl;
 
+        console.info('[TTS OUTPUT][Scene Audio]', JSON.stringify({
+          sceneId,
+          audioUrl: audioUrl.slice(0, 80),
+          inputTextLength: narrationText.length,
+          source: 'individual-speech-action',
+          timestamp: new Date().toISOString(),
+        }));
+
         console.info('[MOBILE PUBLISH][Audio Uploaded]', JSON.stringify({
           audioId: regenAudioId,
           sceneId,
@@ -542,6 +575,87 @@ export async function publishSceneAudioAssets(
           audioId: regenAudioId,
           error: `TTS 重新生成失败: ${errMsg}`,
         });
+      }
+    }
+
+    // ── Combined full-chapter audio for mobile podcast mode ──
+    // Mobile player (scene-helpers.ts extractAudio) only reads the
+    // FIRST speech action's audioUrl. If a scene has multiple speech
+    // actions, each individual audioUrl contains only one paragraph.
+    // We generate ONE combined audio from ALL speech text so the
+    // mobile player gets the complete chapter narration.
+    const allSpeechActions = (actions as unknown as SpeechAction[]).filter(isSpeechAction);
+    if (allSpeechActions.length > 1) {
+      const fullText = extractFullNarrationText(scene);
+      const firstSpeech = allSpeechActions[0] as SpeechAction & {
+        audioId?: string;
+        audioUrl?: string;
+      };
+      const combinedAudioId = `combined_${scene.id.slice(0, 8)}`;
+
+      console.info('[TTS INPUT][Scene Audio]', JSON.stringify({
+        sceneId: scene.id,
+        sceneTitle: scene.title || `(order ${scene.order})`,
+        speechActionCount: allSpeechActions.length,
+        firstSpeechTextLength: firstSpeech?.text?.length ?? 0,
+        fullTextLength: fullText.length,
+        fullTextPreview: fullText.slice(0, 120),
+        sourceField: 'scene.actions[*].text joined (combined)',
+      }));
+
+      if (fullText) {
+        try {
+          const { data: combinedData, format: combinedFormat } = await generateTTSForText(
+            fullText,
+            combinedAudioId,
+            teacherVoiceConfig,
+            scene.id,
+          );
+
+          const combinedAudioUrl = await uploadBlobToCloud({
+            stageId,
+            audioId: combinedAudioId,
+            data: combinedData,
+            format: combinedFormat,
+          });
+
+          // Overwrite first speech action's audioUrl with the combined version.
+          // Mobile extractAudio() reads the first speech action's audioUrl.
+          firstSpeech.audioUrl = combinedAudioUrl;
+          firstSpeech.audioId = combinedAudioId;
+
+          console.info('[TTS OUTPUT][Scene Audio]', JSON.stringify({
+            sceneId: scene.id,
+            audioUrl: combinedAudioUrl.slice(0, 80),
+            inputTextLength: fullText.length,
+            source: 'combined-full-chapter',
+            timestamp: new Date().toISOString(),
+          }));
+
+          regenerated.push({
+            sceneId: scene.id,
+            sceneOrder: scene.order,
+            actionId: firstSpeech.id,
+            audioId: combinedAudioId,
+            audioUrl: combinedAudioUrl,
+            textLength: fullText.length,
+          });
+
+          log.info(
+            `Combined TTS generated for scene=${scene.id} (${fullText.length} chars, ${allSpeechActions.length} speeches)`,
+          );
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          log.error(`Combined TTS failed for scene=${scene.id}:`, errMsg);
+          // Don't block publish — individual speech audios still exist.
+          // Mobile will just play the first short segment as before.
+          console.warn('[TTS OUTPUT][Scene Audio]', JSON.stringify({
+            sceneId: scene.id,
+            error: errMsg,
+            source: 'combined-full-chapter FAILED',
+            timestamp: new Date().toISOString(),
+          }));
+        }
       }
     }
   }
