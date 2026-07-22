@@ -11,7 +11,6 @@ import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
 import { recordLearningEvent, saveStageToCloud } from '@/lib/utils/cloud-sync';
-import { StudentGate } from '@/components/student-gate';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { migrateScene } from '@/lib/edit/slide-schema';
@@ -123,7 +122,6 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showGate, setShowGate] = useState(false);
 
   const generationStartedRef = useRef(false);
   const openEventSentRef = useRef(false);
@@ -259,12 +257,6 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
       setLoading(false);
     }
   }, [classroomId, loadFromStorage, authReady]);
-
-  useEffect(() => {
-    if (readOnlyShare && !verifiedStudentId) {
-      setShowGate(true);
-    }
-  }, [readOnlyShare, verifiedStudentId]);
 
   useEffect(() => {
     // Reset loading state on course switch to unmount Stage during transition,
@@ -436,15 +428,6 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
                 </button>
               </div>
             </div>
-          ) : showGate ? (
-            <StudentGate
-              courseId={classroomId}
-              onVerified={(sid, sname) => {
-                setVerifiedStudentId(sid);
-                setVerifiedStudentName(sname);
-                setShowGate(false);
-              }}
-            />
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
