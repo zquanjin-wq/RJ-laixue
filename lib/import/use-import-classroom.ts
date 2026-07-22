@@ -222,6 +222,7 @@ export function useImportClassroom(onSuccess?: () => void) {
             type: mScene.type,
             title: mScene.title,
             order: mScene.order ?? index,
+            seq: index,
             content: mScene.content,
             actions,
             whiteboard: mScene.whiteboards,

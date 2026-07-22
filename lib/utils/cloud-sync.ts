@@ -134,7 +134,10 @@ export async function saveStageToCloud(stageId: string) {
 
   // 保存成功后，把补齐 audioUrl 的 scenes 回写本地，避免下次重复上传
   if (scenesToSave.length > 0) {
-    await db.scenes.bulkPut(scenesToSave as any);
+    // Ensure each scene has `seq` (the v13 insertion-order field). publishResult
+    // preserves input order, so array index = correct seq.
+    const withSeq = scenesToSave.map((s: any, i: number) => ({ ...s, seq: s.seq ?? i }));
+    await db.scenes.bulkPut(withSeq);
   }
 
   return {
@@ -200,9 +203,14 @@ export async function importCourseFromCloud(courseId: string) {
   const data = json.data;
   if (!data?.data) throw new Error('课程数据不完整');
   const { stage, scenes, outlines } = data.data;
+  // Ensure `seq` is set on imported scenes (v13 schema requirement). If
+  // server returns scenes in array order, seq = array index.
+  const scenesWithSeq = (scenes as Array<Record<string, unknown>>).map(
+    (s, i) => ({ ...s, seq: typeof s.seq === 'number' ? s.seq : i }),
+  );
   await db.transaction('rw', db.stages, db.scenes, db.stageOutlines, async () => {
     await db.stages.put(stage);
-    await db.scenes.bulkPut(scenes);
+    await db.scenes.bulkPut(scenesWithSeq as unknown as Parameters<typeof db.scenes.bulkPut>[0]);
     await db.stageOutlines.bulkPut(outlines);
   });
   return { id: data.id, title: data.title };

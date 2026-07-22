@@ -66,7 +66,12 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
         data.scenes.map((scene, index) => ({
           ...scene,
           stageId,
-          order: scene.order ?? index,
+          // `order` and `seq` both written. `seq` is the new trusted insertion
+          // order (= array index), used by loadStageData for display. `order`
+          // is preserved for legacy code paths that still reference it, but
+          // do NOT rely on it for display ordering.
+          order: index,
+          seq: index,
           createdAt: scene.createdAt || now,
           updatedAt: scene.updatedAt || now,
         })),
@@ -98,7 +103,20 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     }
 
     // Load scenes
-    const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('order');
+    // Sort by `seq` (monotonic insertion sequence assigned at save time).
+    // The legacy `order` field is unreliable — cloud course imports,
+    // pre-rebalance writes, and duplicate order values have scrambled page
+    // sequences in the past. `seq` is assigned as array index at every save,
+    // so it always reflects the order scenes were last persisted in.
+    const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('seq');
+
+    // Defense-in-depth: if any scene's seq is missing or out-of-sync with its
+    // array position (e.g. legacy data without seq, or values written by code
+    // paths that bypassed saveStageData), normalize in place. The caller is
+    // responsible for re-persisting via saveStageData if it wants the fix
+    // to survive a refresh — we don't write here to keep load read-only.
+    const needsRepair = scenes.some((s, i) => s.seq !== i);
+    const scenesOrdered = needsRepair ? scenes.map((s, i) => ({ ...s, seq: i })) : scenes;
 
     // Load chat sessions from independent table
     const chats = await loadChatSessions(stageId);
@@ -110,8 +128,8 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
       // `SceneRecord` is the loose persisted shape (independent `type` + `content`);
       // re-bind each to a discriminated `AppScene`, deriving `type` from the stored
       // `content.type`. Spreads the full record, so `whiteboard` etc. are preserved.
-      scenes: scenes.map((s) => makeScene(s, s.content)),
-      currentSceneId: stage.currentSceneId || scenes[0]?.id || null,
+      scenes: scenesOrdered.map((s) => makeScene(s, s.content)),
+      currentSceneId: stage.currentSceneId || scenesOrdered[0]?.id || null,
       chats,
     };
   } catch (error) {
@@ -249,7 +267,7 @@ export async function getFirstSlideByStages(
   try {
     await Promise.all(
       stageIds.map(async (stageId) => {
-        const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('order');
+        const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('seq');
         const firstSlide = scenes.find((s) => s.content?.type === 'slide');
         if (firstSlide && firstSlide.content.type === 'slide') {
           const slide = structuredClone(firstSlide.content.canvas);

@@ -140,6 +140,56 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
     try {
       await loadFromStorage(classroomId);
 
+      // ── Self-heal broken IndexedDB scene order ──────────────────────
+      // BUG FIX: Historical courses may have inconsistent scene.order (cloud
+      // imports, pre-rebalance writes). loadStageData now sorts by `seq`
+      // (monotonic insertion sequence, schema v13), assigned as array index
+      // at every save. If after load the seq fields don't match the array
+      // position, normalize and persist so the next refresh shows the same
+      // order.
+      {
+        const storeState = useStageStore.getState();
+        const scenesNow = storeState.scenes;
+        const isSeqBroken =
+          scenesNow.length > 0 &&
+          scenesNow.some((s, i) => (s as { seq?: number }).seq !== i);
+
+        if (isSeqBroken) {
+          log.warn(
+            '[CLASSROOM INIT][Order Repair] Detected scene.seq mismatch with array index — repairing',
+            {
+              stageId: classroomId,
+              before: scenesNow.map((s) => ({
+                id: s.id,
+                title: s.title,
+                order: s.order,
+                seq: (s as { seq?: number }).seq,
+              })),
+            },
+          );
+          const repaired = scenesNow.map((s, i) => ({ ...s, seq: i }));
+          useStageStore.setState({ scenes: repaired });
+          // Persist immediately so the repair survives a refresh even if no
+          // other edit happens. Skip if the stage itself didn't load (e.g.
+          // the cloud fallback path below will run and persist its own copy).
+          const stageRef = useStageStore.getState().stage;
+          if (stageRef) {
+            try {
+              const { saveStageData } = await import('@/lib/utils/stage-storage');
+              await saveStageData(classroomId, {
+                stage: stageRef,
+                scenes: repaired,
+                currentSceneId: useStageStore.getState().currentSceneId,
+                chats: useStageStore.getState().chats ?? [],
+              });
+              log.info('[CLASSROOM INIT][Order Repair] Persisted repaired seq to IndexedDB');
+            } catch (e) {
+              log.warn('[CLASSROOM INIT][Order Repair] Failed to persist repair:', e);
+            }
+          }
+        }
+      }
+
       // ── Initial scene resolution ───────────────────────────────
       // Priority (see CLASSROOM INIT log below for reason field):
       //   1. URL explicit sceneId (if valid)

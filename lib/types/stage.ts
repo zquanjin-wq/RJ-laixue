@@ -104,6 +104,12 @@ export type SceneContent = AppSceneContent;
  */
 export type AppScene = DslScene<Action, SceneContent> & {
   /**
+   * Monotonic insertion sequence assigned at save time (see SceneRecord.seq).
+   * Sort by this for display order — DO NOT trust `order` (legacy field, may
+   * be corrupted by imports / pre-rebalance writes).
+   */
+  seq?: number;
+  /**
    * Stable id of the generation outline this scene was built from. Lets editor
    * agent tools resolve a scene's outline by identity instead of by the mutable
    * `order`, which Pro-mode insert / reorder / delete rebalances (matching by

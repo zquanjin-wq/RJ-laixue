@@ -71,7 +71,12 @@ export interface SceneRecord {
   stageId: string; // Foreign key -> stages.id
   type: SceneType;
   title: string;
-  order: number; // Display order
+  order: number; // Display order (legacy — DO NOT trust for display; use seq)
+  /** Monotonic insertion sequence assigned at save time. Sort by this for
+   *  display order. Always equals array index on save. Survives bulkPut
+   *  re-keying and gives a stable, trustworthy ordering even when the legacy
+   *  `order` field has been corrupted by imports / pre-rebalance writes. */
+  seq: number;
   content: SceneContent; // Stored as JSON
   actions?: Action[]; // Stored as JSON
   whiteboard?: Whiteboard[]; // Stored as JSON
@@ -222,7 +227,7 @@ export function mediaFileKey(stageId: string, elementId: string): string {
 // ==================== Database Definition ====================
 
 const DATABASE_NAME = 'MAIC-Database';
-const _DATABASE_VERSION = 12;
+const _DATABASE_VERSION = 13;
 
 /**
  * MAIC Database Instance
@@ -442,6 +447,57 @@ class MAICDatabase extends Dexie {
       autoVoiceCache: 'voiceId, updatedAt',
       agentEditSessions: 'id, stageId, [stageId+updatedAt]',
     });
+
+    // Version 13: Add scenes.seq — monotonic insertion sequence, the new
+    // trusted display order. The legacy `order` field is unreliable (cloud
+    // imports, pre-rebalance writes, duplicate values); `seq` is assigned at
+    // save time as array index, then sorted on load to guarantee stable
+    // page order even when the source data is corrupted.
+    //
+    // Migration strategy: for existing records, assign seq by their CURRENT
+    // sortBy('order') position. This preserves whatever ordering was last
+    // applied. The next save (triggered by any user edit, or by the
+    // classroom page's self-heal block) re-writes seq as the new array
+    // index, fully correcting the data.
+    this.version(13)
+      .stores({
+        stages: 'id, updatedAt',
+        scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+        audioFiles: 'id, createdAt',
+        imageFiles: 'id, createdAt',
+        snapshots: '++id',
+        chatSessions: 'id, stageId, [stageId+createdAt]',
+        playbackState: 'stageId',
+        stageOutlines: 'stageId',
+        mediaFiles: 'id, stageId, [stageId+type]',
+        generatedAgents: 'id, stageId',
+        voiceProfiles: 'id, providerId, kind, updatedAt',
+        autoVoiceCache: 'voiceId, updatedAt',
+        agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+      })
+      .upgrade(async (tx) => {
+        const table = tx.table('scenes');
+        // Group existing scenes by stageId, sort by current order, assign
+        // seq = index. This is the best deterministic mapping we can do
+        // without knowing the "true" order — it preserves the user's last
+        // applied ordering.
+        const all = await table.toArray();
+        const byStage = new Map<string, Array<{ id: string; order: number }>>();
+        for (const rec of all) {
+          const sid = rec.stageId as string;
+          if (!sid) continue;
+          if (!byStage.has(sid)) byStage.set(sid, []);
+          byStage.get(sid)!.push({ id: rec.id, order: rec.order ?? 0 });
+        }
+        for (const [, list] of byStage) {
+          list.sort((a, b) => a.order - b.order);
+        }
+        for (const [, list] of byStage) {
+          for (let i = 0; i < list.length; i++) {
+            await table.update(list[i].id, { seq: i });
+          }
+        }
+      });
   }
 }
 
@@ -521,7 +577,7 @@ export async function importDatabase(data: {
  * Get all scenes for a course
  */
 export async function getScenesByStageId(stageId: string): Promise<SceneRecord[]> {
-  return db.scenes.where('stageId').equals(stageId).sortBy('order');
+  return db.scenes.where('stageId').equals(stageId).sortBy('seq');
 }
 
 /**
