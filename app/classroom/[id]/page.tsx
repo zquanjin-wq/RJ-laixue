@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { Stage } from '@/components/stage';
 import { ThemeProvider } from '@/lib/hooks/use-theme';
@@ -32,6 +32,10 @@ export default function ClassroomDetailPage() {
   const editorAutoOpen = searchParams.get('editor') === '1';
   const viewMode = searchParams.get('view') === '1';
   const explicitSceneId = searchParams.get('sceneId') || undefined;
+  // Temporary repair entry: ?repairOrder=createdAt
+  // Forces scenes to be re-sorted by createdAt/updatedAt/id, normalized to
+  // seq=order=index, and re-uploaded to cloud. See loadClassroom for logic.
+  const repairOrder = searchParams.get('repairOrder');
   const { isMobile } = useMobileDetection();
   const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
   const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
@@ -168,7 +172,10 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
             },
           );
           const repaired = scenesNow.map((s, i) => ({ ...s, seq: i }));
-          useStageStore.setState({ scenes: repaired });
+          // Normalize to Scene[] for the store
+        const { migrateScene } = await import('@/lib/edit/slide-schema');
+        const repairedScenes = repaired.map((s) => migrateScene({ ...s, stageId: classroomId, type: (s as { type?: string }).type ?? 'slide' } as Parameters<typeof migrateScene>[0]));
+        useStageStore.setState({ scenes: repairedScenes as unknown as ReturnType<typeof useStageStore.getState>['scenes'] });
           // Persist immediately so the repair survives a refresh even if no
           // other edit happens. Skip if the stage itself didn't load (e.g.
           // the cloud fallback path below will run and persist its own copy).
@@ -186,6 +193,58 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
             } catch (e) {
               log.warn('[CLASSROOM INIT][Order Repair] Failed to persist repair:', e);
             }
+          }
+        }
+      }
+
+
+      // ── Manual repair entry: ?repairOrder=createdAt ───────────────────
+      // Forces scenes to be re-sorted by createdAt/updatedAt/id (the
+      // trusted comparator from scene-order.ts) and persisted back to both
+      // IndexedDB and cloud. Intended as an escape hatch when the auto
+      // self-heal above doesn't fire because seq already aligns with the
+      // (corrupted) array position.
+      if (repairOrder === 'createdAt') {
+        const { orderSceneRecordsForDisplay } = await import('@/lib/utils/scene-order');
+        const { db: dbRef } = await import('@/lib/utils/database');
+        const dbRawScenes = await dbRef.scenes.where('stageId').equals(classroomId).toArray();
+        const beforeTitles = dbRawScenes.slice(0, 10).map((s: { title?: string }) => s.title);
+        const { ordered: repaired } = orderSceneRecordsForDisplay(dbRawScenes);
+        const afterTitles = repaired.slice(0, 10).map((s: { title?: string }) => s.title);
+        log.info('[ORDER REPAIR][Before]', {
+          stageId: classroomId,
+          first10: beforeTitles,
+        });
+        log.info('[ORDER REPAIR][After]', {
+          stageId: classroomId,
+          first10: afterTitles,
+          duplicateIdsRemoved: dbRawScenes.length - repaired.length,
+        });
+        // Normalize to Scene[] for the store
+        const { migrateScene } = await import('@/lib/edit/slide-schema');
+        const repairedScenes = repaired.map((s) => migrateScene({ ...s, stageId: classroomId, type: (s as { type?: string }).type ?? 'slide' } as Parameters<typeof migrateScene>[0]));
+        useStageStore.setState({ scenes: repairedScenes as unknown as ReturnType<typeof useStageStore.getState>['scenes'] });
+        const stageRef2 = useStageStore.getState().stage;
+        if (stageRef2) {
+          try {
+            const { saveStageData } = await import('@/lib/utils/stage-storage');
+            await saveStageData(classroomId, {
+              stage: stageRef2,
+              scenes: repairedScenes as unknown as Parameters<typeof saveStageData>[1]['scenes'],
+              currentSceneId: useStageStore.getState().currentSceneId,
+              chats: useStageStore.getState().chats ?? [],
+            });
+            log.info('[ORDER REPAIR] Persisted repaired scenes to IndexedDB');
+          } catch (e) {
+            log.warn('[ORDER REPAIR] IndexedDB persist failed:', e);
+          }
+          // Also re-upload to cloud so share links see the fix immediately.
+          try {
+            const { saveStageToCloud } = await import('@/lib/utils/cloud-sync');
+            await saveStageToCloud(classroomId);
+            log.info('[ORDER REPAIR] Re-uploaded repaired scenes to cloud');
+          } catch (e) {
+            log.warn('[ORDER REPAIR] Cloud re-upload failed:', e);
           }
         }
       }

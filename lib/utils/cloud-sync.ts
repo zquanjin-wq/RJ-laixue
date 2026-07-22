@@ -20,20 +20,43 @@ async function readApiJson<T>(response: Response): Promise<T> {
 // 浠?IndexedDB 璇诲彇瀹屾暣璇剧▼鏁版嵁
 // ============================================================
 async function collectStageData(stageId: string) {
-  const [stage, scenes, outlines] = await Promise.all([
+  // Use the trusted comparator (seq → createdAt → updatedAt → id) instead
+  // of plain sortBy('seq') — the v13 migration could have frozen bad order
+  // into valid-looking seq values, and we never want to upload that.
+  const { orderSceneRecordsForDisplay } = await import('./scene-order');
+  const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
+  const { ordered: scenes, source: orderingSource, duplicateIdsRemoved } =
+    orderSceneRecordsForDisplay(rawScenes);
+
+  const [stage, outlines] = await Promise.all([
     db.stages.get(stageId),
-    // Sort by `seq` (the v13 insertion-order field). Without this, Dexie
-    // returns scenes in primary-key (id) order, which can scramble page
-    // sequence since scene ids are nanoids (not monotonically generated).
-    // Uploading the scrambled array to cloud would persist a broken order
-    // that every future read would faithfully reproduce.
-    db.scenes.where('stageId').equals(stageId).sortBy('seq'),
     db.stageOutlines.where('stageId').equals(stageId).toArray(),
   ]);
 
-  if (!stage) {
-    throw new Error(`璇剧▼ ${stageId} 鍦ㄦ湰鍦颁笉瀛樺湪`);
+  if (duplicateIdsRemoved.length > 0) {
+    log.warn('[collectStageData] Duplicate scene ids removed', {
+      stageId,
+      duplicateIdsRemoved,
+    });
   }
+
+  if (!stage) {
+    throw new Error(`Stage ${stageId} not found locally`);
+  }
+
+  log.info('[collectStageData]', {
+    stageId,
+    sceneCount: scenes.length,
+    first5: scenes.slice(0, 5).map((s) => ({
+      id: s.id,
+      title: s.title,
+      order: s.order,
+      seq: s.seq,
+      createdAt: s.createdAt,
+    })),
+    orderingSource,
+    source: 'collect',
+  });
 
   const stageName = stage.name?.trim?.() || '';
 
@@ -208,15 +231,30 @@ export async function importCourseFromCloud(courseId: string) {
   const data = json.data;
   if (!data?.data) throw new Error('课程数据不完整');
   const { stage, scenes, outlines } = data.data;
-  // Ensure `seq` is set on imported scenes (v13 schema requirement). If
-  // server returns scenes in array order, seq = array index.
+  // FORCE seq/order = array index on import. We trust the cloud array order
+  // (whichever way the server has stored it) over any seq/order fields that
+  // might be embedded in the records. This is the only way to repair cloud
+  // JSON that was uploaded by older code paths that scrambled the order.
   const scenesWithSeq = (scenes as Array<Record<string, unknown>>).map(
-    (s, i) => ({ ...s, seq: typeof s.seq === 'number' ? s.seq : i }),
+    (s, i) => ({ ...s, order: i, seq: i }),
   );
-  await db.transaction('rw', db.stages, db.scenes, db.stageOutlines, async () => {
-    await db.stages.put(stage);
-    await db.scenes.bulkPut(scenesWithSeq as unknown as Parameters<typeof db.scenes.bulkPut>[0]);
-    await db.stageOutlines.bulkPut(outlines);
+  await db.transaction(
+    'rw',
+    [db.stages, db.scenes, db.stageOutlines],
+    async () => {
+      // Clear local state for this course FIRST so we don't accumulate
+      // duplicate rows when the same course is re-imported with different ids.
+      await db.scenes.where('stageId').equals(courseId).delete();
+      await db.stageOutlines.where('stageId').equals(courseId).delete();
+      await db.stages.put(stage as Parameters<typeof db.stages.put>[0]);
+      await db.scenes.bulkPut(scenesWithSeq as unknown as Parameters<typeof db.scenes.bulkPut>[0]);
+      await db.stageOutlines.bulkPut(outlines as Parameters<typeof db.stageOutlines.bulkPut>[0]);
+    },
+  );
+  log.info('[importCourseFromCloud] Replaced local state for course:', {
+    courseId,
+    scenesCount: scenesWithSeq.length,
+    outlinesCount: (outlines as unknown[] | undefined)?.length ?? 0,
   });
   return { id: data.id, title: data.title };
 }

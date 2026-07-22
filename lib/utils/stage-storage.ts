@@ -62,20 +62,53 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
 
     // Save new scenes
     if (data.scenes && data.scenes.length > 0) {
-      await db.scenes.bulkPut(
-        data.scenes.map((scene, index) => ({
-          ...scene,
+      const scenesWithSeq = data.scenes.map((scene, index) => ({
+        ...scene,
+        stageId,
+        // `order` and `seq` both written. `seq` is the new trusted insertion
+        // order (= array index), used by loadStageData for display. `order`
+        // is preserved for legacy code paths that still reference it, but
+        // do NOT rely on it for display ordering.
+        order: index,
+        seq: index,
+        createdAt: scene.createdAt || now,
+        updatedAt: scene.updatedAt || now,
+      }));
+
+      // Dedup by id — keeps first occurrence (which is what caller intended).
+      // If the caller passes duplicates (e.g. due to a race), drop the later
+      // ones so the next load doesn't render the same page twice.
+      const seenIds = new Set<string>();
+      const deduped: typeof scenesWithSeq = [];
+      const dupIds: string[] = [];
+      for (const s of scenesWithSeq) {
+        if (seenIds.has(s.id)) {
+          dupIds.push(s.id);
+          continue;
+        }
+        seenIds.add(s.id);
+        deduped.push(s);
+      }
+      if (dupIds.length > 0) {
+        log.warn('[saveStageData] Duplicate scene ids removed', {
           stageId,
-          // `order` and `seq` both written. `seq` is the new trusted insertion
-          // order (= array index), used by loadStageData for display. `order`
-          // is preserved for legacy code paths that still reference it, but
-          // do NOT rely on it for display ordering.
-          order: index,
-          seq: index,
-          createdAt: scene.createdAt || now,
-          updatedAt: scene.updatedAt || now,
+          duplicateIds: dupIds,
+        });
+      }
+
+      await db.scenes.bulkPut(deduped);
+      log.info('[saveStageData]', {
+        stageId,
+        sceneCount: deduped.length,
+        first5: deduped.slice(0, 5).map((s) => ({
+          id: s.id,
+          title: s.title,
+          order: s.order,
+          seq: s.seq,
+          createdAt: s.createdAt,
         })),
-      );
+        source: 'save',
+      });
     }
 
     // Save chat sessions to independent table
@@ -103,25 +136,39 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     }
 
     // Load scenes
-    // Sort by `seq` (monotonic insertion sequence assigned at save time).
-    // The legacy `order` field is unreliable — cloud course imports,
-    // pre-rebalance writes, and duplicate order values have scrambled page
-    // sequences in the past. `seq` is assigned as array index at every save,
-    // so it always reflects the order scenes were last persisted in.
-    const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('seq');
-
-    // Defense-in-depth: if any scene's seq is missing or out-of-sync with its
-    // array position (e.g. legacy data without seq, or values written by code
-    // paths that bypassed saveStageData), normalize in place. The caller is
-    // responsible for re-persisting via saveStageData if it wants the fix
-    // to survive a refresh — we don't write here to keep load read-only.
-    const needsRepair = scenes.some((s, i) => s.seq !== i);
-    const scenesOrdered = needsRepair ? scenes.map((s, i) => ({ ...s, seq: i })) : scenes;
+    // Use the trusted comparator from scene-order.ts (seq → createdAt →
+    // updatedAt → id). This deliberately bypasses the legacy `order` field,
+    // which has been corrupted across multiple generation / import paths.
+    // The returned array is deduped by id and has seq=order=index normalized.
+    const { orderSceneRecordsForDisplay } = await import('./scene-order');
+    const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
+    const { ordered: scenesOrdered, source, duplicateIdsRemoved } =
+      orderSceneRecordsForDisplay(rawScenes);
+    if (duplicateIdsRemoved.length > 0) {
+      log.warn('[loadStageData] Duplicate scene ids removed', {
+        stageId,
+        duplicateIdsRemoved,
+      });
+    }
+    log.info('[loadStageData]', {
+      stageId,
+      sceneCount: scenesOrdered.length,
+      first10: scenesOrdered.slice(0, 10).map((s) => ({
+        id: s.id,
+        title: s.title,
+        order: s.order,
+        seq: s.seq,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      })),
+      orderingSource: source,
+      source: 'indexeddb',
+    });
 
     // Load chat sessions from independent table
     const chats = await loadChatSessions(stageId);
 
-    log.info(`Loaded stage: ${stageId}, scenes: ${scenes.length}, chats: ${chats.length}`);
+    log.info(`Loaded stage: ${stageId}, scenes: ${scenesOrdered.length}, chats: ${chats.length}`);
 
     return {
       stage,

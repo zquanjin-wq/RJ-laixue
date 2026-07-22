@@ -227,7 +227,7 @@ export function mediaFileKey(stageId: string, elementId: string): string {
 // ==================== Database Definition ====================
 
 const DATABASE_NAME = 'MAIC-Database';
-const _DATABASE_VERSION = 13;
+const _DATABASE_VERSION = 14;
 
 /**
  * MAIC Database Instance
@@ -496,6 +496,63 @@ class MAICDatabase extends Dexie {
           for (let i = 0; i < list.length; i++) {
             await table.update(list[i].id, { seq: i });
           }
+        }
+      });
+
+    // Version 14: Re-recover `seq` for courses already touched by v13.
+    //
+    // v13 migration sorted by `order` to assign seq — but `order` has been
+    // demonstrated to be untrustworthy (cloud imports, pre-rebalance writes,
+    // duplicate values). v13 therefore froze whatever corruption existed at
+    // upgrade time into a "valid-looking" seq=0,1,2,..., which downstream
+    // code (sortBy('seq'), collectStageData) faithfully reproduces.
+    //
+    // v14 re-recovers seq using the trusted comparator in
+    // lib/utils/scene-order.ts (seq → createdAt → updatedAt → id), dedups by
+    // id, and normalizes seq=order=array-index for every record.
+    //
+    // This is the LAST resort for browser-side data recovery. Cloud course
+    // JSON is recovered separately by re-saving with `collectStageData`
+    // (sortBy('seq') is correct once local seq is recovered).
+    this.version(14)
+      .stores({
+        stages: 'id, updatedAt',
+        scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+        audioFiles: 'id, createdAt',
+        imageFiles: 'id, createdAt',
+        snapshots: '++id',
+        chatSessions: 'id, stageId, [stageId+createdAt]',
+        playbackState: 'stageId',
+        stageOutlines: 'stageId',
+        mediaFiles: 'id, stageId, [stageId+type]',
+        generatedAgents: 'id, stageId',
+        voiceProfiles: 'id, providerId, kind, updatedAt',
+        autoVoiceCache: 'voiceId, updatedAt',
+        agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+      })
+      .upgrade(async (tx) => {
+        const { orderSceneRecordsForDisplay } = await import('./scene-order');
+        const table = tx.table('scenes');
+        const all = (await table.toArray()) as Array<{
+          id: string;
+          stageId: string;
+          seq?: number;
+          order?: number;
+          createdAt?: number;
+          updatedAt?: number;
+          title?: string;
+        }>;
+        const byStage = new Map<string, typeof all>();
+        for (const rec of all) {
+          if (!rec.stageId) continue;
+          if (!byStage.has(rec.stageId)) byStage.set(rec.stageId, []);
+          byStage.get(rec.stageId)!.push(rec);
+        }
+        for (const [stageId, list] of byStage) {
+          const { ordered } = orderSceneRecordsForDisplay(list);
+          // Delete old rows first (in case dedup removed some) then re-put.
+          await table.where('stageId').equals(stageId).delete();
+          await table.bulkPut(ordered as Array<Record<string, unknown>>);
         }
       });
   }
