@@ -64,29 +64,43 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
   }, [authLoading, user]);
 
   // ── Mobile auto-redirect ──────────────────────────────────────
-  // When a **learner** opens /classroom/[id] on a mobile device and
-  // is NOT in editor mode (?editor=1), redirect to the podcast-style
+  // When a user opens /classroom/[id] on a mobile device and is
+  // NOT in editor mode (?editor=1), redirect to the podcast-style
   // mobile player at /m/[id].
   //
-  // Admins/teachers are NEVER redirected — they always stay on the
-  // desktop page regardless of screen size or device. This prevents
-  // a narrowed browser window or DevTools mobile simulation from
-  // sending an editor to a 404 at /m/[courseId].
+  // Rules:
+  //   - ?editor=1 always stays on desktop (admin editing surface)
+  //   - Admin/teacher WITHOUT ?share=1 stays on desktop (management view)
+  //   - Everyone else (learners, or anyone via share link) redirects on mobile
   //
-  // The redirect preserves share/student/view query params so the
-  // mobile page can reconstruct the same context.
+  // This prevents narrowed browser windows or DevTools mobile simulation
+  // from sending an admin to a 404 at /m/[courseId], while still allowing
+  // admins/teachers to preview the mobile learner experience via share links.
   useEffect(() => {
-    // Only redirect after auth resolves, we're sure about mobile,
-    // the user is NOT an admin/teacher, and NOT in editor mode
+    const isShareMode = readOnlyShare;
+    const isEditorMode = editorAutoOpen;
     const isAdminOrTeacher = profile?.role === 'admin' || profile?.role === 'teacher';
-    if (!authReady || !isMobile || isAdminOrTeacher || editorAutoOpen) return;
+
+    if (!authReady || !isMobile || isEditorMode) return;
+    if (isAdminOrTeacher && !isShareMode) return;
 
     const params = new URLSearchParams();
-    if (readOnlyShare) params.set('share', '1');
+    if (isShareMode) params.set('share', '1');
     if (studentId) params.set('student', studentId);
     if (viewMode) params.set('view', '1');
     const qs = params.toString();
-    router.replace(`/m/${classroomId}${qs ? `?${qs}` : ''}`);
+    const target = `/m/${classroomId}${qs ? `?${qs}` : ''}`;
+
+    log.info('[MOBILE REDIRECT][Classroom]', {
+      id: classroomId,
+      isMobile,
+      isEditorMode,
+      isShareMode,
+      isAdminOrTeacher,
+      target,
+    });
+
+    router.replace(target);
   }, [authReady, isMobile, editorAutoOpen, classroomId, readOnlyShare, studentId, viewMode, router, profile]);
 
   // When the URL says ?editor=1, flip the stage store into 'edit'

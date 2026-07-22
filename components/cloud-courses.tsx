@@ -124,7 +124,7 @@ export default function CloudCourses() {
     setSharingId(courseId);
     setShareMessage(null);
     try {
-      const url = `${window.location.origin}/classroom/${courseId}`;
+      const url = `${window.location.origin}/classroom/${courseId}?share=1`;
       if (!navigator.clipboard?.writeText) {
         window.prompt('复制课程链接', url);
         setShareMessage('已显示链接，请手动复制');
