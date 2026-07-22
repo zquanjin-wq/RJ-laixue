@@ -84,6 +84,7 @@ export function AudioPlayer({
       sceneTitle: fallbackText.slice(0, 60),
       fallbackTextLength: fallbackText.length,
       hasAudioUrl: !!audioUrl,
+      audioUrlLength: audioUrl?.length ?? 0,
       audioSourceField: audioUrl ? 'SpeechAction.audioUrl (published)' : '(none — publish gap)',
       errorType: error ?? '(none)',
       timestamp: new Date().toISOString(),
@@ -111,12 +112,43 @@ export function AudioPlayer({
     if (!el) return;
 
     if (el.paused) {
-      el.play().catch((e) => {
-        const msg = String(e).toLowerCase();
-        if (msg.includes('not supported') || msg.includes('format')) {
-          setError('unsupported-format');
-        } else if (msg.includes('network') || msg.includes('fetch')) {
+      console.log('[MOBILE AUDIO][Before Play (user click)]', JSON.stringify({
+        sceneId: sceneId ?? '(unknown)',
+        audioUrl: el.src?.slice(0, 80),
+        audioUrlLength: audioUrl?.length ?? 0,
+        hasAudioElement: !!el,
+        paused: el.paused,
+        readyState: el.readyState,
+        networkState: el.networkState,
+        currentTime: el.currentTime,
+        duration: el.duration,
+        timestamp: new Date().toISOString(),
+      }));
+      el.play().then(() => {
+        console.log('[MOBILE AUDIO][Play Success (user click)]', JSON.stringify({
+          sceneId: sceneId ?? '(unknown)',
+          audioUrl: el.src?.slice(0, 80),
+          currentTime: el.currentTime,
+          duration: el.duration,
+          readyState: el.readyState,
+          networkState: el.networkState,
+          timestamp: new Date().toISOString(),
+        }));
+      }).catch((err) => {
+        console.warn('[MOBILE AUDIO][Play Failed (user click)]', JSON.stringify({
+          sceneId: sceneId ?? '(unknown)',
+          audioUrl: el.src?.slice(0, 80),
+          errorName: err instanceof Error ? err.name : String(err),
+          errorMessage: err instanceof Error ? err.message : String(err),
+          readyState: el.readyState,
+          networkState: el.networkState,
+          timestamp: new Date().toISOString(),
+        }));
+        const msg = String(err).toLowerCase();
+        if (msg.includes('not allowed')) {
           setError('network-error');
+        } else if (msg.includes('not supported') || msg.includes('format')) {
+          setError('unsupported-format');
         } else {
           setError('audio-load-error');
         }
@@ -124,7 +156,7 @@ export function AudioPlayer({
     } else {
       el.pause();
     }
-  }, []);
+  }, [sceneId, audioUrl]);
 
   // Apply rate to the audio element whenever it changes.
   useEffect(() => {
@@ -167,20 +199,100 @@ export function AudioPlayer({
         ref={audioRef}
         src={audioUrl}
         preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
+        onLoadStart={(e) => {
+          const el = e.currentTarget;
+          console.log('[MOBILE AUDIO][loadstart]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            audioUrl: el.src?.slice(0, 80),
+            readyState: el.readyState,
+            networkState: el.networkState,
+            timestamp: new Date().toISOString(),
+          }));
+        }}
         onLoadedMetadata={(e) => {
           const el = e.currentTarget;
+          console.log('[MOBILE AUDIO][loadedmetadata]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            audioUrl: el.src?.slice(0, 80),
+            duration: el.duration,
+            readyState: el.readyState,
+            networkState: el.networkState,
+            timestamp: new Date().toISOString(),
+          }));
           setDuration(el.duration || 0);
           el.playbackRate = rate;
-          el.play().catch((err) => {
+          console.log('[MOBILE AUDIO][Before Play]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            audioUrl: el.src?.slice(0, 80),
+            audioUrlLength: audioUrl?.length ?? 0,
+            hasAudioElement: !!el,
+            paused: el.paused,
+            readyState: el.readyState,
+            networkState: el.networkState,
+            currentTime: el.currentTime,
+            duration: el.duration,
+            timestamp: new Date().toISOString(),
+          }));
+          el.play().then(() => {
+            console.log('[MOBILE AUDIO][Play Success]', JSON.stringify({
+              sceneId: sceneId ?? '(unknown)',
+              audioUrl: el.src?.slice(0, 80),
+              currentTime: el.currentTime,
+              duration: el.duration,
+              readyState: el.readyState,
+              networkState: el.networkState,
+              playbackRate: el.playbackRate,
+              timestamp: new Date().toISOString(),
+            }));
+          }).catch((err) => {
+            console.warn('[MOBILE AUDIO][Play Failed]', JSON.stringify({
+              sceneId: sceneId ?? '(unknown)',
+              audioUrl: el.src?.slice(0, 80),
+              errorName: err instanceof Error ? err.name : String(err),
+              errorMessage: err instanceof Error ? err.message : String(err),
+              readyState: el.readyState,
+              networkState: el.networkState,
+              timestamp: new Date().toISOString(),
+            }));
             const msg = String(err).toLowerCase();
-            if (msg.includes('not supported') || msg.includes('format')) {
+            if (msg.includes('not allowed')) {
+              setError('network-error'); // autoplay blocked — treat as needs user interaction
+            } else if (msg.includes('not supported') || msg.includes('format')) {
               setError('unsupported-format');
             } else {
               setError('audio-load-error');
             }
           });
+        }}
+        onCanPlay={(e) => {
+          const el = e.currentTarget;
+          console.log('[MOBILE AUDIO][canplay]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            audioUrl: el.src?.slice(0, 80),
+            duration: el.duration,
+            readyState: el.readyState,
+            networkState: el.networkState,
+            timestamp: new Date().toISOString(),
+          }));
+        }}
+        onPlay={() => {
+          setPlaying(true);
+          console.log('[MOBILE AUDIO][playing]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            audioUrl: audioRef.current?.src?.slice(0, 80),
+            currentTime: audioRef.current?.currentTime,
+            duration: audioRef.current?.duration,
+            timestamp: new Date().toISOString(),
+          }));
+        }}
+        onPause={() => {
+          setPlaying(false);
+          console.log('[MOBILE AUDIO][pause]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            currentTime: audioRef.current?.currentTime,
+            duration: audioRef.current?.duration,
+            timestamp: new Date().toISOString(),
+          }));
         }}
         onTimeUpdate={(e) => {
           const el = e.currentTarget;
@@ -189,15 +301,23 @@ export function AudioPlayer({
         }}
         onEnded={() => {
           setPlaying(false);
+          console.log('[MOBILE AUDIO][ended]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            currentTime: audioRef.current?.currentTime,
+            duration: audioRef.current?.duration,
+            timestamp: new Date().toISOString(),
+          }));
           onEnded();
         }}
         onError={(e) => {
           const el = e.currentTarget;
-          console.warn('[MOBILE LEARN][Audio Element Error]', JSON.stringify({
-            src: el.src?.slice(0, 80),
-            error: el.error ? { code: el.error.code, message: el.error.message } : null,
-            networkState: el.networkState,
+          console.warn('[MOBILE AUDIO][error]', JSON.stringify({
+            sceneId: sceneId ?? '(unknown)',
+            audioUrl: el.src?.slice(0, 80),
+            errorCode: el.error?.code,
+            errorMessage: el.error?.message,
             readyState: el.readyState,
+            networkState: el.networkState,
             currentSrc: el.currentSrc?.slice(0, 80),
             timestamp: new Date().toISOString(),
           }));
