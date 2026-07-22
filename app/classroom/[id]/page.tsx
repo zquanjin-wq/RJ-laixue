@@ -182,14 +182,25 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           const stageRef = useStageStore.getState().stage;
           if (stageRef) {
             try {
+              // Mark the stage's scene order as trusted so subsequent
+              // reads (loadStageData, getScenesByStageId, thumbnails)
+              // can switch back to prefer='auto' and respect future
+              // manual reorders.
+              const trustedAt = Date.now();
+              const trustedStage = {
+                ...stageRef,
+                sceneOrderTrusted: true,
+                sceneOrderRepairedAt: trustedAt,
+              } as typeof stageRef;
+              useStageStore.setState({ stage: trustedStage });
               const { saveStageData } = await import('@/lib/utils/stage-storage');
               await saveStageData(classroomId, {
-                stage: stageRef,
+                stage: trustedStage,
                 scenes: repaired,
                 currentSceneId: useStageStore.getState().currentSceneId,
                 chats: useStageStore.getState().chats ?? [],
               });
-              log.info('[CLASSROOM INIT][Order Repair] Persisted repaired seq to IndexedDB');
+              log.info('[CLASSROOM INIT][Order Repair] Persisted repaired seq + trusted flag to IndexedDB');
             } catch (e) {
               log.warn('[CLASSROOM INIT][Order Repair] Failed to persist repair:', e);
             }
@@ -238,15 +249,28 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         useStageStore.setState({ scenes: repairedScenes as unknown as ReturnType<typeof useStageStore.getState>['scenes'] });
         const stageRef2 = useStageStore.getState().stage;
         if (stageRef2) {
+          // Manual repair via ?repairOrder=createdAt: this is a deliberate
+          // user-driven recovery, so mark the stage as trusted. Without
+          // this flag, loadStageData would re-run the recovery on next
+          // open — but that path would still use prefer='createdAt' for
+          // this stage, so the seq we just wrote would be trusted only
+          // if we flip the flag here.
+          const trustedAt = Date.now();
+          const trustedStage2 = {
+            ...stageRef2,
+            sceneOrderTrusted: true,
+            sceneOrderRepairedAt: trustedAt,
+          } as typeof stageRef2;
+          useStageStore.setState({ stage: trustedStage2 });
           try {
             const { saveStageData } = await import('@/lib/utils/stage-storage');
             await saveStageData(classroomId, {
-              stage: stageRef2,
+              stage: trustedStage2,
               scenes: repairedScenes as unknown as Parameters<typeof saveStageData>[1]['scenes'],
               currentSceneId: useStageStore.getState().currentSceneId,
               chats: useStageStore.getState().chats ?? [],
             });
-            log.info('[ORDER REPAIR] Persisted repaired scenes to IndexedDB');
+            log.info('[ORDER REPAIR] Persisted repaired scenes + trusted flag to IndexedDB');
           } catch (e) {
             log.warn('[ORDER REPAIR] IndexedDB persist failed:', e);
           }

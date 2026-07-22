@@ -136,20 +136,22 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     }
 
     // Load scenes
-    // Use the trusted comparator from scene-order.ts (seq → createdAt →
-    // updatedAt → id). This deliberately bypasses the legacy `order` field,
-    // which has been corrupted across multiple generation / import paths.
-    // The returned array is deduped by id and has seq=order=index normalized.
+    // Scene order trust model (introduced v15):
+    //   - stage.sceneOrderTrusted === true  → seq is authoritative; use
+    //                                          prefer='auto' (normal path)
+    //   - stage.sceneOrderTrusted !== true → legacy / unverified; force
+    //                                          prefer='createdAt' to recover
+    //                                          real order, then set the flag
+    //                                          so subsequent reads trust seq.
+    // Any manual reorder or repair writes sceneOrderTrusted=true (see
+    // stage-storage write paths, classroom ?repairOrder, stage.ts setScenes).
     const { orderSceneRecordsForDisplay } = await import('./scene-order');
     const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
-    // MUST pass prefer: 'createdAt' — local IndexedDB seq may be poisoned
-    // by older migrations that wrote seq=0,1,2... based on a corrupted
-    // `order` field. Default 'auto' mode would trust that poisoned seq
-    // and refuse to repair it. Force the recovery to consult
-    // createdAt/updatedAt/id and ignore seq entirely. This matches the
-    // v14 migration and the ?repairOrder=createdAt entry point.
+    const stageIsTrusted = stage.sceneOrderTrusted === true;
     const { ordered: scenesOrdered, source, duplicateIdsRemoved } =
-      orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' });
+      orderSceneRecordsForDisplay(rawScenes, {
+        prefer: stageIsTrusted ? 'auto' : 'createdAt',
+      });
     if (duplicateIdsRemoved.length > 0) {
       log.warn('[loadStageData] Duplicate scene ids removed', {
         stageId,
@@ -159,6 +161,9 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     log.info('[loadStageData]', {
       stageId,
       sceneCount: scenesOrdered.length,
+      sceneOrderTrusted: stageIsTrusted,
+      sceneOrderRepairedAt: stage.sceneOrderRepairedAt,
+      orderingSource: source,
       first10: scenesOrdered.slice(0, 10).map((s) => ({
         id: s.id,
         title: s.title,
@@ -167,9 +172,35 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
       })),
-      orderingSource: source,
       source: 'indexeddb',
     });
+
+    // If we just recovered order (legacy untrusted stage), persist the new
+    // seq/order AND set the trust flag so the next read uses 'auto' and
+    // the user can safely reorder pages later.
+    if (!stageIsTrusted && scenesOrdered.length > 0) {
+      try {
+        const trustedAt = Date.now();
+        await db.transaction('rw', db.scenes, db.stages, async () => {
+          await db.scenes.bulkPut(
+            scenesOrdered as unknown as Parameters<typeof db.scenes.bulkPut>[0],
+          );
+          await db.stages.update(stageId, {
+            sceneOrderTrusted: true,
+            sceneOrderRepairedAt: trustedAt,
+          });
+        });
+        log.info('[loadStageData] Recovered scene order and marked stage trusted', {
+          stageId,
+          recoveredSource: source,
+        });
+        // Update the in-memory stage so the caller sees the trusted state.
+        stage.sceneOrderTrusted = true;
+        stage.sceneOrderRepairedAt = trustedAt;
+      } catch (e) {
+        log.warn('[loadStageData] Failed to persist recovered order:', e);
+      }
+    }
 
     // Load chat sessions from independent table
     const chats = await loadChatSessions(stageId);
@@ -320,11 +351,14 @@ export async function getFirstSlideByStages(
   try {
     await Promise.all(
       stageIds.map(async (stageId) => {
-        // Use the trusted comparator instead of plain sortBy('seq') — local
-        // IndexedDB seq may be poisoned by older migrations.
+        // Trust model (introduced v15): prefer='auto' trusts seq. By the
+        // time thumbnail generation runs, loadStageData has already done
+        // the one-shot recovery and flipped the trust flag, so seq is
+        // authoritative. If for some reason it isn't, the recovery
+        // happens on the next classroom open and thumbnails regenerate.
         const { orderSceneRecordsForDisplay } = await import('./scene-order');
         const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
-        const scenes = orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' }).ordered;
+        const scenes = orderSceneRecordsForDisplay(rawScenes, { prefer: 'auto' }).ordered;
         const firstSlide = scenes.find((s) => s.content?.type === 'slide');
         if (firstSlide && firstSlide.content.type === 'slide') {
           const slide = structuredClone(firstSlide.content.canvas);

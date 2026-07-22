@@ -168,6 +168,23 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     // IMPORTANT: store scenes in original array order — never reorder here.
     // Reordering would pollute IndexedDB and break left-nav / playback order.
     set({ scenes: migrated });
+    // Mark this stage's scene order as trusted (manual editor / program
+    // loading path). The user has explicitly chosen an array order at this
+    // point, so we treat the upcoming seq=index write as authoritative.
+    // Without this, loadStageData would re-run the createdAt recovery on
+    // next open and undo any manual reorder. The Stage interface (in
+    // @openmaic/dsl) is intentionally narrow, so we widen to a record to
+    // attach the two IndexedDB-only fields.
+    const cur = get();
+    if (cur.stage) {
+      const trustedAt = Date.now();
+      const stageWithTrust = {
+        ...(cur.stage as unknown as Record<string, unknown>),
+        sceneOrderTrusted: true,
+        sceneOrderRepairedAt: trustedAt,
+      } as unknown as typeof cur.stage;
+      set({ stage: stageWithTrust });
+    }
     // Auto-select first scene using raw array order (NOT the unreliable
     // `order` field). See lib/utils/scene-order.ts for the full rationale.
     if (!get().currentSceneId && migrated.length > 0) {

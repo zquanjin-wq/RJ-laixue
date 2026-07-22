@@ -61,6 +61,18 @@ export interface StageRecord {
   interactiveMode?: boolean; // Interactive Mode flag; non-indexed
   taskEngineMode?: boolean; // Vocational Task Engine flag; non-indexed
   generatedAgentConfigs?: GeneratedAgentConfig[]; // Editor-authored agent roster snapshot
+  /** Scene order trust flag (added in v15).
+   *  - `true`  : this stage's scene `seq` is authoritative; loadStageData
+   *              uses prefer='auto' (trust seq).
+   *  - `false` / undefined : legacy state. loadStageData must run
+   *              prefer='createdAt' to recover real order, then set
+   *              this flag to true so subsequent reads trust seq.
+   *  v15 migration sets this to true for all existing stages because v14
+   *  already recovered their seq using prefer='createdAt'. */
+  sceneOrderTrusted?: boolean;
+  /** Timestamp of last successful seq recovery (preferred='createdAt').
+   *  Useful for ops debugging. Optional. */
+  sceneOrderRepairedAt?: number;
 }
 
 /**
@@ -599,6 +611,66 @@ class MAICDatabase extends Dexie {
           totalDuplicatesRemoved,
         });
       });
+
+    // Version 15: Stage trust flag for scene order.
+    //
+    // Schema doesn't change (stages/scenes stores stay identical). We only
+    // add two new optional fields to stages records: `sceneOrderTrusted`
+    // and `sceneOrderRepairedAt`. v14 already recovered every stage's seq
+    // using prefer='createdAt', so by v15 transition the seq field IS
+    // trustworthy — we can mark every stage as trusted.
+    //
+    // Future reads (loadStageData, getScenesByStageId, thumbnails) will
+    // use prefer='auto' (trust seq) on stages with sceneOrderTrusted=true,
+    // and fall back to prefer='createdAt' only when the flag is false or
+    // missing. This restores normal seq-based ordering while keeping the
+    // door open for one-shot recovery of legacy courses.
+    //
+    // Any stage created after this migration but before the first write
+    // won't have the flag set — that's fine, loadStageData treats
+    // undefined as untrusted and runs the recovery pass once.
+    this.version(15)
+      .stores({
+        stages: 'id, updatedAt',
+        scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+        audioFiles: 'id, createdAt',
+        imageFiles: 'id, createdAt',
+        snapshots: '++id',
+        chatSessions: 'id, stageId, [stageId+createdAt]',
+        playbackState: 'stageId',
+        stageOutlines: 'stageId',
+        mediaFiles: 'id, stageId, [stageId+type]',
+        generatedAgents: 'id, stageId',
+        voiceProfiles: 'id, providerId, kind, updatedAt',
+        autoVoiceCache: 'voiceId, updatedAt',
+        agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+      })
+      .upgrade(async (tx) => {
+        const { createLogger } = await import('@/lib/logger');
+        const v15Log = createLogger('DB Migration v15');
+        const stagesTable = tx.table('stages');
+        const allStages = (await stagesTable.toArray()) as Array<{
+          id: string;
+          sceneOrderTrusted?: boolean;
+          sceneOrderRepairedAt?: number;
+        }>;
+        const now = Date.now();
+        let updated = 0;
+        for (const s of allStages) {
+          // Skip stages that already have an explicit trust state.
+          if (s.sceneOrderTrusted !== undefined) continue;
+          await stagesTable.update(s.id, {
+            sceneOrderTrusted: true,
+            sceneOrderRepairedAt: now,
+          });
+          updated++;
+        }
+        v15Log.info('[v15 Migration] Marked existing stages as sceneOrderTrusted=true', {
+          totalStages: allStages.length,
+          updated,
+          skippedAlreadySet: allStages.length - updated,
+        });
+      });
   }
 }
 
@@ -678,12 +750,15 @@ export async function importDatabase(data: {
  * Get all scenes for a course
  */
 export async function getScenesByStageId(stageId: string): Promise<SceneRecord[]> {
-  // Use the trusted comparator instead of plain sortBy('seq') — local
-  // IndexedDB seq may be poisoned by older migrations. Force recovery
-  // to consult createdAt/updatedAt/id before returning.
+  // Trust model (introduced v15): once a stage has sceneOrderTrusted=true
+  // (set by loadStageData after the one-shot recovery, or by v15 migration
+  // for legacy stages), seq is authoritative. Use prefer='auto' so we
+  // surface the user's manual reorder rather than resetting to createdAt.
+  // Callers that may see a brand-new stage (no flag yet) get the recovery
+  // path naturally — loadStageData flips the flag on its next read.
   const { orderSceneRecordsForDisplay } = await import('./scene-order');
   const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
-  return orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' }).ordered;
+  return orderSceneRecordsForDisplay(rawScenes, { prefer: 'auto' }).ordered;
 }
 
 /**

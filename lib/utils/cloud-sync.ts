@@ -20,22 +20,31 @@ async function readApiJson<T>(response: Response): Promise<T> {
 // 浠?IndexedDB 璇诲彇瀹屾暣璇剧▼鏁版嵁
 // ============================================================
 async function collectStageData(stageId: string) {
-  // Use the trusted comparator (seq → createdAt → updatedAt → id) instead
-  // of plain sortBy('seq') — the v13 migration could have frozen bad order
-  // into valid-looking seq values, and we never want to upload that.
-  const { orderSceneRecordsForDisplay } = await import('./scene-order');
-  const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
-  // MUST use prefer: 'createdAt' — local IndexedDB seq may be poisoned
-  // by older migrations. Default 'auto' mode would trust that poisoned
-  // seq and re-upload the broken order to cloud. Force the recovery to
-  // consult createdAt/updatedAt/id before uploading to cloud.
-  const { ordered: scenes, source: orderingSource, duplicateIdsRemoved } =
-    orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' });
-
-  const [stage, outlines] = await Promise.all([
+  const [stage, rawScenes] = await Promise.all([
     db.stages.get(stageId),
-    db.stageOutlines.where('stageId').equals(stageId).toArray(),
+    db.scenes.where('stageId').equals(stageId).toArray(),
   ]);
+
+  if (!stage) {
+    throw new Error(`Stage ${stageId} not found locally`);
+  }
+
+  // Use the trusted comparator (seq → createdAt → updatedAt → id) instead
+  // of plain sortBy('seq'). Trust model (introduced v15):
+  //   - stage.sceneOrderTrusted === true  → seq is authoritative, prefer='auto'
+  //   - otherwise                         → legacy state, prefer='createdAt'
+  // loadStageData has already run the recovery + flag flip on first read,
+  // so by the time we get here in the normal flow stage.sceneOrderTrusted
+  // should already be true. The 'createdAt' fallback is a safety net for
+  // uploads that race before loadStageData has touched the stage.
+  const { orderSceneRecordsForDisplay } = await import('./scene-order');
+  const stageIsTrusted = stage.sceneOrderTrusted === true;
+  const { ordered: scenes, source: orderingSource, duplicateIdsRemoved } =
+    orderSceneRecordsForDisplay(rawScenes, {
+      prefer: stageIsTrusted ? 'auto' : 'createdAt',
+    });
+
+  const outlines = await db.stageOutlines.where('stageId').equals(stageId).toArray();
 
   if (duplicateIdsRemoved.length > 0) {
     log.warn('[collectStageData] Duplicate scene ids removed', {
@@ -44,13 +53,10 @@ async function collectStageData(stageId: string) {
     });
   }
 
-  if (!stage) {
-    throw new Error(`Stage ${stageId} not found locally`);
-  }
-
   log.info('[collectStageData]', {
     stageId,
     sceneCount: scenes.length,
+    sceneOrderTrusted: stageIsTrusted,
     first5: scenes.slice(0, 5).map((s) => ({
       id: s.id,
       title: s.title,
