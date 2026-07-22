@@ -94,6 +94,12 @@ export function AudioPlayer({
   useEffect(() => {
     if (!audioUrl) {
       setError('missing-audio-url');
+      console.warn('[MOBILE LEARN][Audio Missing]', JSON.stringify({
+        stageId: stageId ?? '(unknown)',
+        sceneId: sceneId ?? '(unknown)',
+        fallbackTextLength: fallbackText.length,
+        timestamp: new Date().toISOString(),
+      }));
     } else {
       setError(null);
     }

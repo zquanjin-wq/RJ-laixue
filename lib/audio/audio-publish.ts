@@ -371,6 +371,12 @@ export async function publishSceneAudioAssets(
   scenes: Scene[],
   teacherVoiceConfig?: TeacherVoiceConfig | null,
 ): Promise<PublishSceneAudioAssetsResult> {
+  console.info('[MOBILE PUBLISH][Audio Assets Start]', JSON.stringify({
+    stageId,
+    totalScenes: scenes.length,
+    timestamp: new Date().toISOString(),
+  }));
+
   const nextScenes = structuredClone(scenes) as Scene[];
 
   const uploaded: PublishedAudioItem[] = [];
@@ -424,6 +430,13 @@ export async function publishSceneAudioAssets(
 
             speechAction.audioUrl = audioUrl;
 
+            console.info('[MOBILE PUBLISH][Audio Uploaded]', JSON.stringify({
+              audioId,
+              sceneId,
+              source: 'indexeddb-blob',
+              timestamp: new Date().toISOString(),
+            }));
+
             uploaded.push({
               sceneId,
               sceneOrder,
@@ -449,6 +462,11 @@ export async function publishSceneAudioAssets(
         }
 
         // audioId exists but no blob in IndexedDB — fall through to Tier 3
+        console.info('[MOBILE PUBLISH][Audio Blob Missing Generate TTS]', JSON.stringify({
+          audioId,
+          sceneId,
+          timestamp: new Date().toISOString(),
+        }));
         log.info(
           `audioId ${audioId} has no IndexedDB blob, will regenerate TTS`,
         );
@@ -492,6 +510,14 @@ export async function publishSceneAudioAssets(
         speechAction.audioId = regenAudioId;
         speechAction.audioUrl = audioUrl;
 
+        console.info('[MOBILE PUBLISH][Audio Uploaded]', JSON.stringify({
+          audioId: regenAudioId,
+          sceneId,
+          source: 'tts-regenerated',
+          textLength: narrationText.length,
+          timestamp: new Date().toISOString(),
+        }));
+
         regenerated.push({
           sceneId,
           sceneOrder,
@@ -519,6 +545,16 @@ export async function publishSceneAudioAssets(
       }
     }
   }
+
+  console.info('[MOBILE PUBLISH][Audio Assets Done]', JSON.stringify({
+    stageId,
+    skipped: skipped.length,
+    uploaded: uploaded.length,
+    regenerated: regenerated.length,
+    missing: missing.length,
+    failed: failed.length,
+    timestamp: new Date().toISOString(),
+  }));
 
   return {
     scenes: nextScenes,

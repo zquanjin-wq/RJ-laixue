@@ -73,6 +73,15 @@ export async function saveStageToCloud(stageId: string) {
   const validation = validatePublishedAudioAssets(publishResult.scenes);
 
   if (!validation.ok || publishResult.failed.length > 0 || publishResult.missing.length > 0) {
+    console.warn('[MOBILE PUBLISH][Audio Validation Failed]', JSON.stringify({
+      stageId,
+      validationOk: validation.ok,
+      failedCount: publishResult.failed.length,
+      missingCount: publishResult.missing.length,
+      invalidIssues: validation.issues.length,
+      timestamp: new Date().toISOString(),
+    }));
+
     const failedCount = publishResult.failed.length;
     const missingCount = publishResult.missing.length;
     const invalidCount = validation.issues.length;
