@@ -16,6 +16,8 @@ import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { migrateScene } from '@/lib/edit/slide-schema';
 import { useAuth } from '@/lib/auth/use-auth';
+import { useMobileDetection } from '@/lib/hooks/use-mobile-detection';
+import { useRouter } from 'next/navigation';
 import type { Scene } from '@/lib/types/stage';
 
 const log = createLogger('Classroom');
@@ -23,11 +25,13 @@ const log = createLogger('Classroom');
 export default function ClassroomDetailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const classroomId = params?.id as string;
   const readOnlyShare = searchParams.get('share') === '1';
   const studentId = searchParams.get('student') || undefined;
   const editorAutoOpen = searchParams.get('editor') === '1';
   const viewMode = searchParams.get('view') === '1';
+  const { isMobile } = useMobileDetection();
   const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
   const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
 const [isSavingToCloud, setIsSavingToCloud] = useState(false);
@@ -58,6 +62,26 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
       window.location.assign(`/login?next=${encodeURIComponent(returnUrl)}`);
     }
   }, [authLoading, user]);
+
+  // ── Mobile auto-redirect ──────────────────────────────────────
+  // When a learner opens /classroom/[id] on a mobile device and is
+  // NOT in editor mode (?editor=1), redirect to the podcast-style
+  // mobile player at /m/[id]. Admins/teachers with ?editor=1 are
+  // never redirected — they always get the desktop editor.
+  //
+  // The redirect preserves share/student/view query params so the
+  // mobile page can reconstruct the same context.
+  useEffect(() => {
+    // Only redirect after auth resolves and we're sure about mobile
+    if (!authReady || !isMobile || editorAutoOpen) return;
+
+    const params = new URLSearchParams();
+    if (readOnlyShare) params.set('share', '1');
+    if (studentId) params.set('student', studentId);
+    if (viewMode) params.set('view', '1');
+    const qs = params.toString();
+    router.replace(`/m/${classroomId}${qs ? `?${qs}` : ''}`);
+  }, [authReady, isMobile, editorAutoOpen, classroomId, readOnlyShare, studentId, viewMode, router]);
 
   // When the URL says ?editor=1, flip the stage store into 'edit'
   // (MAIC Editor / Pro mode) so the admin / teacher lands directly

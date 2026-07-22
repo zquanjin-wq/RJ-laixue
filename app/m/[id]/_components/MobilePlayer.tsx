@@ -38,12 +38,19 @@ interface MobilePlayerProps {
   courseId: string;
   courseTitle: string;
   chapters: MobileChapter[];
+  /** Teacher voice config from stage — passed through to AudioPlayer for TTS fallback. */
+  teacherVoiceConfig?: {
+    providerId: string;
+    voiceId: string;
+    modelId?: string;
+  };
 }
 
 export function MobilePlayer({
   courseId,
   courseTitle,
   chapters,
+  teacherVoiceConfig,
 }: MobilePlayerProps) {
   // === Hydrate from localStorage ===
   const [hydrated, setHydrated] = useState(false);
@@ -81,7 +88,7 @@ export function MobilePlayer({
   }, [courseId, dialogOpen]);
 
   // === Playback rate (single source of truth, shared between AudioPlayer + buttons) ===
-  const [rate, setRate] = useState<1 | 0.75 | 1.25 | 1.5>(1);
+  const [rate, setRate] = useState<1 | 0.75 | 1.25 | 1.5 | 2>(1);
 
   // === Audio element ref so we can pause/resume from outside ===
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -238,7 +245,9 @@ export function MobilePlayer({
   if (!current) {
     return (
       <div className="flex-1 flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
-        这门课件还没有可播放的章节。
+        这门课件还没有可播放的音频章节。
+        <br />
+        （所有章节均为交互式内容，暂不支持移动端播客模式）
       </div>
     );
   }
@@ -248,11 +257,9 @@ export function MobilePlayer({
       {/* Top: chapter title + status (sticky just below the page header) */}
       <div className="mx-auto max-w-md w-full px-5 pt-4 pb-2 shrink-0">
         <h2 className="text-base font-medium leading-tight">{heading}</h2>
-        {current.sceneType !== 'slide' && (
-          <p className="text-xs text-muted-foreground mt-1">
-            （互动内容仅播放文字稿，不展示互动元素）
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground mt-1">
+          第 {sceneIndex + 1} 章 / 共 {chapters.length} 章
+        </p>
       </div>
 
       {/* Middle: scrolling text. flex-1 + overflow so it takes remaining
@@ -263,8 +270,9 @@ export function MobilePlayer({
 
       {/* Bottom dock: progress + audio player + chapter controls.
           Sticky to the bottom of the viewport so users never have to
-          scroll to find the play button — same pattern as 小宇宙. */}
-      <div className="sticky bottom-0 bg-background border-t shadow-[0_-2px_8px_rgba(0,0,0,0.04)] shrink-0">
+          scroll to find the play button — same pattern as 小宇宙.
+          pb-safe accounts for iPhone home indicator. */}
+      <div className="sticky bottom-0 bg-background border-t shadow-[0_-2px_8px_rgba(0,0,0,0.04)] shrink-0 pb-safe">
         <div className="mx-auto max-w-md w-full">
           <ProgressBar
             current={sceneIndex + 1}
@@ -284,6 +292,9 @@ export function MobilePlayer({
             onTimeUpdate={(t) => setAudioOffset(t)}
             onEnded={handleEnded}
             registerAudio={handleAudioRef}
+            teacherVoiceConfig={teacherVoiceConfig}
+            sceneId={current.sceneId}
+            stageId={courseId}
           />
 
           <div className="px-4 py-3 flex items-center justify-between border-t">
@@ -291,13 +302,15 @@ export function MobilePlayer({
               onClick={goPrev}
               disabled={!hasPrev}
               className="text-sm text-muted-foreground disabled:opacity-40 px-3 py-2"
+              style={{ minHeight: '44px' }}
             >
               ◀ 上一章
             </button>
             <button
               onClick={() => setDialogOpen(true)}
               disabled={questionsLeft <= 0}
-              className="rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40"
+              className="rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40 active:scale-95 transition-transform"
+              style={{ minHeight: '44px' }}
             >
               💬 提问（{questionsLeft}/{QUESTION_LIMIT}）
             </button>
@@ -305,6 +318,7 @@ export function MobilePlayer({
               onClick={goNext}
               disabled={!hasNext}
               className="text-sm text-muted-foreground disabled:opacity-40 px-3 py-2"
+              style={{ minHeight: '44px' }}
             >
               下一章 ▶
             </button>

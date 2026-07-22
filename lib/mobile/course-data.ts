@@ -22,6 +22,12 @@ export interface MobileCourse {
     outlines: unknown[];
     audioGeneration?: unknown;
   };
+  /** Teacher voice config from stage (for TTS fallback on mobile). */
+  teacherVoiceConfig?: {
+    providerId: string;
+    voiceId: string;
+    modelId?: string;
+  };
 }
 
 export async function loadMobileCourse(
@@ -78,6 +84,13 @@ export async function loadMobileCourse(
   // The courses.data column is JSONB with a known shape (stage, scenes,
   // outlines, audioGeneration).
   const courseData = (data.data ?? {}) as MobileCourse['data'];
+  const stage = courseData.stage as Record<string, unknown> | undefined;
+
+  // Extract teacherVoiceConfig from stage (set at course creation time,
+  // read-only here — we never modify it).
+  const tvc = stage?.teacherVoiceConfig as
+    | { providerId: string; voiceId: string; modelId?: string }
+    | undefined;
 
   return {
     id: data.id,
@@ -91,5 +104,8 @@ export async function loadMobileCourse(
       outlines: Array.isArray(courseData.outlines) ? courseData.outlines : [],
       audioGeneration: courseData.audioGeneration,
     },
+    teacherVoiceConfig: tvc
+      ? { providerId: tvc.providerId, voiceId: tvc.voiceId, modelId: tvc.modelId }
+      : undefined,
   };
 }

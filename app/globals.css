@@ -279,6 +279,12 @@ body[data-maic-editor='true'] .editable-element-text li,
   scrollbar-width: none;
 }
 
+/* Safe-area bottom padding for iPhone notch / home indicator on mobile pages.
+   Use as class="pb-safe" on fixed/sticky bottom docks. */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 /* PBL v2 workspace scrollbars: scoped so the rest of OpenMAIC keeps native behavior. */
 [data-pbl-workspace='true'] .pbl-v2-scrollbar,
 [data-pbl-workspace='true'] .pbl-v2-scroll-fade {

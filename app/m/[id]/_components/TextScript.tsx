@@ -4,6 +4,9 @@
  * _components/TextScript.tsx
  *
  * Renders chapter narration as plain text split into paragraphs.
+ * Optimized for mobile reading: 17px base font, comfortable line-height,
+ * generous paragraph spacing, and bottom padding to avoid overlap with
+ * the fixed audio player dock.
  *
  * Paragraph splitting rules (in priority order):
  *   1. Explicit \n\n / \n line breaks in the source text — used as-is.
@@ -37,7 +40,7 @@ function splitParagraphs(text: string): string[] {
   }
   // No newlines — split at sentence terminators.
   const result: string[] = [];
-  const re = /[^。！？.!?\n]+[。！？.!?]?/g;
+  const re = /[^\u3002\uff01\uff1a.!?\n]+[\u3002\uff01\uff1a.!?]?/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
     const p = match[0].trim();
@@ -93,7 +96,7 @@ export function TextScript({ text, active }: TextScriptProps) {
   if (!text) {
     return (
       <div className="flex-1 flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
-        本章节没有文字稿
+        当前章节暂无文字内容
       </div>
     );
   }
@@ -101,7 +104,7 @@ export function TextScript({ text, active }: TextScriptProps) {
   return (
     <div
       ref={containerRef}
-      className="mx-auto max-w-md w-full px-5 py-4 text-[15px] leading-[1.9] text-foreground"
+      className="mx-auto max-w-md w-full px-5 py-4 text-[17px] leading-[1.9] text-foreground pb-safe"
     >
       {paragraphs.map((p, i) => (
         <p key={i} className="mb-4 last:mb-0 indent-[2em]">
