@@ -13,7 +13,7 @@ import { createSelectors } from '@/lib/utils/create-selectors';
 import type { ChatSession } from '@/lib/types/chat';
 import type { SceneOutline } from '@/lib/types/generation';
 import { createLogger } from '@/lib/logger';
-import { getDisplayOrderedScenes } from '@/lib/utils/scene-order';
+// `scene-order` no longer exports a sorting helper; we use raw array order.
 import { useCanvasStore } from '@/lib/store/canvas';
 import { migrateScene } from '@/lib/edit/slide-schema';
 
@@ -168,11 +168,10 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     // IMPORTANT: store scenes in original array order — never reorder here.
     // Reordering would pollute IndexedDB and break left-nav / playback order.
     set({ scenes: migrated });
-    // Auto-select first display scene if no current scene.
-    // Use safe ordering: only trust order field when complete + unique.
+    // Auto-select first scene using raw array order (NOT the unreliable
+    // `order` field). See lib/utils/scene-order.ts for the full rationale.
     if (!get().currentSceneId && migrated.length > 0) {
-      const displayScenes = getDisplayOrderedScenes(migrated);
-      set({ currentSceneId: displayScenes[0].id });
+      set({ currentSceneId: migrated[0].id });
     }
     debouncedSave();
   },

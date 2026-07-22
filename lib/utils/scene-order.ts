@@ -3,73 +3,58 @@
  *
  * Safe scene ordering utility.
  *
- * Historical courses may have incomplete / non-unique / missing `order` values
- * that don't match the real display sequence. Blindly sorting by `order` can
- * scramble the actual page order (e.g. page 3 becomes page 1).
+ * Historical courses have unreliable `order` fields:
+ *   - Sometimes `order` is missing/non-unique (legacy data)
+ *   - Sometimes `order` exists but contradicts the real display sequence
+ *     (server-side IndexedDB stores an order field that doesn't match
+ *     the actual page order the admin authored)
  *
- * This function only applies order-sort when ALL scenes have valid, finite,
- * **unique** order values — proving the field is trustworthy. Otherwise it
- * returns the original array unchanged, preserving the real display order.
+ * Blindly sorting by `order` can scramble the actual page order
+ * (e.g. page 3 becomes page 1, page 7 becomes page 2).
+ *
+ * **Decision: we never sort by `order` for display purposes.** The raw
+ * array order from server / IndexedDB is the source of truth for the
+ * display sequence. Any sort-by-order is only allowed in code paths that
+ * explicitly manage their own data (e.g. PBL generation, scene creation).
+ *
+ * This module now only provides diagnostics so the existing call sites
+ * can stay the same shape and still log whether order is trustworthy.
  */
 
-export interface Orderable {
-  order?: number | null;
+/** Diagnostic info describing the order field state of a scene array. */
+export interface OrderDiagnostic {
+  /** Total scene count. */
+  totalScenes: number;
+  /** Per-scene orders (parallel to rawScenes). */
+  orders: Array<number | null | undefined>;
+  /** true iff every scene has a valid, finite order value. */
+  allHaveValidOrder: boolean;
+  /** true iff all valid orders are unique. */
+  hasUniqueOrders: boolean;
+  /** true iff every scene has valid, unique orders AND those orders
+   *  match the raw array index (i.e. order is sequential starting from 0/1). */
+  orderMatchesArrayIndex: boolean;
 }
 
-/**
- * Return scenes in display order.
- *
- * - If every scene has a valid, finite, **unique** `order` → sort by order.
- * - Otherwise → return the input array as-is (original array order is truth).
- *
- * This is intentionally conservative: it's better to show pages in the
- * order they arrived from the server / IndexedDB than to guess based on
- * a possibly-stale `order` field.
- */
-export function getDisplayOrderedScenes<T extends Orderable>(scenes: T[]): T[] {
-  if (scenes.length <= 1) return scenes;
-
-  const orders = scenes.map((s) => s.order);
-  const allHaveValidOrder = orders.every(
-    (o) => typeof o === 'number' && Number.isFinite(o),
-  );
-  const hasUniqueOrders = new Set(orders).size === scenes.length;
-
-  if (allHaveValidOrder && hasUniqueOrders) {
-    return [...scenes].sort((a, b) => (a.order as number) - (b.order as number));
-  }
-
-  // Preserve original array order — this is the real display sequence.
-  return scenes;
-}
-
-/** Diagnostic info for logging why order-sort was or wasn't applied. */
-export function getOrderSortDiagnostic<T extends Orderable>(
+/** Inspect the order field of a scene array without changing it. */
+export function inspectOrderField<T extends { order?: number | null }>(
   scenes: T[],
-  displayScenes: T[],
-): {
-  orderSortApplied: boolean;
-  orderSortSkippedReason:
-    | 'order_sort_applied'
-    | 'missing_or_invalid_order'
-    | 'duplicate_order'
-    | 'using_raw_array_order';
-} {
-  if (scenes.length <= 1) {
-    return { orderSortApplied: false, orderSortSkippedReason: 'using_raw_array_order' };
-  }
-
+): OrderDiagnostic {
   const orders = scenes.map((s) => s.order);
   const allHaveValidOrder = orders.every(
     (o) => typeof o === 'number' && Number.isFinite(o),
   );
   const hasUniqueOrders = new Set(orders).size === scenes.length;
+  const orderMatchesArrayIndex =
+    allHaveValidOrder &&
+    hasUniqueOrders &&
+    orders.every((o, i) => o === i || o === i + 1);
 
-  if (allHaveValidOrder && hasUniqueOrders) {
-    return { orderSortApplied: true, orderSortSkippedReason: 'order_sort_applied' };
-  }
-  if (!allHaveValidOrder) {
-    return { orderSortApplied: false, orderSortSkippedReason: 'missing_or_invalid_order' };
-  }
-  return { orderSortApplied: false, orderSortSkippedReason: 'duplicate_order' };
+  return {
+    totalScenes: scenes.length,
+    orders,
+    allHaveValidOrder,
+    hasUniqueOrders,
+    orderMatchesArrayIndex,
+  };
 }

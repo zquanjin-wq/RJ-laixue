@@ -18,7 +18,7 @@ import { useAuth } from '@/lib/auth/use-auth';
 import { useMobileDetection } from '@/lib/hooks/use-mobile-detection';
 import { useRouter } from 'next/navigation';
 import type { Scene } from '@/lib/types/stage';
-import { getDisplayOrderedScenes, getOrderSortDiagnostic } from '@/lib/utils/scene-order';
+import { inspectOrderField } from '@/lib/utils/scene-order';
 
 const log = createLogger('Classroom');
 
@@ -154,11 +154,18 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         const storeState = useStageStore.getState();
         const rawScenes = storeState.scenes;
 
-        // Safe ordering: only sort by order when ALL scenes have valid,
-        // unique order values. Otherwise preserve original array order
-        // (the real display sequence from server / IndexedDB).
-        const displayScenes = getDisplayOrderedScenes(rawScenes);
-        const orderDiag = getOrderSortDiagnostic(rawScenes, displayScenes);
+        // ── Display order policy ─────────────────────────────────────
+        // Historical courses have unreliable `order` fields. Sometimes
+        // `order` is missing/non-unique; sometimes it's a stale value
+        // from IndexedDB that contradicts the real display sequence the
+        // admin authored (e.g. order=2 points to "开场" but the array
+        // already places "开场" at index 2, while the real page 1 is
+        // at array index 0 with order=null).
+        //
+        // We NEVER sort by `order` for display. The raw array order from
+        // server / IndexedDB is the source of truth for the page sequence.
+        const displayScenes = rawScenes;
+        const orderDiag = inspectOrderField(rawScenes);
 
         const displayFirst = displayScenes[0];
         const isEditorMode = editorAutoOpen;
@@ -223,13 +230,18 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           displayFirstSceneOrder: displayFirst?.order,
           totalScenes: displayScenes.length,
           reason,
-          // ── Order sort diagnostics ──
+          // ── Order field diagnostics ──
+          // We intentionally do NOT sort by `order`. The raw array order
+          // from server/IndexedDB is the source of truth for display.
+          // These fields expose the order field's trustworthiness so
+          // future debugging can see whether order matches reality.
+          rawSceneIds: rawScenes.slice(0, 10).map((s) => s.id),
           rawSceneTitles: rawScenes.slice(0, 10).map((s) => s.title),
-          rawSceneOrders: rawScenes.slice(0, 10).map((s) => s.order),
-          displaySceneTitles: displayScenes.slice(0, 10).map((s) => s.title),
-          displaySceneOrders: displayScenes.slice(0, 10).map((s) => s.order),
-          orderSortApplied: orderDiag.orderSortApplied,
-          orderSortSkippedReason: orderDiag.orderSortSkippedReason,
+          rawSceneOrders: orderDiag.orders.slice(0, 10),
+          orderFieldAllValid: orderDiag.allHaveValidOrder,
+          orderFieldUnique: orderDiag.hasUniqueOrders,
+          orderMatchesArrayIndex: orderDiag.orderMatchesArrayIndex,
+          displayUsesRawArrayOrder: true,
         });
       }
 
@@ -247,10 +259,11 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
               // way in, same as the store's setScenes/loadFromStorage paths —
               // server snapshots predate the schema field.
               const migrated = (scenes as Scene[]).map(migrateScene);
-              const displayMigrated = getDisplayOrderedScenes(migrated);
+              // Use raw array order — `order` field is unreliable for
+              // historical courses (see scene-order.ts comment).
               useStageStore.setState({
                 scenes: migrated,
-                currentSceneId: displayMigrated[0]?.id ?? null,
+                currentSceneId: migrated[0]?.id ?? null,
                 // Match `loadFromStorage` semantics: mode is transient UI
                 // state, not persisted with the stage. Reset on every
                 // classroom load so SPA navigation doesn't carry Pro
@@ -284,7 +297,8 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
             if (json.success && courseData?.stage) {
               const { stage, scenes = [], outlines = [] } = courseData;
               const migrated = (scenes as Scene[]).map(migrateScene);
-              const displayMigrated = getDisplayOrderedScenes(migrated);
+              // Use raw array order — `order` field is unreliable for
+              // historical courses (see scene-order.ts comment).
               useStageStore.getState().setStage(stage);
               // Hydrate generated agents from cloud course into IndexedDB + registry
               if (stage.generatedAgentConfigs?.length) {
@@ -295,7 +309,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
               useStageStore.setState({
                 scenes: migrated,
                 outlines,
-                currentSceneId: displayMigrated[0]?.id ?? null,
+                currentSceneId: migrated[0]?.id ?? null,
                 mode: 'playback',
                 generationComplete: true,
                 generatingOutlines: [],
