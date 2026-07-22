@@ -22,7 +22,12 @@ async function readApiJson<T>(response: Response): Promise<T> {
 async function collectStageData(stageId: string) {
   const [stage, scenes, outlines] = await Promise.all([
     db.stages.get(stageId),
-    db.scenes.where('stageId').equals(stageId).toArray(),
+    // Sort by `seq` (the v13 insertion-order field). Without this, Dexie
+    // returns scenes in primary-key (id) order, which can scramble page
+    // sequence since scene ids are nanoids (not monotonically generated).
+    // Uploading the scrambled array to cloud would persist a broken order
+    // that every future read would faithfully reproduce.
+    db.scenes.where('stageId').equals(stageId).sortBy('seq'),
     db.stageOutlines.where('stageId').equals(stageId).toArray(),
   ]);
 
