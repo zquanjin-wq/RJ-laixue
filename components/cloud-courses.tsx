@@ -21,6 +21,8 @@ interface CourseCardProps {
   isOwner: boolean;
   currentUserId: string | null;
   sharingId: string | null;
+  /** Which list this card belongs to — drives tag text and share button copy. */
+  section: 'mine' | 'library';
   onOpen: (id: string) => void;
   onShare: (id: string) => void;
   onDelete: (id: string) => void;
@@ -31,15 +33,31 @@ function CourseCard({
   isOwner,
   currentUserId,
   sharingId,
+  section, // 'mine' | 'library' — picks tag text + button labels per section
   onOpen,
   onShare,
   onDelete,
 }: CourseCardProps) {
+  // Per-section labels. The "open" verb used to be ambiguous between a
+  // teacher's own course and a public library entry — make the verb match
+  // the section's semantics.
+  const openLabel = '预览';
+  const editLabel = '继续编辑';
+  const shareLabel = section === 'mine' ? '分享学员链接' : '分享课程';
+  const tagLabel = section === 'mine' ? '我的创作' : '资源库';
+  const tagClass =
+    section === 'mine'
+      ? 'shrink-0 inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-900/30 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300'
+      : 'shrink-0 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300';
+
   return (
     <div className="rounded-lg border p-4 hover:shadow-md transition-shadow">
-      <h3 className="font-medium truncate">
-        {course.title || course.topic || '未命名课程'}
-      </h3>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="font-medium truncate flex-1 min-w-0">
+          {course.title || course.topic || '未命名课程'}
+        </h3>
+        <span className={tagClass}>{tagLabel}</span>
+      </div>
       <p className="mt-1 text-xs text-muted-foreground">
         更新于 {new Date(course.updated_at).toLocaleDateString('zh-CN')}
       </p>
@@ -48,7 +66,7 @@ function CourseCard({
           onClick={() => onOpen(course.id)}
           className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
         >
-          打开
+          {openLabel}
         </button>
         {isOwner && (
           <button
@@ -57,7 +75,7 @@ function CourseCard({
             }
             className="rounded bg-secondary px-3 py-1 text-xs text-secondary-foreground hover:opacity-90"
           >
-            ✎ 编辑
+            ✎ {editLabel}
           </button>
         )}
         <button
@@ -65,7 +83,7 @@ function CourseCard({
           disabled={sharingId === course.id}
           className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
         >
-          {sharingId === course.id ? '复制中…' : '分享'}
+          {sharingId === course.id ? '复制中…' : shareLabel}
         </button>
         {isOwner && (
           <button
@@ -190,9 +208,12 @@ export default function CloudCourses() {
 
   return (
     <div className="mt-8 space-y-10">
-      {/* 我的课程 — courses I created. Edit + Delete only here. */}
+      {/* 我的创作 — courses I created (or have edit rights to). Edit + Delete only here. */}
       <section>
-        <h2 className="mb-4 text-lg font-semibold">📚 我的课程</h2>
+        <h2 className="mb-1 text-lg font-semibold">📚 我的创作</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          你创建或可以编辑的课程
+        </p>
         {myCourses.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             你还没有创建过课程。生成课件后点击「保存到云端」即可在这里看到。
@@ -206,6 +227,7 @@ export default function CloudCourses() {
                 isOwner={true}
                 currentUserId={currentUserId}
                 sharingId={sharingId}
+                section="mine"
                 onOpen={handleOpen}
                 onShare={handleShare}
                 onDelete={handleDelete}
@@ -215,12 +237,15 @@ export default function CloudCourses() {
         )}
       </section>
 
-      {/* 云端课程（发现） — courses created by others. Open + Share only. */}
+      {/* 课程资源库 — public courses created by others (replaces "云端课程（发现）"). */}
       <section>
-        <h2 className="mb-4 text-lg font-semibold">🌐 云端课程（发现）</h2>
+        <h2 className="mb-1 text-lg font-semibold">🌐 课程资源库</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          发现可预览或复用的公开课程
+        </p>
         {discoverCourses.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            云端暂无其他老师分享的课程。
+            资源库暂无其他老师分享的课程。
           </p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -231,6 +256,7 @@ export default function CloudCourses() {
                 isOwner={false}
                 currentUserId={currentUserId}
                 sharingId={sharingId}
+                section="library"
                 onOpen={handleOpen}
                 onShare={handleShare}
                 onDelete={handleDelete}
