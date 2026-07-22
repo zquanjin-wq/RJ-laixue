@@ -20,10 +20,12 @@ export interface MobileChapter {
   sceneType: 'slide' | 'quiz' | 'interactive' | 'pbl';
   /** Concatenated narration text from all speech actions in order. */
   text: string;
-  /** First available TTS audio URL across speech actions. */
+  /** Audio URL for this chapter (narration audio or first speech fallback). */
   audioUrl?: string;
-  /** First available audio id (used as cache key). */
+  /** Audio ID (used as cache key). */
   audioId?: string;
+  /** Which field provided the audioUrl — for diagnostics. */
+  audioSourceField: string;
   /** Total seconds of audio (estimated if not pre-computed). */
   durationSec: number;
 }
@@ -101,18 +103,33 @@ function extractNarrationText(scene: Scene): string {
 }
 
 /**
- * Find the first speech action that has an audio URL or audio id.
+ * Find audio URL for mobile podcast playback.
+ *
+ * Priority (highest first):
+ *   1. scene.narrationAudioUrl  — full-chapter narration audio (correct field)
+ *   2. first speechAction.audioUrl — legacy fallback (per-segment, may be short)
+ *
+ * Returns both the resolved URL and a source tag for diagnostics.
  */
-function extractAudio(scene: Scene): { audioUrl?: string; audioId?: string } {
+function extractAudio(scene: Scene): { audioUrl?: string; audioId?: string; sourceField: string } {
+  // Priority 1: scene-level narration audio (full chapter)
+  const sceneRaw = scene as unknown as Record<string, unknown>;
+  const narrationUrl = sceneRaw.narrationAudioUrl as string | undefined;
+  const narrationId = sceneRaw.narrationAudioId as string | undefined;
+  if (narrationUrl) {
+    return { audioUrl: narrationUrl, audioId: narrationId, sourceField: 'Scene.narrationAudioUrl' };
+  }
+
+  // Priority 2: first speech action's audio (legacy / single-speech scenes)
   const actions = scene.actions ?? [];
   for (const a of actions) {
     if ((a as { type?: string }).type === 'speech') {
       const url = (a as { audioUrl?: string }).audioUrl;
       const id = (a as { audioId?: string }).audioId;
-      if (url || id) return { audioUrl: url, audioId: id };
+      if (url || id) return { audioUrl: url, audioId: id, sourceField: 'SpeechAction.audioUrl (fallback)' };
     }
   }
-  return {};
+  return { sourceField: '(none)' };
 }
 
 /**
@@ -150,14 +167,19 @@ export function buildChapters(scenes: Scene[]): MobileChapter[] {
   });
 
   const chapters = filtered
-    .map((s) => ({
-      sceneId: s.id,
-      title: s.title || `第 ${s.order + 1} 章`,
-      order: s.order,
-      sceneType: (s.type ?? 'slide') as MobileChapter['sceneType'],
-      text: extractNarrationText(s),
-      ...extractAudio(s),
-    }))
+    .map((s) => {
+      const audio = extractAudio(s);
+      return {
+        sceneId: s.id,
+        title: s.title || `第 ${s.order + 1} 章`,
+        order: s.order,
+        sceneType: (s.type ?? 'slide') as MobileChapter['sceneType'],
+        text: extractNarrationText(s),
+        audioUrl: audio.audioUrl,
+        audioId: audio.audioId,
+        audioSourceField: audio.sourceField,
+      };
+    })
     .map((c) => ({
       ...c,
       durationSec: estimateDurationSec(c.text),

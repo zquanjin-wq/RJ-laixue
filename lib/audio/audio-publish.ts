@@ -346,6 +346,18 @@ function extractFullNarrationText(scene: Scene): string {
   return parts.join('\n\n').trim();
 }
 
+// ─── Simple stable hash ──────────────────────────────────────────
+// djb2-style — deterministic, fast, no crypto dependency.
+// Used to detect whether narration text or voice config changed,
+// so we can skip re-generating unchanged chapter audio.
+function stableHash(input: string): string {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(16);
+}
+
 // ─── Interactive scene filter (mirrors lib/mobile/scene-helpers) ────
 
 const INTERACTIVE_SCENE_KINDS = new Set(['quiz', 'interactive', 'pbl']);
@@ -578,83 +590,108 @@ export async function publishSceneAudioAssets(
       }
     }
 
-    // ── Combined full-chapter audio for mobile podcast mode ──
-    // Mobile player (scene-helpers.ts extractAudio) only reads the
-    // FIRST speech action's audioUrl. If a scene has multiple speech
-    // actions, each individual audioUrl contains only one paragraph.
-    // We generate ONE combined audio from ALL speech text so the
-    // mobile player gets the complete chapter narration.
+    // ── Scene-level narration audio for mobile podcast mode ──
+    // Mobile player (scene-helpers.ts extractAudio) reads
+    // scene.narrationAudioUrl FIRST, then falls back to speech action audio.
+    // This keeps speechAction.audioUrl semantically clean (per-segment only).
     const allSpeechActions = (actions as unknown as SpeechAction[]).filter(isSpeechAction);
-    if (allSpeechActions.length > 1) {
+    if (allSpeechActions.length > 0) {
       const fullText = extractFullNarrationText(scene);
-      const firstSpeech = allSpeechActions[0] as SpeechAction & {
-        audioId?: string;
-        audioUrl?: string;
-      };
-      const combinedAudioId = `combined_${scene.id.slice(0, 8)}`;
+      const textHash = stableHash(fullText + JSON.stringify(teacherVoiceConfig ?? {}));
+      const narrationAudioId = `narration_${scene.id.slice(0, 8)}_${textHash.slice(0, 12)}`;
 
-      console.info('[TTS INPUT][Scene Audio]', JSON.stringify({
+      // Read existing scene-level fields (may not exist on old scenes)
+      const sceneRaw = scene as unknown as Record<string, unknown>;
+      const existingUrl = sceneRaw.narrationAudioUrl as string | undefined;
+      const existingHash = sceneRaw.narrationAudioTextHash as string | undefined;
+
+      const shouldRegenerate = !(existingUrl && existingHash === textHash);
+
+      console.info('[TTS INPUT][Scene Narration Audio]', JSON.stringify({
         sceneId: scene.id,
         sceneTitle: scene.title || `(order ${scene.order})`,
         speechActionCount: allSpeechActions.length,
-        firstSpeechTextLength: firstSpeech?.text?.length ?? 0,
+        firstSpeechTextLength: allSpeechActions[0]?.text?.length ?? 0,
         fullTextLength: fullText.length,
         fullTextPreview: fullText.slice(0, 120),
-        sourceField: 'scene.actions[*].text joined (combined)',
+        textHash,
+        narrationAudioId,
+        existingNarrationAudioUrl: existingUrl ?? '(none)',
+        shouldRegenerate,
+        sourceField: 'scene.actions[*].text joined (narration)',
       }));
 
-      if (fullText) {
+      if (!shouldRegenerate) {
+        console.info('[TTS SKIP][Scene Narration Audio]', JSON.stringify({
+          sceneId: scene.id,
+          narrationAudioId,
+          textHash,
+          reason: 'hash match — narration text and voice config unchanged',
+        }));
+      } else if (fullText) {
         try {
-          const { data: combinedData, format: combinedFormat } = await generateTTSForText(
+          log.info(
+            `Generating narration TTS for scene=${scene.id} (${fullText.length} chars, ${allSpeechActions.length} speeches)`,
+          );
+
+          const { data: narrData, format: narrFormat } = await generateTTSForText(
             fullText,
-            combinedAudioId,
+            narrationAudioId,
             teacherVoiceConfig,
             scene.id,
           );
 
-          const combinedAudioUrl = await uploadBlobToCloud({
+          const narrAudioUrl = await uploadBlobToCloud({
             stageId,
-            audioId: combinedAudioId,
-            data: combinedData,
-            format: combinedFormat,
+            audioId: narrationAudioId,
+            data: narrData,
+            format: narrFormat,
           });
 
-          // Overwrite first speech action's audioUrl with the combined version.
-          // Mobile extractAudio() reads the first speech action's audioUrl.
-          firstSpeech.audioUrl = combinedAudioUrl;
-          firstSpeech.audioId = combinedAudioId;
+          // Write to SCENE-LEVEL fields — do NOT touch speechAction.audioUrl
+          sceneRaw.narrationAudioUrl = narrAudioUrl;
+          sceneRaw.narrationAudioId = narrationAudioId;
+          sceneRaw.narrationAudioTextHash = textHash;
 
-          console.info('[TTS OUTPUT][Scene Audio]', JSON.stringify({
+          console.info('[TTS OUTPUT][Scene Narration Audio]', JSON.stringify({
             sceneId: scene.id,
-            audioUrl: combinedAudioUrl.slice(0, 80),
+            narrationAudioUrl: narrAudioUrl.slice(0, 80),
+            narrationAudioId,
             inputTextLength: fullText.length,
-            source: 'combined-full-chapter',
+            textHash,
             timestamp: new Date().toISOString(),
           }));
 
           regenerated.push({
             sceneId: scene.id,
             sceneOrder: scene.order,
-            actionId: firstSpeech.id,
-            audioId: combinedAudioId,
-            audioUrl: combinedAudioUrl,
+            actionId: '(narration)',
+            audioId: narrationAudioId,
+            audioUrl: narrAudioUrl,
             textLength: fullText.length,
           });
 
           log.info(
-            `Combined TTS generated for scene=${scene.id} (${fullText.length} chars, ${allSpeechActions.length} speeches)`,
+            `Narration TTS generated for scene=${scene.id} (${fullText.length} chars) → ${narrAudioUrl.slice(0, 60)}...`,
           );
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : String(error);
-          log.error(`Combined TTS failed for scene=${scene.id}:`, errMsg);
-          // Don't block publish — individual speech audios still exist.
-          // Mobile will just play the first short segment as before.
-          console.warn('[TTS OUTPUT][Scene Audio]', JSON.stringify({
+          log.error(`Narration TTS failed for scene=${scene.id}:`, errMsg);
+          // Block is too aggressive — warn but don't fail the whole publish.
+          // Individual speech action audios are still valid.
+          console.error('[TTS OUTPUT][Scene Narration Audio]', JSON.stringify({
             sceneId: scene.id,
             error: errMsg,
-            source: 'combined-full-chapter FAILED',
+            source: 'narration-audio FAILED',
             timestamp: new Date().toISOString(),
           }));
+          failed.push({
+            sceneId: scene.id,
+            sceneOrder: scene.order,
+            actionId: '(narration)',
+            audioId: narrationAudioId,
+            error: `整章旁白音频生成失败: ${errMsg}`,
+          });
         }
       }
     }

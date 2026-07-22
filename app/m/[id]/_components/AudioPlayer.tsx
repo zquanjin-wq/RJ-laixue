@@ -48,6 +48,8 @@ interface AudioPlayerProps {
   sceneId?: string;
   /** Stage ID for dev logging. */
   stageId?: string;
+  /** Which field provided the audioUrl — for diagnostics. */
+  audioSourceField?: string;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -69,6 +71,7 @@ export function AudioPlayer({
   registerAudio,
   sceneId,
   stageId,
+  audioSourceField,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -85,11 +88,13 @@ export function AudioPlayer({
       fallbackTextLength: fallbackText.length,
       hasAudioUrl: !!audioUrl,
       audioUrlLength: audioUrl?.length ?? 0,
-      audioSourceField: audioUrl ? 'SpeechAction.audioUrl (published)' : '(none — publish gap)',
+      audioSourceField: audioUrl
+        ? (audioSourceField ?? 'SpeechAction.audioUrl (published)')
+        : '(none — publish gap)',
       errorType: error ?? '(none)',
       timestamp: new Date().toISOString(),
     }));
-  }, [stageId, sceneId, audioUrl, fallbackText, error]);
+  }, [stageId, sceneId, audioUrl, fallbackText, error, audioSourceField]);
 
   // ─── If no audioUrl, set error immediately (no auto-TTS) ─────
   useEffect(() => {
