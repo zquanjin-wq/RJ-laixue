@@ -1,6 +1,9 @@
 ﻿import type { Action, SpeechAction } from '@/lib/types/action';
 import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('AudioPublish');
 
 export interface PublishedAudioItem {
   sceneId: string;
@@ -26,12 +29,23 @@ export interface FailedAudioItem {
   error: string;
 }
 
+/** New: items that were regenerated via TTS during publish (no prior blob existed). */
+export interface RegeneratedAudioItem {
+  sceneId: string;
+  sceneOrder?: number;
+  actionId?: string;
+  audioId: string;
+  audioUrl: string;
+  textLength: number;
+}
+
 export interface PublishSceneAudioAssetsResult {
   scenes: Scene[];
   uploaded: PublishedAudioItem[];
   skipped: PublishedAudioItem[];
   missing: MissingAudioItem[];
   failed: FailedAudioItem[];
+  regenerated: RegeneratedAudioItem[];
 }
 
 function isSpeechAction(action: Action): action is SpeechAction {
@@ -103,8 +117,251 @@ async function uploadAudioRecordToCloud(input: {
   return data.url as string;
 }
 
+/** Upload a raw ArrayBuffer/Blob directly to Supabase Storage. */
+async function uploadBlobToCloud(input: {
+  stageId: string;
+  audioId: string;
+  data: ArrayBuffer;
+  format: string;
+}): Promise<string> {
+  const { stageId, audioId, data, format } = input;
+  const fileName = safeFileName(audioId, format);
+  const contentType = contentTypeForAudio(format);
+
+  const file = new File([data], fileName, { type: contentType });
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('stageId', stageId);
+  formData.append('audioId', audioId);
+
+  const response = await fetch('/api/audio-upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  const resData = await response.json().catch(() => null);
+
+  if (!response.ok || !resData?.url) {
+    const message =
+      resData?.details ||
+      resData?.error ||
+      `Audio upload failed: HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  return resData.url as string;
+}
+
+/**
+ * Resolve TTS configuration for regeneration during publish.
+ *
+ * Priority (strict):
+ *   1. stage.teacherVoiceConfig — course-level authoritative voice
+ *   2. settings store — user-configured TTS provider (fallback only)
+ *   3. minimax-tts / female-yujie — hard fallback
+ */
+export interface TeacherVoiceConfig {
+  providerId?: string;
+  voiceId?: string;
+  modelId?: string;
+}
+
+async function resolveTtsConfigForPublish(
+  teacherVoiceConfig?: TeacherVoiceConfig | null,
+  sceneId?: string,
+): Promise<{
+  providerId: string;
+  voice: string;
+  modelId: string;
+  apiKey?: string;
+  baseUrl?: string;
+  source: 'stage.teacherVoiceConfig' | 'settings' | 'provider-default';
+}> {
+  // ── Priority 1: stage.teacherVoiceConfig ──
+  if (teacherVoiceConfig?.providerId && teacherVoiceConfig.voiceId) {
+    const providerId = `${teacherVoiceConfig.providerId}-tts`;
+    const voice = teacherVoiceConfig.voiceId;
+    const modelId = teacherVoiceConfig.modelId || 'speech-2.8-hd';
+
+    // Read apiKey/baseUrl from settings store for the resolved provider.
+    let apiKey: string | undefined;
+    let baseUrl: string | undefined;
+    try {
+      const { useSettingsStore } = await import('@/lib/store/settings');
+      const s = useSettingsStore.getState();
+      const cfg = s.ttsProvidersConfig as unknown as Record<string, { apiKey?: string; baseUrl?: string; customDefaultBaseUrl?: string; modelId?: string }>;
+      const providerCfg = cfg?.[providerId];
+      apiKey = providerCfg?.apiKey;
+      baseUrl = providerCfg?.baseUrl || providerCfg?.customDefaultBaseUrl;
+    } catch {
+      // Settings store unavailable — TTS API may reject, but we log the source correctly.
+    }
+
+    const result = { providerId, voice, modelId, apiKey, baseUrl, source: 'stage.teacherVoiceConfig' as const };
+    console.info('[MOBILE PUBLISH][TTS Voice Resolve]', JSON.stringify({
+      sceneId: sceneId ?? '(unknown)',
+      source: result.source,
+      providerId: result.providerId,
+      voiceId: result.voice,
+      modelId: result.modelId,
+    }));
+    return result;
+  }
+
+  // ── Priority 2: settings store ──
+  try {
+    const { useSettingsStore } = await import('@/lib/store/settings');
+    const settings = useSettingsStore.getState();
+
+    const providerId = settings.ttsProviderId || 'minimax-tts';
+    const voice = settings.ttsVoice || 'female-yujie';
+    const cfg = settings.ttsProvidersConfig as unknown as Record<string, { apiKey?: string; baseUrl?: string; customDefaultBaseUrl?: string; modelId?: string }>;
+    const providerCfg = cfg?.[providerId];
+    const modelId = providerCfg?.modelId || 'speech-2.8-hd';
+    const apiKey = providerCfg?.apiKey;
+    const baseUrl = providerCfg?.baseUrl || providerCfg?.customDefaultBaseUrl;
+
+    const result = { providerId, voice, modelId, apiKey, baseUrl, source: 'settings' as const };
+    console.info('[MOBILE PUBLISH][TTS Voice Resolve]', JSON.stringify({
+      sceneId: sceneId ?? '(unknown)',
+      source: result.source,
+      providerId: result.providerId,
+      voiceId: result.voice,
+      modelId: result.modelId,
+    }));
+    return result;
+  } catch {
+    // Settings store not available — fall through to hard default.
+  }
+
+  // ── Priority 3: hard fallback ──
+  const result = {
+    providerId: 'minimax-tts',
+    voice: 'female-yujie',
+    modelId: 'speech-2.8-hd',
+    source: 'provider-default' as const,
+  };
+  console.info('[MOBILE PUBLISH][TTS Voice Resolve]', JSON.stringify({
+    sceneId: sceneId ?? '(unknown)',
+    source: result.source,
+    providerId: result.providerId,
+    voiceId: result.voice,
+    modelId: result.modelId,
+  }));
+  return result;
+}
+
+/**
+ * Call /api/generate/tts and return decoded ArrayBuffer + format.
+ *
+ * TTS voice is resolved from stage.teacherVoiceConfig (priority 1),
+ * then settings store (priority 2), then hard fallback (priority 3).
+ */
+async function generateTTSForText(
+  text: string,
+  audioId: string,
+  teacherVoiceConfig?: TeacherVoiceConfig | null,
+  sceneId?: string,
+): Promise<{
+  data: ArrayBuffer;
+  format: string;
+}> {
+  const ttsConfig = await resolveTtsConfigForPublish(teacherVoiceConfig, sceneId);
+
+  const response = await fetch('/api/generate/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      audioId,
+      ttsProviderId: ttsConfig.providerId,
+      ttsModelId: ttsConfig.modelId,
+      ttsVoice: ttsConfig.voice,
+      ttsSpeed: 1.0,
+      ttsApiKey: ttsConfig.apiKey || undefined,
+      ttsBaseUrl: ttsConfig.baseUrl || undefined,
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    throw new Error(
+      errBody?.message || errBody?.error || `TTS HTTP ${response.status}`,
+    );
+  }
+
+  const json = await response.json();
+
+  if (!json.success || !json.data?.base64) {
+    throw new Error(json.message || json.error || 'TTS 返回数据缺失');
+  }
+
+  const binary = atob(json.data.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  const format = json.data.format || 'mp3';
+
+  return { data: bytes.buffer as ArrayBuffer, format };
+}
+
+/**
+ * Extract narration text from a scene for TTS regeneration.
+ *
+ * Priority:
+ *   1. speechAction.text (the original narration script)
+ *   2. scene.narrationText
+ *   3. scene.content (fallback)
+ */
+function extractNarrationTextForTTS(scene: Scene, speechAction: SpeechAction): string {
+  if (speechAction.text && speechAction.text.trim()) {
+    return speechAction.text.trim();
+  }
+  const narrationText = (scene as unknown as Record<string, unknown>).narrationText as
+    | string
+    | undefined;
+  if (narrationText?.trim()) return narrationText.trim();
+  const content = (scene as unknown as Record<string, unknown>).content as
+    | string
+    | undefined;
+  if (content?.trim()) return content.trim();
+  return '';
+}
+
+// ─── Interactive scene filter (mirrors lib/mobile/scene-helpers) ────
+
+const INTERACTIVE_SCENE_KINDS = new Set(['quiz', 'interactive', 'pbl']);
+
+function isInteractiveScene(scene: Scene): boolean {
+  const kind = (scene as unknown as Record<string, unknown>).kind as string | undefined;
+  if (kind && INTERACTIVE_SCENE_KINDS.has(kind)) return true;
+
+  const interactionType = (scene as unknown as Record<string, unknown>)
+    .interactionType as string | undefined;
+  if (interactionType && INTERACTIVE_SCENE_KINDS.has(interactionType)) return true;
+
+  const content = scene.content as unknown as Record<string, unknown> | undefined;
+  if (content) {
+    const contentStr = JSON.stringify(content).toLowerCase();
+    for (const keyword of ['quiz', 'poll', 'exercise', 'interactive', 'choice']) {
+      if (contentStr.includes(keyword)) return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Ensure speech actions have cloud-playable audioUrl before course publishing.
+ *
+ * Three-tier strategy per speech action:
+ *
+ *   1. audioUrl already exists → skip (fastest).
+ *   2. No audioUrl but has audioId + IndexedDB blob → upload blob to cloud.
+ *   3. No audioUrl, no blob → regenerate TTS from text → upload to cloud.
  *
  * audioId = browser-local IndexedDB cache key.
  * audioUrl = cloud URL required by shared/student playback.
@@ -112,6 +369,7 @@ async function uploadAudioRecordToCloud(input: {
 export async function publishSceneAudioAssets(
   stageId: string,
   scenes: Scene[],
+  teacherVoiceConfig?: TeacherVoiceConfig | null,
 ): Promise<PublishSceneAudioAssetsResult> {
   const nextScenes = structuredClone(scenes) as Scene[];
 
@@ -119,8 +377,12 @@ export async function publishSceneAudioAssets(
   const skipped: PublishedAudioItem[] = [];
   const missing: MissingAudioItem[] = [];
   const failed: FailedAudioItem[] = [];
+  const regenerated: RegeneratedAudioItem[] = [];
 
   for (const scene of nextScenes) {
+    // Skip interactive scenes — they don't need audio for mobile podcast mode.
+    if (isInteractiveScene(scene)) continue;
+
     const actions = scene.actions ?? [];
 
     for (const action of actions) {
@@ -136,6 +398,7 @@ export async function publishSceneAudioAssets(
       const actionId = speechAction.id;
       const audioId = speechAction.audioId;
 
+      // ── Tier 1: Already has cloud URL ──
       if (speechAction.audioUrl) {
         skipped.push({
           sceneId,
@@ -147,46 +410,111 @@ export async function publishSceneAudioAssets(
         continue;
       }
 
-      if (!audioId) {
-        continue;
+      // ── Tier 2: Has audioId → try IndexedDB blob ──
+      if (audioId) {
+        const record = await db.audioFiles.get(audioId);
+
+        if (record?.blob) {
+          try {
+            const audioUrl = await uploadAudioRecordToCloud({
+              stageId,
+              audioId,
+              record,
+            });
+
+            speechAction.audioUrl = audioUrl;
+
+            uploaded.push({
+              sceneId,
+              sceneOrder,
+              actionId,
+              audioId,
+              audioUrl,
+            });
+            continue;
+          } catch (error) {
+            log.warn(
+              `Upload failed for ${audioId}:`,
+              error instanceof Error ? error.message : String(error),
+            );
+            failed.push({
+              sceneId,
+              sceneOrder,
+              actionId,
+              audioId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            continue;
+          }
+        }
+
+        // audioId exists but no blob in IndexedDB — fall through to Tier 3
+        log.info(
+          `audioId ${audioId} has no IndexedDB blob, will regenerate TTS`,
+        );
       }
 
-      const record = await db.audioFiles.get(audioId);
+      // ── Tier 3: No audioUrl, no blob → regenerate TTS ──
+      const narrationText = extractNarrationTextForTTS(scene, speechAction);
 
-      if (!record?.blob) {
+      if (!narrationText) {
         missing.push({
           sceneId,
           sceneOrder,
           actionId,
-          audioId,
-          reason: '本地 IndexedDB 中找不到对应音频文件',
+          audioId: audioId || `(auto-${Date.now()})`,
+          reason: '无法提取章节文字内容（speechAction.text / narrationText / content 均为空）',
         });
         continue;
       }
 
+      const regenAudioId = audioId || `pub_${sceneId.slice(0, 8)}_${Date.now()}`;
+
       try {
-        const audioUrl = await uploadAudioRecordToCloud({
+        log.info(
+          `Regenerating TTS for scene=${sceneId} action=${actionId} (${narrationText.length} chars)`,
+        );
+
+        const { data, format } = await generateTTSForText(
+          narrationText,
+          regenAudioId,
+          teacherVoiceConfig,
+          sceneId,
+        );
+
+        const audioUrl = await uploadBlobToCloud({
           stageId,
-          audioId,
-          record,
+          audioId: regenAudioId,
+          data,
+          format,
         });
 
+        speechAction.audioId = regenAudioId;
         speechAction.audioUrl = audioUrl;
 
-        uploaded.push({
+        regenerated.push({
           sceneId,
           sceneOrder,
           actionId,
-          audioId,
+          audioId: regenAudioId,
           audioUrl,
+          textLength: narrationText.length,
         });
+
+        log.info(
+          `TTS regenerated & uploaded: ${regenAudioId} → ${audioUrl.slice(0, 60)}...`,
+        );
       } catch (error) {
+        const errMsg =
+          error instanceof Error ? error.message : String(error);
+        log.error(`TTS regeneration failed for ${regenAudioId}:`, errMsg);
+
         failed.push({
           sceneId,
           sceneOrder,
           actionId,
-          audioId,
-          error: error instanceof Error ? error.message : String(error),
+          audioId: regenAudioId,
+          error: `TTS 重新生成失败: ${errMsg}`,
         });
       }
     }
@@ -198,5 +526,92 @@ export async function publishSceneAudioAssets(
     skipped,
     missing,
     failed,
+    regenerated,
+  };
+}
+
+// ─── Validation ────────────────────────────────────────────────
+
+export type AudioAssetValidationReason =
+  | 'missing-speech-action'
+  | 'missing-audio-url'
+  | 'tts-generate-failed'
+  | 'upload-failed';
+
+export interface AudioAssetValidationIssue {
+  sceneId: string;
+  sceneTitle?: string;
+  sceneOrder?: number;
+  reason: AudioAssetValidationReason;
+  detail?: string;
+}
+
+export interface AudioAssetValidationResult {
+  ok: boolean;
+  totalLearnableScenes: number;
+  validScenes: number;
+  issues: AudioAssetValidationIssue[];
+}
+
+/**
+ * Validate that all non-interactive learnable scenes have published audio.
+ *
+ * Called after publishSceneAudioAssets() to verify the result before
+ * saving to cloud. Also usable independently for pre-flight checks.
+ */
+export function validatePublishedAudioAssets(
+  scenes: Scene[],
+): AudioAssetValidationResult {
+  const issues: AudioAssetValidationIssue[] = [];
+  let totalLearnable = 0;
+  let validCount = 0;
+
+  for (const scene of scenes) {
+    if (isInteractiveScene(scene)) continue;
+
+    totalLearnable++;
+
+    const sceneTitle =
+      ((scene as unknown as Record<string, unknown>).name as string) ||
+      ((scene as unknown as Record<string, unknown>).title as string) ||
+      undefined;
+
+    const actions = scene.actions ?? [];
+    const speechActions = actions.filter((a) => isSpeechAction(a));
+
+    if (speechActions.length === 0) {
+      issues.push({
+        sceneId: scene.id,
+        sceneTitle,
+        sceneOrder: scene.order,
+        reason: 'missing-speech-action',
+        detail: '该场景没有 speech 类型的 action',
+      });
+      continue;
+    }
+
+    const hasAudioUrl = speechActions.some(
+      (a) => !!((a as SpeechAction & { audioUrl?: string }).audioUrl),
+    );
+
+    if (!hasAudioUrl) {
+      issues.push({
+        sceneId: scene.id,
+        sceneTitle,
+        sceneOrder: scene.order,
+        reason: 'missing-audio-url',
+        detail: `该场景的 ${speechActions.length} 个 speech action 均无 audioUrl`,
+      });
+      continue;
+    }
+
+    validCount++;
+  }
+
+  return {
+    ok: issues.length === 0,
+    totalLearnableScenes: totalLearnable,
+    validScenes: validCount,
+    issues,
   };
 }

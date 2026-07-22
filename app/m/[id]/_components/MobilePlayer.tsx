@@ -38,19 +38,12 @@ interface MobilePlayerProps {
   courseId: string;
   courseTitle: string;
   chapters: MobileChapter[];
-  /** Teacher voice config from stage — passed through to AudioPlayer for TTS fallback. */
-  teacherVoiceConfig?: {
-    providerId: string;
-    voiceId: string;
-    modelId?: string;
-  };
 }
 
 export function MobilePlayer({
   courseId,
   courseTitle,
   chapters,
-  teacherVoiceConfig,
 }: MobilePlayerProps) {
   // === Hydrate from localStorage ===
   const [hydrated, setHydrated] = useState(false);
@@ -285,14 +278,12 @@ export function MobilePlayer({
 
           <AudioPlayer
             audioUrl={current.audioUrl}
-            audioId={current.audioId}
             fallbackText={current.text}
             rate={rate}
             onRateChange={setRate}
             onTimeUpdate={(t) => setAudioOffset(t)}
             onEnded={handleEnded}
             registerAudio={handleAudioRef}
-            teacherVoiceConfig={teacherVoiceConfig}
             sceneId={current.sceneId}
             stageId={courseId}
           />

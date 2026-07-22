@@ -61,7 +61,6 @@ export default async function MobilePlayerPage({ params }: PageProps) {
         courseId={course.id}
         courseTitle={course.title || '未命名课件'}
         chapters={chapters}
-        teacherVoiceConfig={course.teacherVoiceConfig}
       />
     </main>
   );

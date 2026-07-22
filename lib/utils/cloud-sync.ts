@@ -1,6 +1,13 @@
 ﻿import { supabase } from '@/lib/supabase/client';
 import { db } from '@/lib/utils/database';
-import { publishSceneAudioAssets } from '@/lib/audio/audio-publish';
+import {
+  publishSceneAudioAssets,
+  validatePublishedAudioAssets,
+  type PublishSceneAudioAssetsResult,
+} from '@/lib/audio/audio-publish';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('CloudSync');
 
 async function readApiJson<T>(response: Response): Promise<T> {
   const data = await response.json();
@@ -41,11 +48,34 @@ export async function saveStageToCloud(stageId: string) {
   const { id, title, topic, stage, scenes, outlines } =
     await collectStageData(stageId);
 
- const publishResult = await publishSceneAudioAssets(stageId, scenes as any);
+  // ── Phase 1: Publish audio assets (3-tier: skip / upload / regenerate) ──
+  // Extract teacherVoiceConfig from stage so Tier 3 TTS regeneration uses the
+  // course's authoritative voice (not the current settings store value).
+  const teacherVoiceConfig = (stage as unknown as Record<string, unknown>).teacherVoiceConfig as
+    | { providerId?: string; voiceId?: string; modelId?: string }
+    | undefined;
 
-  if (publishResult.failed.length > 0 || publishResult.missing.length > 0) {
+  const publishResult = await publishSceneAudioAssets(
+    stageId,
+    scenes as any,
+    teacherVoiceConfig ?? null,
+  );
+
+  log.info('Audio publish result', {
+    uploaded: publishResult.uploaded.length,
+    skipped: publishResult.skipped.length,
+    missing: publishResult.missing.length,
+    failed: publishResult.failed.length,
+    regenerated: publishResult.regenerated.length,
+  });
+
+  // ── Phase 2: Validate all learnable scenes have audioUrl ──
+  const validation = validatePublishedAudioAssets(publishResult.scenes);
+
+  if (!validation.ok || publishResult.failed.length > 0 || publishResult.missing.length > 0) {
     const failedCount = publishResult.failed.length;
     const missingCount = publishResult.missing.length;
+    const invalidCount = validation.issues.length;
 
     const failedPreview = publishResult.failed
       .slice(0, 3)
@@ -57,16 +87,23 @@ export async function saveStageToCloud(stageId: string) {
       .map((item) => `${item.audioId}: ${item.reason}`)
       .join('；');
 
+    const issuePreview = validation.issues
+      .slice(0, 3)
+      .map((i) => `${i.sceneId.slice(0, 8)}: ${i.reason}`)
+      .join('；');
+
     const detailParts = [
-      failedCount > 0 ? `上传失败 ${failedCount} 条${failedPreview ? `（${failedPreview}）` : ''}` : '',
-      missingCount > 0 ? `本地音频缺失 ${missingCount} 条${missingPreview ? `（${missingPreview}）` : ''}` : '',
+      failedCount > 0 ? `上传/生成失败 ${failedCount} 条${failedPreview ? `（${failedPreview}）` : ''}` : '',
+      missingCount > 0 ? `文字缺失 ${missingCount} 条${missingPreview ? `（${missingPreview}）` : ''}` : '',
+      invalidCount > 0 ? `校验不通过 ${invalidCount} 处${issuePreview ? `（${issuePreview}）` : ''}` : '',
     ].filter(Boolean);
 
     throw new Error(
-      `保存失败：部分语音无法发布到云端。${detailParts.join('；')}。请重新生成语音后再保存。`,
+      `保存失败：课程语音资源未发布完整。${detailParts.join('；')}。请检查语音生成后重新保存。`,
     );
   }
 
+  // ── Phase 3: Write to cloud database with audioUrl-filled scenes ──
   const scenesToSave = publishResult.scenes;
 
   const response = await fetch('/api/courses', {
@@ -99,6 +136,12 @@ export async function saveStageToCloud(stageId: string) {
       skipped: publishResult.skipped.length,
       missing: publishResult.missing.length,
       failed: publishResult.failed.length,
+      regenerated: publishResult.regenerated.length,
+    },
+    validation: {
+      totalLearnableScenes: validation.totalLearnableScenes,
+      validScenes: validation.validScenes,
+      ok: validation.ok,
     },
   };
 }

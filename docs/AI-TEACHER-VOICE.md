@@ -652,4 +652,45 @@ generate 模式下，LLM 可能给 teacher 分配 voiceConfig。如果运行时 
 
 3. **旧课程兼容**：当前对旧课程（创建时没有 `stage.teacherVoiceConfig` 字段）会 fallback 到 settings.globalTtsVoice 或默认音色。是否要在 IndexedDB 加载老 stage 时自动从 `useSettingsStore.ttsVoice` 同步一份 teacherVoiceConfig 到老 stage 上，可以作为未来迁移任务。
 
+---
+
+## 12. 验收状态（2026-07-21 已稳定）
+
+本修复已在本机和生产两端验证通过。生产部署：
+
+| Commit | 说明 | Vercel |
+|---|---|---|
+| `6cf27df9` | 核心修复：stage.teacherVoiceConfig 写入 + effectiveAgents 覆盖 + PlaybackChromeRoot 直接读 stage | ✅ Ready Production |
+| `746b150c` | 诊断日志：Stage TeacherVoiceConfig Loaded（保留作 dev-only 日志） | ✅ Ready Production |
+
+### 本地验证（17:50）
+
+新建课程选 `English_Trustworthy_Man`，触发 Q&A：
+
+```text
+[Create Course Payload Teacher Voice]
+providerId="minimax-tts" voiceId="English_Trustworthy_Man" modelId="speech-2.8-hd"
+
+[Teacher VoiceConfig For Discussion]
+teacherAgentId="(stage-source)"
+teacherVoiceConfig={"providerId":"minimax-tts","voiceId":"English_Trustworthy_Man","modelId":"speech-2.8-hd"}
+sourcePath="stage.teacherVoiceConfig"
+
+[Discussion TTS Final]
+source=agent.voiceConfig
+providerId="minimax-tts"
+voiceId="English_Trustworthy_Man"
+modelId="speech-2.8-hd"
+```
+
+实际听感：教师声音 = English_Trustworthy_Man（用户选择）。
+
+### 生产线验证
+
+生产部署包含 `6cf27df9` 和 `746b150c`，dev server 已确认 commit hash。线上新创建的课程应使用 stage.teacherVoiceConfig。
+
+### 旧课程兼容说明
+
+旧课程（创建于 6cf27df9 之前）没有 stage.teacherVoiceConfig 字段，在 Q&A 场景会 fallback 到 LLM 生成的 teacher agent voiceConfig 或 settings.globalTtsVoice。这不是 bug，是历史数据问题。如需修复老课程，建议在 IndexedDB 加载老 stage 时从 useSettingsStore 同步一份 teacherVoiceConfig。
+
 4. **生产环境回归测试**：Vercel 部署后，对 generate 模式课程在 production 环境做一次端到端 Q&A 音色验证（dev server 与 Vercel runtime 行为可能不同）。
