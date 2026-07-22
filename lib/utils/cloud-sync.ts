@@ -25,8 +25,12 @@ async function collectStageData(stageId: string) {
   // into valid-looking seq values, and we never want to upload that.
   const { orderSceneRecordsForDisplay } = await import('./scene-order');
   const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
+  // MUST use prefer: 'createdAt' — local IndexedDB seq may be poisoned
+  // by older migrations. Default 'auto' mode would trust that poisoned
+  // seq and re-upload the broken order to cloud. Force the recovery to
+  // consult createdAt/updatedAt/id before uploading to cloud.
   const { ordered: scenes, source: orderingSource, duplicateIdsRemoved } =
-    orderSceneRecordsForDisplay(rawScenes);
+    orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' });
 
   const [stage, outlines] = await Promise.all([
     db.stages.get(stageId),

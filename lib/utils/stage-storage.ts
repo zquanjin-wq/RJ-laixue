@@ -142,8 +142,14 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     // The returned array is deduped by id and has seq=order=index normalized.
     const { orderSceneRecordsForDisplay } = await import('./scene-order');
     const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
+    // MUST pass prefer: 'createdAt' — local IndexedDB seq may be poisoned
+    // by older migrations that wrote seq=0,1,2... based on a corrupted
+    // `order` field. Default 'auto' mode would trust that poisoned seq
+    // and refuse to repair it. Force the recovery to consult
+    // createdAt/updatedAt/id and ignore seq entirely. This matches the
+    // v14 migration and the ?repairOrder=createdAt entry point.
     const { ordered: scenesOrdered, source, duplicateIdsRemoved } =
-      orderSceneRecordsForDisplay(rawScenes);
+      orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' });
     if (duplicateIdsRemoved.length > 0) {
       log.warn('[loadStageData] Duplicate scene ids removed', {
         stageId,
@@ -314,7 +320,11 @@ export async function getFirstSlideByStages(
   try {
     await Promise.all(
       stageIds.map(async (stageId) => {
-        const scenes = await db.scenes.where('stageId').equals(stageId).sortBy('seq');
+        // Use the trusted comparator instead of plain sortBy('seq') — local
+        // IndexedDB seq may be poisoned by older migrations.
+        const { orderSceneRecordsForDisplay } = await import('./scene-order');
+        const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
+        const scenes = orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' }).ordered;
         const firstSlide = scenes.find((s) => s.content?.type === 'slide');
         if (firstSlide && firstSlide.content.type === 'slide') {
           const slide = structuredClone(firstSlide.content.canvas);

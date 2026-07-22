@@ -678,7 +678,12 @@ export async function importDatabase(data: {
  * Get all scenes for a course
  */
 export async function getScenesByStageId(stageId: string): Promise<SceneRecord[]> {
-  return db.scenes.where('stageId').equals(stageId).sortBy('seq');
+  // Use the trusted comparator instead of plain sortBy('seq') — local
+  // IndexedDB seq may be poisoned by older migrations. Force recovery
+  // to consult createdAt/updatedAt/id before returning.
+  const { orderSceneRecordsForDisplay } = await import('./scene-order');
+  const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
+  return orderSceneRecordsForDisplay(rawScenes, { prefer: 'createdAt' }).ordered;
 }
 
 /**
