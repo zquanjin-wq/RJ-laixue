@@ -13,6 +13,7 @@ import { createSelectors } from '@/lib/utils/create-selectors';
 import type { ChatSession } from '@/lib/types/chat';
 import type { SceneOutline } from '@/lib/types/generation';
 import { createLogger } from '@/lib/logger';
+import { getDisplayOrderedScenes } from '@/lib/utils/scene-order';
 import { useCanvasStore } from '@/lib/store/canvas';
 import { migrateScene } from '@/lib/edit/slide-schema';
 
@@ -164,18 +165,14 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     // a schemaVersion (API / snapshot / legacy) is normalized once at
     // the store boundary.
     const migrated = scenes.map(migrateScene);
+    // IMPORTANT: store scenes in original array order — never reorder here.
+    // Reordering would pollute IndexedDB and break left-nav / playback order.
     set({ scenes: migrated });
-    // Auto-select first scene (by order) if no current scene.
-    // Sort ensures we pick order=0 even if the input array is unsorted.
+    // Auto-select first display scene if no current scene.
+    // Use safe ordering: only trust order field when complete + unique.
     if (!get().currentSceneId && migrated.length > 0) {
-      const firstByOrder = migrated
-        .map((s, idx) => ({ s, index: idx }))
-        .sort((a, b) => {
-          const ao = typeof a.s.order === 'number' ? a.s.order : a.index;
-          const bo = typeof b.s.order === 'number' ? b.s.order : b.index;
-          return ao - bo;
-        })[0].s;
-      set({ currentSceneId: firstByOrder.id });
+      const displayScenes = getDisplayOrderedScenes(migrated);
+      set({ currentSceneId: displayScenes[0].id });
     }
     debouncedSave();
   },

@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth/use-auth';
 import { useMobileDetection } from '@/lib/hooks/use-mobile-detection';
 import { useRouter } from 'next/navigation';
 import type { Scene } from '@/lib/types/stage';
+import { getDisplayOrderedScenes, getOrderSortDiagnostic } from '@/lib/utils/scene-order';
 
 const log = createLogger('Classroom');
 
@@ -153,17 +154,13 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         const storeState = useStageStore.getState();
         const rawScenes = storeState.scenes;
 
-        // Stable sort by order; missing order falls back to original array index.
-        const sortedScenes = rawScenes
-          .map((scene, idx) => ({ scene, index: idx }))
-          .sort((a, b) => {
-            const ao = typeof a.scene.order === 'number' ? a.scene.order : a.index;
-            const bo = typeof b.scene.order === 'number' ? b.scene.order : b.index;
-            return ao - bo;
-          })
-          .map((item) => item.scene);
+        // Safe ordering: only sort by order when ALL scenes have valid,
+        // unique order values. Otherwise preserve original array order
+        // (the real display sequence from server / IndexedDB).
+        const displayScenes = getDisplayOrderedScenes(rawScenes);
+        const orderDiag = getOrderSortDiagnostic(rawScenes, displayScenes);
 
-        const sortedFirst = sortedScenes[0];
+        const displayFirst = displayScenes[0];
         const isEditorMode = editorAutoOpen;
         const isShareMode = readOnlyShare;
         const isLearnerEntry = !isEditorMode && (!canSave || isShareMode);
@@ -173,31 +170,31 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
 
         // Priority 1: explicit sceneId from URL
         if (explicitSceneId) {
-          const valid = sortedScenes.some((s) => s.id === explicitSceneId);
+          const valid = displayScenes.some((s) => s.id === explicitSceneId);
           if (valid) {
             selectedInitialSceneId = explicitSceneId;
             reason = 'explicit sceneId from URL';
           } else {
             // Invalid sceneId — fallback to default
-            selectedInitialSceneId = sortedFirst?.id ?? null;
+            selectedInitialSceneId = displayFirst?.id ?? null;
             reason = 'fallback first scene (invalid explicit sceneId)';
           }
         }
         // Priority 2: editor mode may resume last position
         else if (isEditorMode && storeState.currentSceneId) {
-          const exists = sortedScenes.some((s) => s.id === storeState.currentSceneId);
+          const exists = displayScenes.some((s) => s.id === storeState.currentSceneId);
           if (exists) {
             selectedInitialSceneId = storeState.currentSceneId;
             reason = 'editor currentSceneId';
           } else {
             // Stale currentSceneId (scene was deleted) — fallback
-            selectedInitialSceneId = sortedFirst?.id ?? null;
+            selectedInitialSceneId = displayFirst?.id ?? null;
             reason = 'fallback first scene (stale editor currentSceneId)';
           }
         }
         // Priority 3: learner / share / open → always start from beginning
         else {
-          selectedInitialSceneId = sortedFirst?.id ?? null;
+          selectedInitialSceneId = displayFirst?.id ?? null;
           reason = isLearnerEntry
             ? 'learner/share default first scene'
             : 'fallback first scene';
@@ -208,7 +205,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           useStageStore.setState({ currentSceneId: selectedInitialSceneId });
         }
 
-        const selectedScene = sortedScenes.find((s) => s.id === selectedInitialSceneId);
+        const selectedScene = displayScenes.find((s) => s.id === selectedInitialSceneId);
 
         log.info('[CLASSROOM INIT][Initial Scene]', {
           stageId: classroomId,
@@ -216,16 +213,23 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           isShareMode,
           isLearnerEntry,
           explicitSceneId,
-          explicitSceneIdValid: explicitSceneId ? sortedScenes.some((s) => s.id === explicitSceneId) : undefined,
+          explicitSceneIdValid: explicitSceneId ? displayScenes.some((s) => s.id === explicitSceneId) : undefined,
           restoredCurrentSceneId: storeState.currentSceneId, // value BEFORE our override
           selectedInitialSceneId,
           selectedInitialSceneTitle: selectedScene?.title,
           selectedInitialSceneOrder: selectedScene?.order,
-          sortedFirstSceneId: sortedFirst?.id,
-          sortedFirstSceneTitle: sortedFirst?.title,
-          sortedFirstSceneOrder: sortedFirst?.order,
-          totalScenes: sortedScenes.length,
+          displayFirstSceneId: displayFirst?.id,
+          displayFirstSceneTitle: displayFirst?.title,
+          displayFirstSceneOrder: displayFirst?.order,
+          totalScenes: displayScenes.length,
           reason,
+          // ── Order sort diagnostics ──
+          rawSceneTitles: rawScenes.slice(0, 10).map((s) => s.title),
+          rawSceneOrders: rawScenes.slice(0, 10).map((s) => s.order),
+          displaySceneTitles: displayScenes.slice(0, 10).map((s) => s.title),
+          displaySceneOrders: displayScenes.slice(0, 10).map((s) => s.order),
+          orderSortApplied: orderDiag.orderSortApplied,
+          orderSortSkippedReason: orderDiag.orderSortSkippedReason,
         });
       }
 
@@ -243,17 +247,10 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
               // way in, same as the store's setScenes/loadFromStorage paths —
               // server snapshots predate the schema field.
               const migrated = (scenes as Scene[]).map(migrateScene);
-              const sortedMigrated = migrated
-                .map((s, idx) => ({ s, index: idx }))
-                .sort((a, b) => {
-                  const ao = typeof a.s.order === 'number' ? a.s.order : a.index;
-                  const bo = typeof b.s.order === 'number' ? b.s.order : b.index;
-                  return ao - bo;
-                })
-                .map((item) => item.s);
+              const displayMigrated = getDisplayOrderedScenes(migrated);
               useStageStore.setState({
                 scenes: migrated,
-                currentSceneId: sortedMigrated[0]?.id ?? null,
+                currentSceneId: displayMigrated[0]?.id ?? null,
                 // Match `loadFromStorage` semantics: mode is transient UI
                 // state, not persisted with the stage. Reset on every
                 // classroom load so SPA navigation doesn't carry Pro
@@ -287,14 +284,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
             if (json.success && courseData?.stage) {
               const { stage, scenes = [], outlines = [] } = courseData;
               const migrated = (scenes as Scene[]).map(migrateScene);
-              const sortedMigrated = migrated
-                .map((s, idx) => ({ s, index: idx }))
-                .sort((a, b) => {
-                  const ao = typeof a.s.order === 'number' ? a.s.order : a.index;
-                  const bo = typeof b.s.order === 'number' ? b.s.order : b.index;
-                  return ao - bo;
-                })
-                .map((item) => item.s);
+              const displayMigrated = getDisplayOrderedScenes(migrated);
               useStageStore.getState().setStage(stage);
               // Hydrate generated agents from cloud course into IndexedDB + registry
               if (stage.generatedAgentConfigs?.length) {
@@ -305,7 +295,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
               useStageStore.setState({
                 scenes: migrated,
                 outlines,
-                currentSceneId: sortedMigrated[0]?.id ?? null,
+                currentSceneId: displayMigrated[0]?.id ?? null,
                 mode: 'playback',
                 generationComplete: true,
                 generatingOutlines: [],
