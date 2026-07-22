@@ -208,17 +208,29 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         const { orderSceneRecordsForDisplay } = await import('@/lib/utils/scene-order');
         const { db: dbRef } = await import('@/lib/utils/database');
         const dbRawScenes = await dbRef.scenes.where('stageId').equals(classroomId).toArray();
-        const beforeTitles = dbRawScenes.slice(0, 10).map((s: { title?: string }) => s.title);
-        const { ordered: repaired } = orderSceneRecordsForDisplay(dbRawScenes);
-        const afterTitles = repaired.slice(0, 10).map((s: { title?: string }) => s.title);
+        const first10Before = dbRawScenes.slice(0, 10).map((s: { id: string; title?: string; order?: number | null; seq?: number | null; createdAt?: number }) => ({
+          id: s.id, title: s.title, order: s.order, seq: s.seq, createdAt: s.createdAt,
+        }));
+        // MUST pass prefer: 'createdAt' — auto mode would still trust the
+        // poisoned seq=0,1,2... that v13 left behind. We force the recovery
+        // to consult createdAt/updatedAt/id and ignore seq entirely.
+        const { ordered: repaired, source: repairSource, duplicateIdsRemoved: dupIds } =
+          orderSceneRecordsForDisplay(dbRawScenes, { prefer: 'createdAt' });
+        const first10After = repaired.slice(0, 10).map((s: { id: string; title?: string; order?: number | null; seq?: number | null; createdAt?: number }) => ({
+          id: s.id, title: s.title, order: s.order, seq: s.seq, createdAt: s.createdAt,
+        }));
         log.info('[ORDER REPAIR][Before]', {
           stageId: classroomId,
-          first10: beforeTitles,
+          repairSource,
+          beforeCount: dbRawScenes.length,
+          first10Before,
         });
         log.info('[ORDER REPAIR][After]', {
           stageId: classroomId,
-          first10: afterTitles,
-          duplicateIdsRemoved: dbRawScenes.length - repaired.length,
+          repairSource,
+          afterCount: repaired.length,
+          duplicateIdsRemoved: dupIds.length,
+          first10After,
         });
         // Normalize to Scene[] for the store
         const { migrateScene } = await import('@/lib/edit/slide-schema');

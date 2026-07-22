@@ -231,10 +231,13 @@ export async function importCourseFromCloud(courseId: string) {
   const data = json.data;
   if (!data?.data) throw new Error('课程数据不完整');
   const { stage, scenes, outlines } = data.data;
-  // FORCE seq/order = array index on import. We trust the cloud array order
-  // (whichever way the server has stored it) over any seq/order fields that
-  // might be embedded in the records. This is the only way to repair cloud
-  // JSON that was uploaded by older code paths that scrambled the order.
+  // Force seq/order = array index on import. This repairs ONLY the case
+  // where the cloud array order is correct but the embedded seq/order
+  // fields inside each record are stale/wrong. It does NOT repair a
+  // cloud array that is itself in the wrong order — for that, use the
+  // ?repairOrder=createdAt entry on the classroom page (which calls
+  // orderSceneRecordsForDisplay with prefer: 'createdAt') or run a
+  // server-side repair script.
   const scenesWithSeq = (scenes as Array<Record<string, unknown>>).map(
     (s, i) => ({ ...s, order: i, seq: i }),
   );

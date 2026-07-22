@@ -508,12 +508,18 @@ class MAICDatabase extends Dexie {
     // code (sortBy('seq'), collectStageData) faithfully reproduces.
     //
     // v14 re-recovers seq using the trusted comparator in
-    // lib/utils/scene-order.ts (seq → createdAt → updatedAt → id), dedups by
-    // id, and normalizes seq=order=array-index for every record.
+    // lib/utils/scene-order.ts with `prefer: 'createdAt'` — this **explicitly
+    // ignores seq** because seq itself was poisoned by v13. Sort priority:
+    // createdAt → updatedAt → id. Dedups by id. Normalizes seq=order=index.
     //
-    // This is the LAST resort for browser-side data recovery. Cloud course
-    // JSON is recovered separately by re-saving with `collectStageData`
-    // (sortBy('seq') is correct once local seq is recovered).
+    // MUST pass prefer: 'createdAt' — default 'auto' would still pick 'seq'
+    // for any course where seq looks valid (which is exactly the poisoned
+    // state v13 left behind).
+    //
+    // Every stage gets delete + bulkPut unconditionally. We can't rely on
+    // "source !== 'seq'" to skip writes because the goal of v14 is precisely
+    // to overwrite the poisoned seq=0,1,2... with the freshly recovered
+    // ordering.
     this.version(14)
       .stores({
         stages: 'id, updatedAt',
@@ -532,6 +538,8 @@ class MAICDatabase extends Dexie {
       })
       .upgrade(async (tx) => {
         const { orderSceneRecordsForDisplay } = await import('./scene-order');
+        const { createLogger } = await import('@/lib/logger');
+        const v14Log = createLogger('DB Migration v14');
         const table = tx.table('scenes');
         const all = (await table.toArray()) as Array<{
           id: string;
@@ -548,12 +556,48 @@ class MAICDatabase extends Dexie {
           if (!byStage.has(rec.stageId)) byStage.set(rec.stageId, []);
           byStage.get(rec.stageId)!.push(rec);
         }
+        let totalReordered = 0;
+        let totalDuplicatesRemoved = 0;
         for (const [stageId, list] of byStage) {
-          const { ordered } = orderSceneRecordsForDisplay(list);
-          // Delete old rows first (in case dedup removed some) then re-put.
+          const before = list.slice(0, 10).map((s) => ({
+            id: s.id,
+            title: s.title,
+            order: s.order,
+            seq: s.seq,
+            createdAt: s.createdAt,
+          }));
+          const result = orderSceneRecordsForDisplay(list, {
+            prefer: 'createdAt',
+          });
+          totalDuplicatesRemoved += result.duplicateIdsRemoved.length;
+          const after = result.ordered.slice(0, 10).map((s) => ({
+            id: s.id,
+            title: s.title,
+            order: s.order,
+            seq: s.seq,
+            createdAt: s.createdAt,
+          }));
+          v14Log.info('[v14 Migration]', {
+            stageId,
+            source: result.source,
+            beforeCount: list.length,
+            afterCount: result.ordered.length,
+            first10Before: before,
+            first10After: after,
+          });
+          // Unconditional delete + bulkPut: v14 always rewrites seq/order,
+          // because the goal is to overwrite v13's poisoned seq.
           await table.where('stageId').equals(stageId).delete();
-          await table.bulkPut(ordered as Array<Record<string, unknown>>);
+          await table.bulkPut(
+            result.ordered as Array<Record<string, unknown>>,
+          );
+          totalReordered += list.length;
         }
+        v14Log.info('[v14 Migration] Complete', {
+          totalStages: byStage.size,
+          totalReordered,
+          totalDuplicatesRemoved,
+        });
       });
   }
 }

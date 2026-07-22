@@ -1,4 +1,4 @@
-/**
+﻿/**
  * scene-order.ts
  *
  * Safe scene ordering utility.
@@ -132,6 +132,18 @@ function sceneRecordComparator<
  *
  * @param logWarning optional callback for diagnostics (duplicate titles etc.)
  */
+export interface OrderSceneRecordsOptions {
+  /**
+   * Sort priority:
+   *   - 'auto'      : seq (if all valid+unique) -> createdAt -> updatedAt -> id
+   *   - 'createdAt' : force createdAt -> updatedAt -> id, ignore seq entirely
+   */
+  prefer?: 'auto' | 'createdAt';
+  /** When true, the function will also sort by 'order' if it's trustworthy.
+   *  Default false (order is untrustworthy in historical data). */
+  trustOrder?: boolean;
+}
+
 export function orderSceneRecordsForDisplay<
   T extends {
     id: string;
@@ -141,7 +153,7 @@ export function orderSceneRecordsForDisplay<
     updatedAt?: number;
     title?: string;
   },
->(scenes: T[]): {
+>(scenes: T[], options: OrderSceneRecordsOptions = {}): {
   ordered: T[];
   source: DisplayOrderSource;
   duplicateIdsRemoved: string[];
@@ -150,18 +162,56 @@ export function orderSceneRecordsForDisplay<
     return { ordered: [], source: 'seq', duplicateIdsRemoved: [] };
   }
 
-  // Tier 1 source: seq — only trust it if EVERY scene has a valid numeric seq.
-  const allHaveValidSeq = scenes.every(
-    (s) => typeof s.seq === 'number' && Number.isFinite(s.seq),
-  );
-  const uniqueSeqs = new Set(scenes.map((s) => s.seq as number)).size;
-  const source: DisplayOrderSource = allHaveValidSeq && uniqueSeqs === scenes.length
-    ? 'seq'
-    : 'createdAt';
+  // Source determination depends on options.prefer:
+  //   - 'createdAt' : force ignore seq, recover from timestamps
+  //   - 'auto' (default) : trust seq only if all valid+unique
+  const prefer = options.prefer ?? 'auto';
+  let source: DisplayOrderSource;
+
+  if (prefer === 'createdAt') {
+    if (scenes.every((s) => typeof s.createdAt === 'number')) {
+      source = 'createdAt';
+    } else if (scenes.every((s) => typeof s.updatedAt === 'number')) {
+      source = 'updatedAt';
+    } else {
+      source = 'id';
+    }
+  } else {
+    // auto mode
+    const allHaveValidSeq = scenes.every(
+      (s) => typeof s.seq === 'number' && Number.isFinite(s.seq),
+    );
+    const uniqueSeqs = new Set(scenes.map((s) => s.seq as number)).size;
+    if (allHaveValidSeq && uniqueSeqs === scenes.length) {
+      source = 'seq';
+    } else if (scenes.every((s) => typeof s.createdAt === 'number')) {
+      source = 'createdAt';
+    } else if (scenes.every((s) => typeof s.updatedAt === 'number')) {
+      source = 'updatedAt';
+    } else {
+      source = 'id';
+    }
+  }
+
+  // When prefer='createdAt', build a strict comparator that ignores seq entirely.
+  const strictCreatedAtComparator = (a: T, b: T): number => {
+    const aCreated = typeof a.createdAt === 'number' ? a.createdAt : Number.MAX_SAFE_INTEGER;
+    const bCreated = typeof b.createdAt === 'number' ? b.createdAt : Number.MAX_SAFE_INTEGER;
+    if (aCreated !== bCreated) return aCreated - bCreated;
+
+    const aUpdated = typeof a.updatedAt === 'number' ? a.updatedAt : Number.MAX_SAFE_INTEGER;
+    const bUpdated = typeof b.updatedAt === 'number' ? b.updatedAt : Number.MAX_SAFE_INTEGER;
+    if (aUpdated !== bUpdated) return aUpdated - bUpdated;
+
+    return String(a.id).localeCompare(String(b.id));
+  };
 
   // Dedup by id (keep the first occurrence after sort, so duplicates
   // dropped are the later-sorted ones — usually the corrupted ones).
-  const sorted = [...scenes].sort(sceneRecordComparator);
+  const sorted =
+    prefer === 'createdAt'
+      ? [...scenes].sort(strictCreatedAtComparator)
+      : [...scenes].sort(sceneRecordComparator);
   const seenIds = new Set<string>();
   const ordered: T[] = [];
   const duplicateIdsRemoved: string[] = [];
