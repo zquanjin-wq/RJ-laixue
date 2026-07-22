@@ -287,6 +287,7 @@ export function MobilePlayer({
             sceneId={current.sceneId}
             stageId={courseId}
             audioSourceField={current.audioSourceField}
+            audioSegments={current.audioSegments}
           />
 
           <div className="px-4 py-3 flex items-center justify-between border-t">

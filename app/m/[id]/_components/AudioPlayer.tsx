@@ -5,19 +5,16 @@
  *
  * Mini audio player for one chapter on mobile.
  *
- * Primary path: play pre-rendered audio from speechAction.audioUrl
- * (set during course publish via publishSceneAudioAssets).
- *
- * If audioUrl is missing, this means the course was not properly
- * published with audio assets. We show a clear error instead of
- * silently falling back to real-time TTS — TTS generation belongs
- * in the admin publish pipeline, not on the learner's device.
+ * Primary path: play audio segments sequentially.
+ *   - If scene.narrationAudioUrl exists → single segment (full chapter)
+ *   - Otherwise → one segment per speechAction.audioUrl, auto-advances
  *
  * Error states are classified into specific types so the learner (and
  * admin debugging via console) knows exactly what went wrong.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { MobileAudioSegment } from '@/lib/mobile/scene-helpers';
 
 // ─── Error classification ───────────────────────────────────────
 
@@ -31,11 +28,12 @@ export type MobileAudioErrorType =
 const ERROR_MESSAGES: Record<MobileAudioErrorType, string> = {
   'missing-audio-url': '该课程语音资源尚未就绪，请联系管理员重新发布',
   'audio-load-error': '音频加载失败，请检查网络后重试',
-  'network-error': '网络异常，无法加载语音',
+  'network-error': '请点击播放按钮继续收听',
   'unsupported-format': '音频格式不支持，请尝试其他浏览器',
 };
 
 interface AudioPlayerProps {
+  /** Legacy: single audio URL (backward compat, = segments[0]?.audioUrl). */
   audioUrl?: string;
   /** Full chapter narration text — kept for display/logging only. */
   fallbackText: string;
@@ -50,6 +48,8 @@ interface AudioPlayerProps {
   stageId?: string;
   /** Which field provided the audioUrl — for diagnostics. */
   audioSourceField?: string;
+  /** Audio segments for sequential playback (primary mobile path). */
+  audioSegments?: MobileAudioSegment[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -72,12 +72,30 @@ export function AudioPlayer({
   sceneId,
   stageId,
   audioSourceField,
+  audioSegments,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [error, setError] = useState<MobileAudioErrorType | null>(null);
+
+  // ── Segment state ──
+  const segments = audioSegments && audioSegments.length > 0
+    ? audioSegments
+    : (audioUrl ? [{ id: 'legacy', audioUrl, audioId: undefined, text: fallbackText, order: 0, sourceField: audioSourceField ?? 'SpeechAction.audioUrl (fallback)' }] : []);
+  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
+  const hasUserInteractedRef = useRef(false);
+
+  const currentSegment = segments[currentSegmentIndex] ?? null;
+  const currentAudioUrl = currentSegment?.audioUrl || audioUrl;
+  const totalSegments = segments.length;
+
+  // Reset segment index when segments array changes (chapter switch).
+  useEffect(() => {
+    setCurrentSegmentIndex(0);
+    hasUserInteractedRef.current = false;
+  }, [segments]);
 
   // ─── Dev log: Audio Source diagnostics ──────────────────────
   useEffect(() => {
@@ -86,41 +104,82 @@ export function AudioPlayer({
       sceneId: sceneId ?? '(unknown)',
       sceneTitle: fallbackText.slice(0, 60),
       fallbackTextLength: fallbackText.length,
-      hasAudioUrl: !!audioUrl,
-      audioUrlLength: audioUrl?.length ?? 0,
-      audioSourceField: audioUrl
-        ? (audioSourceField ?? 'SpeechAction.audioUrl (published)')
+      hasAudioUrl: !!currentAudioUrl,
+      audioUrlLength: currentAudioUrl?.length ?? 0,
+      audioSourceField: currentAudioUrl
+        ? (currentSegment?.sourceField ?? audioSourceField ?? 'SpeechAction.audioUrl (published)')
         : '(none — publish gap)',
+      audioSegmentCount: totalSegments,
+      currentSegmentIndex,
+      currentSegmentSourceField: currentSegment?.sourceField ?? '(none)',
       errorType: error ?? '(none)',
       timestamp: new Date().toISOString(),
     }));
-  }, [stageId, sceneId, audioUrl, fallbackText, error, audioSourceField]);
+  }, [stageId, sceneId, currentAudioUrl, fallbackText, error, audioSourceField, currentSegment, totalSegments, currentSegmentIndex]);
 
-  // ─── If no audioUrl, set error immediately (no auto-TTS) ─────
+  // ─── If no audio at all, set error immediately ─────────────
   useEffect(() => {
-    if (!audioUrl) {
+    if (!currentAudioUrl || totalSegments === 0) {
       setError('missing-audio-url');
       console.warn('[MOBILE LEARN][Audio Missing]', JSON.stringify({
         stageId: stageId ?? '(unknown)',
         sceneId: sceneId ?? '(unknown)',
         fallbackTextLength: fallbackText.length,
+        audioSegmentCount: totalSegments,
         timestamp: new Date().toISOString(),
       }));
     } else {
       setError(null);
     }
-  }, [audioUrl]);
+  }, [currentAudioUrl, totalSegments]);
 
-  // ─── Play / Pause toggle ───────────────────────────────────
+  // ─── Advance to next segment (or fire onEnded if last) ──────
+  const advanceToNextSegment = useCallback(() => {
+    if (currentSegmentIndex < totalSegments - 1) {
+      const nextIdx = currentSegmentIndex + 1;
+      console.log('[MOBILE AUDIO][Segment Ended]', JSON.stringify({
+        sceneId: sceneId ?? '(unknown)',
+        segmentIndex: currentSegmentIndex,
+        segmentCount: totalSegments,
+        hasNextSegment: true,
+        nextSegmentIndex: nextIdx,
+      }));
+
+      console.log('[MOBILE AUDIO][Segment Switch]', JSON.stringify({
+        sceneId: sceneId ?? '(unknown)',
+        fromSegmentIndex: currentSegmentIndex,
+        toSegmentIndex: nextIdx,
+        nextAudioUrlLength: segments[nextIdx]?.audioUrl?.length ?? 0,
+        shouldAutoContinue: hasUserInteractedRef.current,
+      }));
+
+      setCurrentSegmentIndex(nextIdx);
+      // After state update, the <audio key={currentAudioUrl}> will remount.
+      // If user was playing, we'll auto-play the new segment in onLoadedMetadata.
+    } else {
+      // Last segment done → chapter complete
+      console.log('[MOBILE AUDIO][Chapter Ended]', JSON.stringify({
+        sceneId: sceneId ?? '(unknown)',
+        segmentCount: totalSegments,
+      }));
+      setPlaying(false);
+      onEnded();
+    }
+  }, [currentSegmentIndex, totalSegments, sceneId, segments, onEnded]);
+
+  // ─── Play / Pause toggle (user click) ───────────────────────
   const togglePlay = useCallback(() => {
     const el = audioRef.current;
     if (!el) return;
 
+    hasUserInteractedRef.current = true;
+
     if (el.paused) {
       console.log('[MOBILE AUDIO][Before Play (user click)]', JSON.stringify({
         sceneId: sceneId ?? '(unknown)',
+        segmentIndex: currentSegmentIndex,
         audioUrl: el.src?.slice(0, 80),
-        audioUrlLength: audioUrl?.length ?? 0,
+        audioUrlLength: currentAudioUrl?.length ?? 0,
         hasAudioElement: !!el,
         paused: el.paused,
         readyState: el.readyState,
@@ -132,6 +191,7 @@ export function AudioPlayer({
       el.play().then(() => {
         console.log('[MOBILE AUDIO][Play Success (user click)]', JSON.stringify({
           sceneId: sceneId ?? '(unknown)',
+          segmentIndex: currentSegmentIndex,
           audioUrl: el.src?.slice(0, 80),
           currentTime: el.currentTime,
           duration: el.duration,
@@ -142,6 +202,7 @@ export function AudioPlayer({
       }).catch((err) => {
         console.warn('[MOBILE AUDIO][Play Failed (user click)]', JSON.stringify({
           sceneId: sceneId ?? '(unknown)',
+          segmentIndex: currentSegmentIndex,
           audioUrl: el.src?.slice(0, 80),
           errorName: err instanceof Error ? err.name : String(err),
           errorMessage: err instanceof Error ? err.message : String(err),
@@ -151,6 +212,7 @@ export function AudioPlayer({
         }));
         const msg = String(err).toLowerCase();
         if (msg.includes('not allowed')) {
+          // Autoplay blocked — show gentle prompt, not hard error
           setError('network-error');
         } else if (msg.includes('not supported') || msg.includes('format')) {
           setError('unsupported-format');
@@ -161,7 +223,7 @@ export function AudioPlayer({
     } else {
       el.pause();
     }
-  }, [sceneId, audioUrl]);
+  }, [sceneId, currentAudioUrl, currentSegmentIndex]);
 
   // Apply rate to the audio element whenever it changes.
   useEffect(() => {
@@ -174,8 +236,8 @@ export function AudioPlayer({
     return () => registerAudio(null);
   }, [registerAudio]);
 
-  // === Render: No audioUrl → clear error state ===
-  if (!audioUrl) {
+  // === Render: No audio at all → clear error state ===
+  if (!currentAudioUrl || totalSegments === 0) {
     return (
       <div className="mx-auto max-w-md w-full px-4 py-4 border-t text-center">
         <p className="text-sm text-muted-foreground font-medium">
@@ -196,18 +258,26 @@ export function AudioPlayer({
     );
   }
 
-  // === Render: Normal player with audioUrl ===
+  // === Render: Normal player with segmented audio ===
   return (
     <div className="mx-auto max-w-md w-full px-4 py-3 border-t bg-background pb-safe">
+      {/* Segment indicator (hidden when single segment) */}
+      {totalSegments > 1 && (
+        <div className="text-[10px] text-muted-foreground/70 text-right mb-1 tabular-nums">
+          片段 {currentSegmentIndex + 1}/{totalSegments}
+        </div>
+      )}
+
       <audio
-        key={audioUrl}
+        key={`${currentSegmentIndex}:${currentAudioUrl}`}
         ref={audioRef}
-        src={audioUrl}
+        src={currentAudioUrl}
         preload="metadata"
         onLoadStart={(e) => {
           const el = e.currentTarget;
           console.log('[MOBILE AUDIO][loadstart]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             audioUrl: el.src?.slice(0, 80),
             readyState: el.readyState,
             networkState: el.networkState,
@@ -218,6 +288,7 @@ export function AudioPlayer({
           const el = e.currentTarget;
           console.log('[MOBILE AUDIO][loadedmetadata]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             audioUrl: el.src?.slice(0, 80),
             duration: el.duration,
             readyState: el.readyState,
@@ -226,53 +297,23 @@ export function AudioPlayer({
           }));
           setDuration(el.duration || 0);
           el.playbackRate = rate;
-          console.log('[MOBILE AUDIO][Before Play]', JSON.stringify({
-            sceneId: sceneId ?? '(unknown)',
-            audioUrl: el.src?.slice(0, 80),
-            audioUrlLength: audioUrl?.length ?? 0,
-            hasAudioElement: !!el,
-            paused: el.paused,
-            readyState: el.readyState,
-            networkState: el.networkState,
-            currentTime: el.currentTime,
-            duration: el.duration,
-            timestamp: new Date().toISOString(),
-          }));
-          el.play().then(() => {
-            console.log('[MOBILE AUDIO][Play Success]', JSON.stringify({
-              sceneId: sceneId ?? '(unknown)',
-              audioUrl: el.src?.slice(0, 80),
-              currentTime: el.currentTime,
-              duration: el.duration,
-              readyState: el.readyState,
-              networkState: el.networkState,
-              playbackRate: el.playbackRate,
-              timestamp: new Date().toISOString(),
-            }));
-          }).catch((err) => {
-            console.warn('[MOBILE AUDIO][Play Failed]', JSON.stringify({
-              sceneId: sceneId ?? '(unknown)',
-              audioUrl: el.src?.slice(0, 80),
-              errorName: err instanceof Error ? err.name : String(err),
-              errorMessage: err instanceof Error ? err.message : String(err),
-              readyState: el.readyState,
-              networkState: el.networkState,
-              timestamp: new Date().toISOString(),
-            }));
-            const msg = String(err).toLowerCase();
-            if (msg.includes('not allowed')) {
-              setError('network-error'); // autoplay blocked — treat as needs user interaction
-            } else if (msg.includes('not supported') || msg.includes('format')) {
-              setError('unsupported-format');
-            } else {
-              setError('audio-load-error');
-            }
-          });
+
+          // Auto-play this segment ONLY if user previously clicked play
+          // and we're advancing between segments (not first load).
+          if (hasUserInteractedRef.current && currentSegmentIndex > 0) {
+            el.play().catch(() => {
+              // Silently fail — user can tap play again
+              setPlaying(false);
+            });
+          }
+          // NOTE: We do NOT call el.play() on first segment load.
+          // Mobile browsers block autoplay; user must tap ▶ first.
         }}
         onCanPlay={(e) => {
           const el = e.currentTarget;
           console.log('[MOBILE AUDIO][canplay]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             audioUrl: el.src?.slice(0, 80),
             duration: el.duration,
             readyState: el.readyState,
@@ -284,6 +325,7 @@ export function AudioPlayer({
           setPlaying(true);
           console.log('[MOBILE AUDIO][playing]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             audioUrl: audioRef.current?.src?.slice(0, 80),
             currentTime: audioRef.current?.currentTime,
             duration: audioRef.current?.duration,
@@ -294,6 +336,7 @@ export function AudioPlayer({
           setPlaying(false);
           console.log('[MOBILE AUDIO][pause]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             currentTime: audioRef.current?.currentTime,
             duration: audioRef.current?.duration,
             timestamp: new Date().toISOString(),
@@ -308,16 +351,19 @@ export function AudioPlayer({
           setPlaying(false);
           console.log('[MOBILE AUDIO][ended]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             currentTime: audioRef.current?.currentTime,
             duration: audioRef.current?.duration,
             timestamp: new Date().toISOString(),
           }));
-          onEnded();
+          // Delegate to segment advancer (handles both mid-chapter + final segment)
+          advanceToNextSegment();
         }}
         onError={(e) => {
           const el = e.currentTarget;
           console.warn('[MOBILE AUDIO][error]', JSON.stringify({
             sceneId: sceneId ?? '(unknown)',
+            segmentIndex: currentSegmentIndex,
             audioUrl: el.src?.slice(0, 80),
             errorCode: el.error?.code,
             errorMessage: el.error?.message,
@@ -399,7 +445,7 @@ export function AudioPlayer({
               setError(null);
               if (audioRef.current) {
                 audioRef.current.load();
-                audioRef.current.play().catch(() => {});
+                // Don't auto-play — let user click
               }
             }}
             className="underline font-medium"

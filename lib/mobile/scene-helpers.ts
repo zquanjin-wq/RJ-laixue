@@ -9,6 +9,26 @@
 
 import type { Scene } from '@/lib/types/stage';
 
+/**
+ * One audio segment within a chapter. A chapter with multiple speech
+ * actions produces multiple segments; the mobile AudioPlayer plays them
+ * sequentially (auto-advance from segment N to N+1).
+ */
+export interface MobileAudioSegment {
+  /** Unique identifier (e.g., `${sceneId}:narration` or action id). */
+  id: string;
+  /** Audio URL for this segment (from Supabase Storage or similar). */
+  audioUrl?: string;
+  /** Audio ID (cache key). */
+  audioId?: string;
+  /** Narration text for this segment (for display/logging). */
+  text: string;
+  /** Playback order within the chapter (0-based). */
+  order: number;
+  /** Which field provided the audioUrl — for diagnostics. */
+  sourceField: string;
+}
+
 export interface MobileChapter {
   /** Scene id (stable across visits). */
   sceneId: string;
@@ -20,12 +40,14 @@ export interface MobileChapter {
   sceneType: 'slide' | 'quiz' | 'interactive' | 'pbl';
   /** Concatenated narration text from all speech actions in order. */
   text: string;
-  /** Audio URL for this chapter (narration audio or first speech fallback). */
+  /** Audio URL for this chapter (first segment's URL, for compat). */
   audioUrl?: string;
-  /** Audio ID (used as cache key). */
+  /** Audio ID (first segment's ID, for compat). */
   audioId?: string;
   /** Which field provided the audioUrl — for diagnostics. */
   audioSourceField: string;
+  /** All audio segments for sequential playback (primary mobile path). */
+  audioSegments: MobileAudioSegment[];
   /** Total seconds of audio (estimated if not pre-computed). */
   durationSec: number;
 }
@@ -103,31 +125,70 @@ function extractNarrationText(scene: Scene): string {
 }
 
 /**
- * Find audio URL for mobile podcast playback.
+ * Build audio segments for a scene — the primary mobile playback path.
  *
- * Priority (highest first):
- *   1. scene.narrationAudioUrl  — full-chapter narration audio (correct field)
- *   2. first speechAction.audioUrl — legacy fallback (per-segment, may be short)
+ * Two modes:
+ *   1. scene.narrationAudioUrl exists → single segment (full-chapter audio)
+ *   2. Otherwise → one segment per speech action with audioUrl/audioId
  *
- * Returns both the resolved URL and a source tag for diagnostics.
+ * The mobile AudioPlayer plays these segments sequentially.
  */
-function extractAudio(scene: Scene): { audioUrl?: string; audioId?: string; sourceField: string } {
-  // Priority 1: scene-level narration audio (full chapter)
+function extractAudioSegments(scene: Scene): MobileAudioSegment[] {
   const sceneRaw = scene as unknown as Record<string, unknown>;
+
+  // Mode 1: Scene-level narration audio (single full-chapter file)
   const narrationUrl = sceneRaw.narrationAudioUrl as string | undefined;
   const narrationId = sceneRaw.narrationAudioId as string | undefined;
   if (narrationUrl) {
-    return { audioUrl: narrationUrl, audioId: narrationId, sourceField: 'Scene.narrationAudioUrl' };
+    return [{
+      id: `${scene.id}:narration`,
+      audioUrl: narrationUrl,
+      audioId: narrationId,
+      text: extractNarrationText(scene),
+      order: 0,
+      sourceField: 'Scene.narrationAudioUrl',
+    }];
   }
 
-  // Priority 2: first speech action's audio (legacy / single-speech scenes)
+  // Mode 2: One segment per speech action (sequential playback)
   const actions = scene.actions ?? [];
-  for (const a of actions) {
-    if ((a as { type?: string }).type === 'speech') {
-      const url = (a as { audioUrl?: string }).audioUrl;
-      const id = (a as { audioId?: string }).audioId;
-      if (url || id) return { audioUrl: url, audioId: id, sourceField: 'SpeechAction.audioUrl (fallback)' };
-    }
+  const speechActions = actions.filter(
+    (a) => (a as { type?: string }).type === 'speech',
+  );
+
+  return speechActions
+    .map((a, idx) => {
+      const sa = a as { id?: string; audioUrl?: string; audioId?: string; text?: string };
+      return {
+        id: sa.id || `${scene.id}:seg${idx}`,
+        audioUrl: sa.audioUrl,
+        audioId: sa.audioId,
+        text: sa.text || '',
+        order: idx,
+        sourceField: sa.audioUrl ? 'SpeechAction.audioUrl (segment)' : '(no audio)',
+      } satisfies MobileAudioSegment;
+    })
+    .filter((s) => s.audioUrl || s.audioId); // only include segments that have audio
+}
+
+/**
+ * Find the primary audio URL for a chapter (backward-compat).
+ *
+ * Priority (highest first):
+ *   1. scene.narrationAudioUrl  — full-chapter narration audio
+ *   2. first speechAction.audioUrl — legacy fallback (per-segment)
+ *
+ * Also returns sourceField for diagnostics.
+ */
+function extractAudio(scene: Scene): { audioUrl?: string; audioId?: string; sourceField: string } {
+  const segments = extractAudioSegments(scene);
+  if (segments.length > 0) {
+    const first = segments[0];
+    return {
+      audioUrl: first.audioUrl,
+      audioId: first.audioId,
+      sourceField: first.sourceField,
+    };
   }
   return { sourceField: '(none)' };
 }
@@ -169,6 +230,7 @@ export function buildChapters(scenes: Scene[]): MobileChapter[] {
   const chapters = filtered
     .map((s) => {
       const audio = extractAudio(s);
+      const segments = extractAudioSegments(s);
       return {
         sceneId: s.id,
         title: s.title || `第 ${s.order + 1} 章`,
@@ -178,6 +240,7 @@ export function buildChapters(scenes: Scene[]): MobileChapter[] {
         audioUrl: audio.audioUrl,
         audioId: audio.audioId,
         audioSourceField: audio.sourceField,
+        audioSegments: segments,
       };
     })
     .map((c) => ({
