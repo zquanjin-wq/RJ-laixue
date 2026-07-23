@@ -16,6 +16,13 @@ export const API_ERROR_CODES = {
   TRANSCRIPTION_FAILED: 'TRANSCRIPTION_FAILED',
   PARSE_FAILED: 'PARSE_FAILED',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  // Auth / authorization (added 2026-07-23 for the security hardening).
+  // Used by lib/server/api-guard.ts and any caller that needs to
+  // distinguish "not signed in" from "signed in but role not allowed".
+  UNAUTHENTICATED: 'UNAUTHENTICATED',
+  FORBIDDEN: 'FORBIDDEN',
+  PROFILE_LOOKUP_FAILED: 'PROFILE_LOOKUP_FAILED',
+  SERVER_MISCONFIG: 'SERVER_MISCONFIG',
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

@@ -37,6 +37,7 @@ import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { resolveVocationalActive } from '@/lib/config/feature-flags';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 const log = createLogger('Outlines Stream');
 
 export const maxDuration = 300;
@@ -285,6 +286,14 @@ export async function POST(req: NextRequest) {
   let requirementSnippet: string | undefined;
   let resolvedModelString: string | undefined;
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // outlines-stream is the very first call in a classroom generation.
+    // Once per generation run, so the same ceiling as scene-content is fine.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-outlines-stream', 15, 30_000);
+    if (!rl.ok) return rl.response;
+
     const body = await req.json();
 
     // Get API configuration from request headers/body

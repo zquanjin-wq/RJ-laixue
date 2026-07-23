@@ -13,6 +13,7 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { AGENT_COLOR_PALETTE } from '@/lib/constants/agent-defaults';
 import { normalizeVoiceDesign } from '@/lib/audio/voice-design';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 
 const log = createLogger('Agent Profiles API');
 
@@ -45,6 +46,14 @@ export async function POST(req: NextRequest) {
   let stageName: string | undefined;
   let modelString: string | undefined;
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // agent-profiles runs once per classroom generation, alongside
+    // scene-content. 15 / 30s is comfortably above legitimate usage.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-agent-profiles', 15, 30_000);
+    if (!rl.ok) return rl.response;
+
     const body = (await req.json()) as RequestBody;
     const {
       stageInfo,

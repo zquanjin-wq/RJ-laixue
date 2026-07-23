@@ -22,6 +22,7 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { VOXCPM_AUTO_VOICE_ID, VOXCPM_TTS_PROVIDER_ID } from '@/lib/audio/voxcpm';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 
 const log = createLogger('TTS API');
 
@@ -32,6 +33,15 @@ export async function POST(req: NextRequest) {
   let ttsVoice: string | undefined;
   let audioId: string | undefined;
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // TTS is cheap but called in parallel per scene (10-30 calls per
+    // classroom). 30 calls / minute gives a 5x safety margin over the
+    // expected peak burst.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-tts', 30, 60_000);
+    if (!rl.ok) return rl.response;
+
     const body = await req.json();
     const { text, ttsModelId, ttsSpeed, ttsApiKey, ttsBaseUrl, ttsProviderOptions } = body as {
       text: string;

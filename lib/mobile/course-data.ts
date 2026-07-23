@@ -4,6 +4,24 @@
  * Server-side fetcher for a single course's full data (stage + scenes
  * + outlines). Reuses /api/courses/[id] (which uses service_role and
  * returns the full course JSON).
+ *
+ * ── SECURITY ─────────────────────────────────────────────────────
+ * THIS MODULE IS SERVER-ONLY. It reads `SUPABASE_SERVICE_ROLE_KEY`
+ * (admin key, bypasses RLS) to look up courses by id. If this file
+ * is ever imported from a 'use client' module, the service_role key
+ * will leak into the browser bundle and **anyone can read / mutate
+ * the entire courses table**. Keep it server-only.
+ *
+ * The current call graph (verified 2026-07-23):
+ *   - imported by app/m/[id]/page.tsx (RSC, server-only)
+ *   - NOT imported by any 'use client' module
+ *   - mobile player shell hands the result to MobilePlayer, which is
+ *     client-only, but it receives plain JSON (no service_role)
+ *
+ * If you need to add a new caller, prefer going through
+ * /api/courses/[id] (which now does auth + role + assignment check
+ * as of 2026-07-23) instead of importing this module directly. That
+ * way the call site never sees the service_role key at all.
  */
 
 import { createServerClient } from '@supabase/ssr';

@@ -24,6 +24,7 @@ import {
 } from '@/lib/server/provider-config';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { normalizeVoiceDesign } from '@/lib/audio/voice-design';
 import {
@@ -39,6 +40,15 @@ export async function POST(req: NextRequest) {
   let providerId: string | undefined;
   let voiceId: string | undefined;
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // Voice registration runs once per agent per provider — not a
+    // hot path. 10 / minute is a comfortable ceiling that still
+    // catches scripted abuse.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-voice', 10, 60_000);
+    if (!rl.ok) return rl.response;
+
     const body = (await req.json()) as {
       providerId?: string;
       voiceId?: string;

@@ -27,6 +27,7 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 
 const log = createLogger('Scene Actions API');
 
@@ -36,6 +37,15 @@ export async function POST(req: NextRequest) {
   let outlineTitle: string | undefined;
   let resolvedModelString: string | undefined;
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // scene-actions is called once per scene after scene-content.
+    // 15 calls / 30s is the same ceiling as scene-content so a single
+    // classroom worth of scenes fits comfortably under the limit.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-scene-actions', 15, 30_000);
+    if (!rl.ok) return rl.response;
+
     const body = await req.json();
     const {
       outline,

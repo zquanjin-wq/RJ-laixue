@@ -28,6 +28,7 @@ import type { VideoProviderId, VideoGenerationOptions } from '@/lib/media/types'
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 
 const log = createLogger('VideoGeneration API');
 
@@ -35,6 +36,16 @@ export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // Video generation is the single most expensive endpoint on this
+    // server ($1-5 per call on most providers). 3 calls / minute is
+    // the tightest limit on the stack; legitimate re-generations still
+    // work but script abuse burns the attacker's quota fast.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-video', 3, 60_000);
+    if (!rl.ok) return rl.response;
+
     const body = (await request.json()) as VideoGenerationOptions;
 
     if (!body.prompt) {

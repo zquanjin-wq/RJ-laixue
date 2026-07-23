@@ -5,6 +5,7 @@ import { type GenerateClassroomInput } from '@/lib/server/classroom-generation';
 import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('GenerateClassroom API');
@@ -14,6 +15,14 @@ export const maxDuration = 30;
 export async function POST(req: NextRequest) {
   let requirementSnippet: string | undefined;
   try {
+    // ── Auth: only signed-in teacher/admin can generate classrooms ──
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+
+    // ── Rate limit: 5 jobs / 60s per user (cost guardrail) ──
+    const rl = rateLimitByUser(auth.user.id, 'generate-classroom', 5, 60_000);
+    if (!rl.ok) return rl.response;
+
     const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;
     requirementSnippet = rawBody.requirement?.substring(0, 60);
     const body: GenerateClassroomInput = {

@@ -25,6 +25,7 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { resolveVocationalActive } from '@/lib/config/feature-flags';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 
 const log = createLogger('Scene Content API');
 
@@ -34,6 +35,15 @@ export async function POST(req: NextRequest) {
   let outlineTitle: string | undefined;
   let resolvedModelString: string | undefined;
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // scene-content is called per scene (10-30 calls per classroom).
+    // Window of 30s/15 gives headroom for legitimate batched UI
+    // flows while still blocking script abuse.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-scene-content', 15, 30_000);
+    if (!rl.ok) return rl.response;
+
     const body = await req.json();
     let {
       outline: rawOutline,

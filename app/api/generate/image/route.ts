@@ -30,6 +30,7 @@ import {
 import type { ImageProviderId, ImageGenerationOptions } from '@/lib/media/types';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
 const log = createLogger('ImageGeneration API');
@@ -38,6 +39,16 @@ export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
+    // ── Auth + rate limit ────────────────────────────────────────
+    // Image generation is one of the most expensive endpoints when
+    // auto-generation is on (10-30 images per slide-deck). 5 calls /
+    // 30s blocks bursts while allowing one classroom's worth of
+    // re-generations.
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+    const rl = rateLimitByUser(auth.user.id, 'generate-image', 5, 30_000);
+    if (!rl.ok) return rl.response;
+
     const body = (await request.json()) as ImageGenerationOptions;
 
     if (!body.prompt) {
