@@ -29,6 +29,22 @@ interface SceneSidebarProps {
   readonly isCourseComplete?: boolean;
 }
 
+// ── Scene order invariant (must not be violated) ─────────────────
+// 页面顺序由 AI 生成时确定，seq 字段是唯一可信的顺序依据。
+// 普通编辑模式不支持拖拽调整页面顺序；如需调整请使用「专业模式」。
+// 顺序保障机制：loadStageData 负责在首次读取时修复历史坏数据并写回 trusted 标记，
+// 后续读取统一走 prefer='auto'（信任 seq）。
+// 请勿在此处对 scenes 做任何二次排序（.sort / sortBy）。
+//
+// This component is the playback-mode left rail (view=1, share=1,
+// learner, open). It renders scenes in the array order it receives
+// from the store — that order is already authoritative because
+// loadStageData wrote seq=index on every save and flipped
+// stage.sceneOrderTrusted=true. Do not introduce any drag / reorder
+// logic here; if the page sequence ever needs to change, do it in
+// Pro Mode (components/edit/SlideNavRail) and let the next save
+// re-write seq.
+
 const DEFAULT_WIDTH = 220;
 const MIN_WIDTH = 170;
 const MAX_WIDTH = 400;

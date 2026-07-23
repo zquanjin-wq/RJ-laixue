@@ -35,6 +35,18 @@ const RAIL_MAX_PX = 360;
  * per-row chrome (rejected `EditModeSidebar` pattern). Drag uses an
  * explicit grip handle on the thumb so the whole tile remains
  * click-to-switch.
+ *
+ * ── Scene order invariant (must not be violated) ─────────────────
+ * 页面顺序由 AI 生成时确定，seq 字段是唯一可信的顺序依据。
+ * 普通编辑模式不支持拖拽调整页面顺序；如需调整请使用「专业模式」。
+ * 顺序保障机制：loadStageData 负责在首次读取时修复历史坏数据并写回 trusted 标记，
+ * 后续读取统一走 prefer='auto'（信任 seq）。
+ * 请勿在此处对 scenes 做任何二次排序（.sort / sortBy）。
+ *
+ * Pro mode IS the one place users can reorder (see `onReorderIds` +
+ * Reorder.Group below). Do not copy this Reorder pattern into any
+ * non-Pro component — playback / view / share / mobile renders must
+ * pass `scenes` through unchanged.
  */
 export function SlideNavRail() {
   const { t } = useI18n();

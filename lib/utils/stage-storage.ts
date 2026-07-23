@@ -41,6 +41,13 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
     const now = Date.now();
 
     // Save to stages table
+    // IMPORTANT: keep this whitelist in sync with `StageRecord` in
+    // lib/utils/database.ts. We use `put` here so newly added optional
+    // fields (e.g. `sceneOrderTrusted`, `sceneOrderRepairedAt`) MUST be
+    // forwarded explicitly — otherwise setScenes / self-heal /
+    // ?repairOrder=createdAt set trusted=true → debouncedSave fires →
+    // saveStageData writes stage without the flag → flag is lost → next
+    // read re-runs the recovery path unnecessarily.
     await db.stages.put({
       id: stageId,
       name: data.stage.name || 'Untitled Stage',
@@ -55,6 +62,11 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
       interactiveMode: data.stage.interactiveMode,
       taskEngineMode: data.stage.taskEngineMode,
       generatedAgentConfigs: data.stage.generatedAgentConfigs,
+      // Trust model fields (v15). Cast through unknown because Stage's
+      // DSL interface is intentionally narrow — these fields live on the
+      // persisted StageRecord only.
+      sceneOrderTrusted: (data.stage as unknown as Record<string, unknown>).sceneOrderTrusted as boolean | undefined,
+      sceneOrderRepairedAt: (data.stage as unknown as Record<string, unknown>).sceneOrderRepairedAt as number | undefined,
     });
 
     // Delete old scenes first to avoid orphaned data
