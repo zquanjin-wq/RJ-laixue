@@ -22,6 +22,15 @@
 --   supabase-rls-tighten-wave5.sql   — anon SELECT removed
 --
 -- Run AFTER all of the above. Idempotent: safe to re-run.
+--
+-- TYPE NOTE: profiles.id, students.id, students.user_id,
+-- courses.created_by, and course_assignments.student_id are all
+-- `uuid` (declared in supabase-auth-mvp.sql / supabase-learning-mvp.sql
+-- / supabase-courses-owner.sql). auth.uid() also returns uuid, so
+-- comparisons below use `auth.uid() = <column>` directly. Do NOT add
+-- `::text` casts — they would break the comparison (and would also
+-- let UUID format validation slip, which is a defense-in-depth benefit
+-- we want to keep).
 -- ============================================================
 
 
