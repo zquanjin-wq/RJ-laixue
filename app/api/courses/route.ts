@@ -95,13 +95,57 @@ export async function POST(request: NextRequest) {
     };
 
     const serviceSupabase = getServiceSupabase();
+
+    // ── Authorization gate ──────────────────────────────────────────
+    // The upsert below uses the service_role client, which bypasses RLS
+    // entirely. Without an explicit ownership check, any signed-in user
+    // could POST a course id they don't own and overwrite its data
+    // (and previously also hijack the created_by field). Gate on:
+    //   - Course doesn't exist yet → caller becomes creator (new row INSERT)
+    //   - Course exists and caller is the creator → UPDATE allowed
+    //   - Course exists and caller is admin → UPDATE allowed
+    //   - Course exists and caller is anyone else → 403
+    //
+    // We split the write into INSERT (caller as owner) vs UPDATE
+    // (preserve original created_by) so a benign save never overwrites
+    // the original owner — fixing the silent ownership-hijack bug too.
+    const { data: existing } = await serviceSupabase
+      .from('courses')
+      .select('created_by')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (existing) {
+      let callerIsAdmin = false;
+      const { data: profile } = await serviceSupabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+      callerIsAdmin = profile?.role === 'admin';
+
+      if (existing.created_by !== user.id && !callerIsAdmin) {
+        return NextResponse.json(
+          {
+            success: false,
+            errorCode: 'FORBIDDEN',
+            error: '您没有权限保存此课程。',
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     const { error } = await serviceSupabase.from('courses').upsert(
       {
         id,
         title: title || stage?.name || '',
         topic: topic || '',
         data: payload,
-        created_by: user.id,
+        // Only set created_by on INSERT (when no existing row). On UPDATE
+        // omit it so a teacher saving their own course cannot accidentally
+        // clear the field, and a hostile save cannot transfer ownership.
+        ...(existing ? {} : { created_by: user.id }),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'id' },
