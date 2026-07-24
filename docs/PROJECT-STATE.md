@@ -28,9 +28,12 @@
 | **Phase 0 修开关位置**：从 `fireAndForgetAutoSave` 函数内部上移到调用点 | 2026-07-24 | saveStageToCloud 有 3 个调用点（自动 / 顺序修复回传 / 手动按钮），开关只管"自动"那条 | commit `21712c39` |
 | **Next_PUBLIC_LEGACY_AUTOSAVE 命名 + 默认开** | 2026-07-24 | 语义准确；保留 PR1 行为；设 `=0` 关闭 | commit `21712c39` |
 | **59a8bac6 SSRF 修复搁置**（v0.3.1 #930） | 2026-07-24 | modify/delete 冲突：`probe-auth.ts` 在 RJ-laixue 已删，改走 `api-guard` 路线 | Phase 0 报告 §二 |
+| **59a8bac6 真实攻击面 + api-guard 覆盖对照** | 2026-07-24 | 11 个 media adapter 在 `testXxxConnectivity` 用 `redirect: 'follow'` 默认；ssrf-guard 只校验单 URL，不处理 fetch redirect 行为；**有缺口**——`redirect: 'manual'` 修复不能被 `api-guard` 或 `ssrf-guard` 替代 | 见本页"SSRF 风险对照表" |
 | **Phase 1+2 修正版 B（cherry-pick Part A+B）** | 2026-07-24 | 三 commit cherry-pick 实测 0-3 冲突，seq 风险需"写端归一"或"读端 wrapper"修 | `docs/reports/2026-07-24-independent-review.md` |
 | **learnerKey 决策**：v0.3.1 默认走 `learnerKey = crypto.randomUUID()` 不适合 RJ-laixue | 2026-07-24 | 内训平台每个学员有 Supabase Auth；`learnerKey = auth.uid()` 更贴合 | `docs/HANDOFF-FOR-CLAUDE-FABLE-5.md` §3.4 |
 | **RuntimeStore 是机会不是负担** | 2026-07-24 | 上游用 9.2 万行解决的正是 RJ-laixue 自研兜底想解决的事 | `docs/DRY-RUN-V031-MERGE-REPORT.md` |
+| **DSL 扩展字段扫描** | 2026-07-24 | 12 个 RJ 扩展字段（4 Stage + 5 Scene + 1 Audio + 2 DB 镜像），**7 个**在 DocumentStore 路径下需存活（sceneOrderTrusted/seq/teacherVoiceConfig/narrationText/kind/interactionType/name） | `docs/fork-extensions.md` |
+| **83fdecf3 严格校验实测**：静默通过未知字段 | 2026-07-24 | `validateStage`/`validateScene` 只查已知字段；`splitDocument` spread 保留——RJ 扩展字段不会丢。但未来上游可能改严格模式 | `docs/fork-extensions.md` 关键问题段 |
 
 ### ⏳ 待拍板
 
@@ -45,6 +48,27 @@
 - [ ] api-guard.ts 覆盖 media adapter（kling/seedream）出站 URL 验证
 - [ ] 上游 v0.3.1 完整同步评估（独立 PR review）
 - [ ] PR1+2+3 + LEGACY_AUTOSAVE 开关在 Vercel preview 实测（本地 build 阻塞）
+- [ ] **media adapter `redirect: 'manual'` 精准回捞**（11 个 adapter，v0.3.1 #930 修复被搁置后的真实安全缺口）
+- [ ] Phase 1+2 cherry-pick 后加 7 个 DSL 扩展字段的金丝雀测试
+- [ ] Phase 4 评估 `sceneOrderTrusted` / `seq` / `sceneOrderRepairedAt` 退役条件（写端归一后可考虑）
+
+## SSRF 风险对照表（任务二产出）
+
+**59a8bac6 真实修复的向量**：12 个 media adapter 在 `testXxxConnectivity` 函数内的 `fetch()` 调用加 `redirect: 'manual'`——阻止 fetch 默认跟 3xx 重定向到内网地址。
+
+| Adapter | 修复方式 | api-guard 覆盖？ | ssrf-guard 覆盖？ | 风险 |
+|---|---|---|---|---|
+| comfyui-image | `redirect: 'manual'` | ❌（不涉及 URL 校验）| ❌（只校验单 URL）| ⚠️ adapter 在 v0.3.0 已删，**修改丢失** |
+| grok-image / grok-video / happyhorse / kling / lemonade-image / nano-banana / openai-image / qwen-image / seedance / seedream / veo | `redirect: 'manual'` | ❌ | ❌ | ⚠️ **11 个 adapter 当前在 RJ-laixue 都用默认 `redirect: 'follow'`，真 SSRF 风险** |
+| probe-auth.ts + 2 tests | modify/delete 冲突 | n/a | n/a | 搁置（RJ 走 api-guard 路线） |
+
+**关键结论**：
+- `redirect: 'manual'` 是**独立**的修复向量（fetch redirect 行为），不是单 URL 校验问题
+- `api-guard.ts` 不涉及 URL 校验
+- `ssrf-guard.ts`（7c2aaafc 已加）只校验**单 URL**（黑名单 IP/协议），不处理 fetch redirect 行为
+- **`redirect: 'manual'` 修复不能被任何 RJ 现存模块替代**——是真实安全缺口
+
+**Phase 4 处理建议**：精准回捞——只 cherry-pick 11 个 adapter 文件的 `redirect: 'manual'` 改动（不取 probe-auth.ts + 2 tests），2-3 小时工作量。
 
 ---
 
