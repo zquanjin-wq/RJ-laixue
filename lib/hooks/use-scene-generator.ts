@@ -79,6 +79,25 @@ function fireAndForgetAutoSave(stageId: string): void {
     });
 }
 
+/**
+ * Single switch for the *auto-save-on-generation-complete* path.
+ * Phase 4 (RuntimeStore cloud save) flips this off to retire
+ * fireAndForgetAutoSave without touching any other file.
+ *
+ * Set NEXT_PUBLIC_LEGACY_AUTOSAVE=0 in env to disable. Default = on.
+ *
+ * IMPORTANT: This flag ONLY gates the two fireAndForgetAutoSave
+ * call sites below. It does NOT affect:
+ *   - The scene-order repair re-upload in app/classroom/[id]/page.tsx
+ *     (line 280, triggered by an explicit self-heal pass)
+ *   - The manual "保存到云端" button in app/classroom/[id]/page.tsx
+ *     (line 709, user-initiated)
+ * Those are explicit user actions, not auto-save.
+ */
+function isLegacyAutoSaveEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_LEGACY_AUTOSAVE !== '0';
+}
+
 interface SceneContentResult {
   success: boolean;
   content?: unknown;
@@ -687,7 +706,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         store.getState().setGeneratingOutlines([]);
         store.getState().setGenerationComplete(true);
         options.onComplete?.();
-        fireAndForgetAutoSave(stage.id);
+        if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
         // Nothing to wait on — disarm both watchdogs proactively.
         clearAllOutlineTimeouts();
         clearTotalTimeout();
@@ -921,7 +940,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             store.getState().setGeneratingOutlines([]);
             store.getState().setGenerationComplete(true);
             options.onComplete?.();
-            fireAndForgetAutoSave(stage.id);
+            if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
             // Clean completion: disarm both watchdogs so no late firing
             // can race the auto-save toast.
             clearAllOutlineTimeouts();
