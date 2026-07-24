@@ -916,7 +916,20 @@
     "webSearchingDesc": "正在搜尋網路取得最新資料",
     "webSearchFailed": "網路搜尋失敗",
     "outlinesReadyCount": "{{ready}} / {{total}} 章節就緒",
-    "jumpToBlankTitle": "跳到待補充標題的章節"
+    "jumpToBlankTitle": "跳到待補充標題的章節",
+    "progress": {
+      "generating": "⏳ 正在生成課程內容...",
+      "complete": "✅ 課程生成完成",
+      "overallLabel": "整體進度",
+      "pageUnit": "頁",
+      "statusPending": "等待中",
+      "statusGenerating": "生成中",
+      "statusCompleted": "已完成",
+      "statusFailed": "失敗",
+      "retry": "重試",
+      "untitledPage": "第 {{index}} 頁",
+      "failedHint": "⚠️ {{count}} 頁生成失敗，請點擊對應頁面的「重試」按鈕"
+    }
   },
   "settings": {
     "title": "設定",

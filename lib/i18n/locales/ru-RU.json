@@ -931,7 +931,20 @@
     "webSearchingDesc": "Поиск актуальной информации в сети",
     "webSearchFailed": "Ошибка веб-поиска",
     "outlinesReadyCount": "Готово разделов: {{ready}} / {{total}}",
-    "jumpToBlankTitle": "Перейти к разделу без заголовка"
+    "jumpToBlankTitle": "Перейти к разделу без заголовка",
+    "progress": {
+      "generating": "⏳ Генерация содержимого курса...",
+      "complete": "✅ Генерация курса завершена",
+      "overallLabel": "Общий прогресс",
+      "pageUnit": "стр.",
+      "statusPending": "Ожидание",
+      "statusGenerating": "Генерация",
+      "statusCompleted": "Готово",
+      "statusFailed": "Ошибка",
+      "retry": "Повторить",
+      "untitledPage": "Страница {{index}}",
+      "failedHint": "⚠️ Не удалось создать {{count}} стр. — нажмите «Повторить» в соответствующей строке"
+    }
   },
   "settings": {
     "title": "Настройки",

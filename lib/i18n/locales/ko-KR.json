@@ -931,7 +931,20 @@
     "webSearchingDesc": "최신 정보를 웹에서 검색하고 있어요",
     "webSearchFailed": "웹 검색에 실패했습니다",
     "outlinesReadyCount": "{{ready}} / {{total}}개 섹션 준비됨",
-    "jumpToBlankTitle": "제목이 필요한 섹션으로 이동"
+    "jumpToBlankTitle": "제목이 필요한 섹션으로 이동",
+    "progress": {
+      "generating": "⏳ 강좌 내용을 생성하는 중...",
+      "complete": "✅ 강좌 생성 완료",
+      "overallLabel": "전체 진행률",
+      "pageUnit": "페이지",
+      "statusPending": "대기 중",
+      "statusGenerating": "생성 중",
+      "statusCompleted": "완료됨",
+      "statusFailed": "실패",
+      "retry": "재시도",
+      "untitledPage": "페이지 {{index}}",
+      "failedHint": "⚠️ {{count}}개 페이지 생성 실패. 해당 행의 \"재시도\" 버튼을 클릭하세요"
+    }
   },
   "settings": {
     "title": "설정",

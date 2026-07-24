@@ -931,7 +931,20 @@
     "webSearchingDesc": "جارٍ البحث في الإنترنت عن معلومات محدّثة",
     "webSearchFailed": "فشل البحث في الإنترنت",
     "outlinesReadyCount": "{{ready}} / {{total}} أقسام جاهزة",
-    "jumpToBlankTitle": "الانتقال إلى قسم بحاجة إلى عنوان"
+    "jumpToBlankTitle": "الانتقال إلى قسم بحاجة إلى عنوان",
+    "progress": {
+      "generating": "⏳ جارٍ إنشاء محتوى الدورة...",
+      "complete": "✅ اكتمل إنشاء الدورة",
+      "overallLabel": "التقدم الإجمالي",
+      "pageUnit": "صفحات",
+      "statusPending": "قيد الانتظار",
+      "statusGenerating": "قيد الإنشاء",
+      "statusCompleted": "مكتمل",
+      "statusFailed": "فشل",
+      "retry": "إعادة المحاولة",
+      "untitledPage": "الصفحة {{index}}",
+      "failedHint": "⚠️ فشل إنشاء {{count}} صفحة — انقر «إعادة المحاولة» في الصف المتأثر"
+    }
   },
   "settings": {
     "title": "الإعدادات",

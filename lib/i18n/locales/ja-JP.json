@@ -931,7 +931,20 @@
     "webSearchingDesc": "ウェブで最新情報を検索しています",
     "webSearchFailed": "ウェブ検索に失敗しました",
     "outlinesReadyCount": "{{ready}} / {{total}} セクション準備完了",
-    "jumpToBlankTitle": "タイトルが未入力のセクションへ移動"
+    "jumpToBlankTitle": "タイトルが未入力のセクションへ移動",
+    "progress": {
+      "generating": "⏳ コース内容を生成中...",
+      "complete": "✅ コース生成完了",
+      "overallLabel": "全体の進捗",
+      "pageUnit": "ページ",
+      "statusPending": "待機中",
+      "statusGenerating": "生成中",
+      "statusCompleted": "完了",
+      "statusFailed": "失敗",
+      "retry": "再試行",
+      "untitledPage": "ページ {{index}}",
+      "failedHint": "⚠️ {{count}} ページの生成に失敗しました。該当行の「再試行」をクリックしてください"
+    }
   },
   "settings": {
     "title": "設定",

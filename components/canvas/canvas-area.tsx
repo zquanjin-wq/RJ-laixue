@@ -12,6 +12,7 @@ import type { CanvasToolbarProps } from '@/components/canvas/canvas-toolbar';
 import type { Scene, StageMode } from '@/lib/types/stage';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { ClassroomCompletePageConnected } from '@/components/scene-renderers/classroom-complete';
+import { GenerationProgress } from '@/components/generation/GenerationProgress';
 
 interface CanvasAreaProps extends CanvasToolbarProps {
   readonly currentScene: Scene | null;
@@ -21,6 +22,8 @@ interface CanvasAreaProps extends CanvasToolbarProps {
   readonly isCourseComplete?: boolean;
   readonly isGenerationFailed?: boolean;
   readonly onRetryGeneration?: () => void;
+  /** Per-outline retry handler from useSceneGenerator().retrySingleOutline */
+  readonly onRetryOutline?: (outlineId: string) => Promise<void>;
 }
 
 export function CanvasArea({
@@ -48,6 +51,7 @@ export function CanvasArea({
   isCourseComplete,
   isGenerationFailed,
   onRetryGeneration,
+  onRetryOutline,
 }: CanvasAreaProps) {
   const { t } = useI18n();
   const showControls = mode === 'playback' && !whiteboardOpen;
@@ -171,22 +175,7 @@ export function CanvasArea({
                     )}
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center gap-4">
-                    {/* Spinner */}
-                    <div className="relative w-12 h-12">
-                      <div className="absolute inset-0 rounded-full border-2 border-gray-100 dark:border-gray-700" />
-                      <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-purple-500 dark:border-t-purple-400 animate-spin" />
-                    </div>
-                    {/* Text */}
-                    <motion.span
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.2, duration: 0.3 }}
-                      className="text-sm text-gray-400 dark:text-gray-500 font-medium"
-                    >
-                      {t('stage.generatingNextPage')}
-                    </motion.span>
-                  </div>
+                  <GenerationProgress onRetry={onRetryOutline} />
                 )}
               </motion.div>
             )}

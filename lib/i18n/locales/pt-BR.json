@@ -931,7 +931,20 @@
     "webSearchingDesc": "Pesquisando informações atualizadas na web",
     "webSearchFailed": "Falha na pesquisa na web",
     "outlinesReadyCount": "{{ready}} / {{total}} seções prontas",
-    "jumpToBlankTitle": "Ir para uma seção que ainda precisa de título"
+    "jumpToBlankTitle": "Ir para uma seção que ainda precisa de título",
+    "progress": {
+      "generating": "⏳ Gerando conteúdo do curso...",
+      "complete": "✅ Geração do curso concluída",
+      "overallLabel": "Progresso geral",
+      "pageUnit": "páginas",
+      "statusPending": "Aguardando",
+      "statusGenerating": "Gerando",
+      "statusCompleted": "Concluído",
+      "statusFailed": "Falhou",
+      "retry": "Tentar novamente",
+      "untitledPage": "Página {{index}}",
+      "failedHint": "⚠️ {{count}} página(s) falharam — clique em \"Tentar novamente\" na linha afetada"
+    }
   },
   "settings": {
     "title": "Configurações",

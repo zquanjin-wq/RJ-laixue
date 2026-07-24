@@ -931,7 +931,20 @@
     "webSearchingDesc": "Searching the web for up-to-date information",
     "webSearchFailed": "Web search failed",
     "outlinesReadyCount": "{{ready}} / {{total}} sections ready",
-    "jumpToBlankTitle": "Jump to a section that still needs a title"
+    "jumpToBlankTitle": "Jump to a section that still needs a title",
+    "progress": {
+      "generating": "⏳ Generating course content...",
+      "complete": "✅ Course generation complete",
+      "overallLabel": "Overall progress",
+      "pageUnit": "pages",
+      "statusPending": "Pending",
+      "statusGenerating": "Generating",
+      "statusCompleted": "Completed",
+      "statusFailed": "Failed",
+      "retry": "Retry",
+      "untitledPage": "Page {{index}}",
+      "failedHint": "⚠️ {{count}} page(s) failed — click \"Retry\" on the affected row"
+    }
   },
   "settings": {
     "title": "Settings",

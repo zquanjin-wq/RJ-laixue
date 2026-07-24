@@ -931,7 +931,20 @@
     "webSearchingDesc": "正在搜索网络获取最新资料",
     "webSearchFailed": "网络搜索失败",
     "outlinesReadyCount": "{{ready}} / {{total}} 章节就绪",
-    "jumpToBlankTitle": "跳到待补充标题的章节"
+    "jumpToBlankTitle": "跳到待补充标题的章节",
+    "progress": {
+      "generating": "⏳ 正在生成课程内容...",
+      "complete": "✅ 课程生成完成",
+      "overallLabel": "整体进度",
+      "pageUnit": "页",
+      "statusPending": "等待中",
+      "statusGenerating": "生成中",
+      "statusCompleted": "已完成",
+      "statusFailed": "失败",
+      "retry": "重试",
+      "untitledPage": "第 {{index}} 页",
+      "failedHint": "⚠️ {{count}} 页生成失败，请点击对应页面的\"重试\"按钮"
+    }
   },
   "settings": {
     "title": "设置",

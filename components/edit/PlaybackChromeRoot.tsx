@@ -1175,6 +1175,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
                   ? () => onRetryOutline(generatingOutlines[0].id)
                   : undefined
               }
+              onRetryOutline={onRetryOutline}
             />
           </div>
 
