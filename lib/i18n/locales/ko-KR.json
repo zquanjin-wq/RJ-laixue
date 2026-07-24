@@ -944,6 +944,10 @@
       "retry": "재시도",
       "untitledPage": "페이지 {{index}}",
       "failedHint": "⚠️ {{count}}개 페이지 생성 실패. 해당 행의 \"재시도\" 버튼을 클릭하세요"
+    },
+    "timeout": {
+      "outlineTimeout": "\"{{title}}\" 생성 시간 초과. 재시도를 클릭하세요",
+      "totalTimeout": "강좌 생성 시간 초과 (15분 초과). 네트워크를 확인한 후 재시도하세요"
     }
   },
   "settings": {

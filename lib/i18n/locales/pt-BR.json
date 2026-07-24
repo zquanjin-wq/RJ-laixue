@@ -944,6 +944,10 @@
       "retry": "Tentar novamente",
       "untitledPage": "Página {{index}}",
       "failedHint": "⚠️ {{count}} página(s) falharam — clique em \"Tentar novamente\" na linha afetada"
+    },
+    "timeout": {
+      "outlineTimeout": "Geração de \"{{title}}\" expirou — clique em tentar novamente",
+      "totalTimeout": "Geração do curso expirou (>15 minutos). Verifique sua rede e tente novamente."
     }
   },
   "settings": {

@@ -22,6 +22,7 @@ import { useAgentRegistry } from '@/lib/orchestration/registry/store';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { lazyBoundedMap } from '@/lib/utils/concurrency';
 import { createLogger } from '@/lib/logger';
+import { useI18n } from '@/lib/hooks/use-i18n';
 import {
   isAbortError,
   withGenerationRetry,
@@ -31,6 +32,25 @@ import { saveStageToCloud } from '@/lib/utils/cloud-sync';
 import { toast } from 'sonner';
 
 const log = createLogger('SceneGenerator');
+
+/**
+ * Per-outline generation timeout. If an outline stays in `generating`
+ * longer than this, the watchdog marks it failed so the user sees a
+ * retry button instead of an infinite spinner. Tuned conservatively
+ * because scene generation can include content + actions + TTS passes,
+ * each of which may take up to ~30s on the slowest day; 3 minutes is
+ * generous for any single outline on a healthy network.
+ */
+const OUTLINE_TIMEOUT_MS = 3 * 60 * 1000;
+
+/**
+ * Total batch generation timeout. Belt-and-braces — under normal flow,
+ * the per-outline timeout should fire first. This exists so that in the
+ * parallel-content mode where some outlines might never get visited by
+ * the serial loop, we still bail out and surface the situation to the
+ * teacher rather than leaving them with a half-finished deck.
+ */
+const TOTAL_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
  * Fire-and-forget cloud save after successful generation completes.
@@ -499,14 +519,136 @@ export interface GenerationParams {
 }
 
 export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
+  const { t } = useI18n();
   const abortRef = useRef(false);
   const generatingRef = useRef(false);
   const mediaAbortRef = useRef<AbortController | null>(null);
   const fetchAbortRef = useRef<AbortController | null>(null);
   const lastParamsRef = useRef<GenerationParams | null>(null);
   const generateRemainingRef = useRef<((params: GenerationParams) => Promise<void>) | null>(null);
+  // Per-outline watchdog timers. Keyed by outline id so a stuck outline
+  // fires its own timeout regardless of sibling progress. Cleared at the
+  // success / failure / removal boundaries below — see startOutlineTimeout
+  // and clearOutlineTimeout for the contract.
+  const timeoutMapRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  // Batch watchdog: started when generateRemaining kicks off, cleared on
+  // successful completion. Fires once if the whole run stalls.
+  const totalTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const store = useStageStore;
+
+  // ────────────────────────────────────────────────────────────────
+  // Watchdog helpers
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * Start (or reset) the 3-minute watchdog for one outline.
+   *
+   * Always called BEFORE the corresponding setGeneratingOutlines push so
+   * the timer is armed by the time the UI sees "generating". The function
+   * is idempotent — calling it again for the same id clears the previous
+   * timer first, which keeps the retry path sane (each retry restarts the
+   * clock; we don't carry over a stale 3-minute budget).
+   */
+  const startOutlineTimeout = (outline: SceneOutline): void => {
+    const existing = timeoutMapRef.current.get(outline.id);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      // Only fire if the outline is STILL in generatingOutlines. If it
+      // already moved to completed/failed/removed, this is a stale timer
+      // and we silently drop it.
+      const stillGenerating = store
+        .getState()
+        .generatingOutlines.some((o) => o.id === outline.id);
+      if (!stillGenerating) {
+        timeoutMapRef.current.delete(outline.id);
+        return;
+      }
+      log.warn(
+        `[Timeout] Outline "${outline.title || outline.id}" exceeded ${OUTLINE_TIMEOUT_MS / 1000}s`,
+      );
+      // Move outline to failedOutlines and remove from generatingOutlines
+      // in a single store transaction. Do NOT touch scenes — partial output
+      // is still recoverable and the retry path will decide what to redo.
+      store.getState().addFailedOutline(outline);
+      store
+        .getState()
+        .setGeneratingOutlines(
+          store.getState().generatingOutlines.filter((o) => o.id !== outline.id),
+        );
+      timeoutMapRef.current.delete(outline.id);
+      toast.warning(
+        t('generation.timeout.outlineTimeout', { title: outline.title || outline.id }),
+      );
+    }, OUTLINE_TIMEOUT_MS);
+    timeoutMapRef.current.set(outline.id, timer);
+  };
+
+  /**
+   * Stop the watchdog for one outline. Safe to call even if no timer
+   * exists for the id. Always called BEFORE removing the outline from
+   * generatingOutlines so we don't fire after the fact.
+   */
+  const clearOutlineTimeout = (outlineId: string): void => {
+    const existing = timeoutMapRef.current.get(outlineId);
+    if (existing) {
+      clearTimeout(existing);
+      timeoutMapRef.current.delete(outlineId);
+    }
+  };
+
+  /** Clear every per-outline timer (called on batch completion / abort). */
+  const clearAllOutlineTimeouts = (): void => {
+    for (const timer of timeoutMapRef.current.values()) clearTimeout(timer);
+    timeoutMapRef.current.clear();
+  };
+
+  /**
+   * Wrapper around store.addFailedOutline that ALSO disarms the watchdog
+   * for the outline. Every failure path (content / actions / TTS / catch)
+   * routes through here so we can never leak a timer after a failure has
+   * been recorded — which would otherwise fire on the next retry and
+   * immediately re-mark the outline as failed.
+   */
+  const markOutlineFailed = (outline: SceneOutline): void => {
+    clearOutlineTimeout(outline.id);
+    store.getState().addFailedOutline(outline);
+  };
+
+  /** Start the 15-minute batch watchdog. Idempotent. */
+  const startTotalTimeout = (): void => {
+    if (totalTimeoutRef.current) clearTimeout(totalTimeoutRef.current);
+    totalTimeoutRef.current = setTimeout(() => {
+      // Only fire if the batch is still running. If the user already
+      // landed on a clean completed state, this is a stale timer.
+      const state = store.getState();
+      if (state.generationComplete) {
+        totalTimeoutRef.current = null;
+        return;
+      }
+      log.error(
+        `[Timeout] Total generation exceeded ${TOTAL_TIMEOUT_MS / 1000}s — aborting batch`,
+      );
+      // Promote every outline still in generatingOutlines to failedOutlines.
+      // Surviving outlines stay where they are (pending / already completed).
+      const stillGenerating = state.generatingOutlines;
+      for (const outline of stillGenerating) {
+        state.addFailedOutline(outline);
+      }
+      state.setGeneratingOutlines([]);
+      state.setGenerationStatus('paused');
+      totalTimeoutRef.current = null;
+      toast.error(t('generation.timeout.totalTimeout'));
+    }, TOTAL_TIMEOUT_MS);
+  };
+
+  const clearTotalTimeout = (): void => {
+    if (totalTimeoutRef.current) {
+      clearTimeout(totalTimeoutRef.current);
+      totalTimeoutRef.current = null;
+    }
+  };
 
   const generateRemaining = useCallback(
     async (params: GenerationParams) => {
@@ -546,11 +688,22 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         store.getState().setGenerationComplete(true);
         options.onComplete?.();
         fireAndForgetAutoSave(stage.id);
+        // Nothing to wait on — disarm both watchdogs proactively.
+        clearAllOutlineTimeouts();
+        clearTotalTimeout();
         generatingRef.current = false;
         return;
       }
 
       store.getState().setGeneratingOutlines(pending);
+      // Arm the watchdog for every outline we're about to process. Done as
+      // a single batch right after the store push so timers cover exactly
+      // the set the UI sees as "generating".
+      for (const outline of pending) startOutlineTimeout(outline);
+      // Start the 15-minute batch watchdog too — covers edge cases where
+      // the per-outline timer misses (e.g. parallel content phase left
+      // outlines stranded without the serial loop visiting them).
+      startTotalTimeout();
 
       // Launch media generation in parallel — does not block content/action generation
       mediaAbortRef.current = new AbortController();
@@ -663,7 +816,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               pausedByFailureOrAbort = true;
               break;
             }
-            store.getState().addFailedOutline(outline);
+            markOutlineFailed(outline);
             options.onSceneFailed?.(outline, contentResult.error || 'Content generation failed');
             if (contentPromises) {
               // Parallel: surface the failure but keep going with the other scenes
@@ -723,7 +876,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
                   pausedByFailureOrAbort = true;
                   break;
                 }
-                store.getState().addFailedOutline(outline);
+                markOutlineFailed(outline);
                 options.onSceneFailed?.(outline, ttsResult.error || 'TTS generation failed');
                 store.getState().setGenerationStatus('paused');
                 pausedByFailureOrAbort = true;
@@ -746,7 +899,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               pausedByFailureOrAbort = true;
               break;
             }
-            store.getState().addFailedOutline(outline);
+            markOutlineFailed(outline);
             options.onSceneFailed?.(outline, actionsResult.error || 'Actions generation failed');
             store.getState().setGenerationStatus('paused');
             pausedByFailureOrAbort = true;
@@ -759,12 +912,20 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             // Parallel content phase left some outlines failed but kept going;
             // surface them for retry instead of signalling a clean completion.
             store.getState().setGenerationStatus('paused');
+            // Failure path: disarm any watchdog still in flight (outlines
+            // that didn't get visited will stay failed/pending in store).
+            clearAllOutlineTimeouts();
+            clearTotalTimeout();
           } else {
             store.getState().setGenerationStatus('completed');
             store.getState().setGeneratingOutlines([]);
             store.getState().setGenerationComplete(true);
             options.onComplete?.();
             fireAndForgetAutoSave(stage.id);
+            // Clean completion: disarm both watchdogs so no late firing
+            // can race the auto-save toast.
+            clearAllOutlineTimeouts();
+            clearTotalTimeout();
           }
         }
       } catch (err: unknown) {
@@ -778,6 +939,12 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       } finally {
         generatingRef.current = false;
         fetchAbortRef.current = null;
+        // Always disarm watchdogs in finally — covers both the success
+        // path (already cleared above) and the abort/throw path so we
+        // never leave a 3-minute or 15-minute timer ticking after the
+        // user has navigated away or stop() was called.
+        clearAllOutlineTimeouts();
+        clearTotalTimeout();
       }
     },
     [options, store],
@@ -791,6 +958,10 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
     store.getState().bumpGenerationEpoch();
     fetchAbortRef.current?.abort();
     mediaAbortRef.current?.abort();
+    // user-initiated stop: disarm watchdogs immediately so we don't keep
+    // a 3-minute timer alive after they've already given up.
+    clearAllOutlineTimeouts();
+    clearTotalTimeout();
   }, [store]);
 
   const isGenerating = useCallback(() => generatingRef.current, []);
@@ -823,6 +994,14 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         const current = store.getState().generatingOutlines;
         if (!current.some((o) => o.id === outlineId)) return;
         store.getState().setGeneratingOutlines(current.filter((o) => o.id !== outlineId));
+        // Disarm the watchdog on the success path. markOutlineFailed
+        // does this for failure paths; this wrapper only fires on success.
+        clearOutlineTimeout(outlineId);
+        // If this retry was the last outline in flight, disarm the batch
+        // watchdog too — it has done its job for this run.
+        if (store.getState().generatingOutlines.length === 0) {
+          clearTotalTimeout();
+        }
       };
 
       // Remove from failed list and mark as generating
@@ -832,6 +1011,14 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       if (!currentGenerating.some((o) => o.id === outline.id)) {
         store.getState().setGeneratingOutlines([...currentGenerating, outline]);
       }
+      // Arm the per-outline watchdog for this retry. startOutlineTimeout
+      // is idempotent — clears any prior timer for the same id before
+      // arming a new one, so the 3-minute budget restarts cleanly.
+      startOutlineTimeout(outline);
+      // A retry can also trigger the batch watchdog if no other generation
+      // is in flight. Safe to call repeatedly: startTotalTimeout clears
+      // any prior timer before arming.
+      startTotalTimeout();
 
       const abortController = new AbortController();
       const signal = abortController.signal;
@@ -853,7 +1040,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         );
 
         if (!contentResult.success || !contentResult.content) {
-          store.getState().addFailedOutline(outline);
+          markOutlineFailed(outline);
           return;
         }
 
@@ -881,7 +1068,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         );
 
         if (!actionsResult.success || !actionsResult.scene) {
-          store.getState().addFailedOutline(outline);
+          markOutlineFailed(outline);
           return;
         }
 
@@ -901,7 +1088,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             signal,
           );
           if (!ttsResult.success) {
-            store.getState().addFailedOutline(outline);
+            markOutlineFailed(outline);
             return;
           }
         }
@@ -921,7 +1108,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         }
       } catch (err) {
         if (!isAbortError(err)) {
-          store.getState().addFailedOutline(outline);
+          markOutlineFailed(outline);
         }
       }
     },

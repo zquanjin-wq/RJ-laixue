@@ -944,6 +944,10 @@
       "retry": "重试",
       "untitledPage": "第 {{index}} 页",
       "failedHint": "⚠️ {{count}} 页生成失败，请点击对应页面的\"重试\"按钮"
+    },
+    "timeout": {
+      "outlineTimeout": "「{{title}}」生成超时，请点击重试",
+      "totalTimeout": "课程生成超时（超过15分钟），请检查网络后重试"
     }
   },
   "settings": {

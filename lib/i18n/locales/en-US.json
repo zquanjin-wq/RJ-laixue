@@ -944,6 +944,10 @@
       "retry": "Retry",
       "untitledPage": "Page {{index}}",
       "failedHint": "⚠️ {{count}} page(s) failed — click \"Retry\" on the affected row"
+    },
+    "timeout": {
+      "outlineTimeout": "\"{{title}}\" generation timed out — please retry",
+      "totalTimeout": "Course generation timed out (>15 minutes). Please check your network and retry."
     }
   },
   "settings": {
