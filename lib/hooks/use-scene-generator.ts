@@ -27,8 +27,37 @@ import {
   withGenerationRetry,
   type GenerationRetryOptions,
 } from '@/lib/generation/generation-retry';
+import { saveStageToCloud } from '@/lib/utils/cloud-sync';
+import { toast } from 'sonner';
 
 const log = createLogger('SceneGenerator');
+
+/**
+ * Fire-and-forget cloud save after successful generation completes.
+ *
+ * Why fire-and-forget (not awaited): generation itself is already slow,
+ * and saveStageToCloud bundles an audio publish pass that can add
+ * another 5-30s. Blocking the caller on top of that would keep
+ * `generationComplete` truthy-but-frozen, making the user stare at a
+ * "生成中" UI while their course is already done. Instead we flip the
+ * completion flag immediately and let the upload run in the background;
+ * a toast tells the user when it lands or when it failed (in which case
+ * they can fall back to the manual "保存到云端" button).
+ *
+ * Not called from the `paused` / `aborted` paths — if generation is
+ * incomplete, the user may still want to retry outlines, and an upload
+ * of half-baked data is more harmful than helpful.
+ */
+function fireAndForgetAutoSave(stageId: string): void {
+  saveStageToCloud(stageId)
+    .then(() => {
+      toast.success('课程已自动保存到云端');
+    })
+    .catch((err: unknown) => {
+      log.error('[AutoSave] saveStageToCloud failed:', err);
+      toast.warning('自动保存失败，请手动点击"保存到云端"');
+    });
+}
 
 interface SceneContentResult {
   success: boolean;
@@ -516,6 +545,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         store.getState().setGeneratingOutlines([]);
         store.getState().setGenerationComplete(true);
         options.onComplete?.();
+        fireAndForgetAutoSave(stage.id);
         generatingRef.current = false;
         return;
       }
@@ -734,6 +764,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             store.getState().setGeneratingOutlines([]);
             store.getState().setGenerationComplete(true);
             options.onComplete?.();
+            fireAndForgetAutoSave(stage.id);
           }
         }
       } catch (err: unknown) {
