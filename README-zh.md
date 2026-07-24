@@ -36,6 +36,61 @@
   <a href="https://open.maic.chat/">在线体验</a> · <a href="#-快速开始">快速开始</a> · <a href="#lemonade-local-ai">Lemonade</a> · <a href="#-功能特性">功能特性</a> · <a href="#-使用场景">使用场景</a> · <a href="#-openclaw-集成">OpenClaw</a>
 </p>
 
+---
+
+## 🏢 关于本 Fork
+
+> **本仓库是 OpenMAIC 的 fork 版本（[zquanjin-wq/RJ-laixue](https://github.com/zquanjin-wq/RJ-laixue)），服务锐捷大学培训部门。**
+> 上游：<https://github.com/THU-MAIC/OpenMAIC> · 基准：v0.3.0 · Fork 自研：+205 commits / 349 files / +31k 行
+
+### 本 fork 与上游的关键差异
+
+| 维度 | 上游 OpenMAIC | 本 fork (RJ-laixue) |
+|---|---|---|
+| **目标用户** | 通用 C 端，OpenAI 直连 | 锐捷内部培训，三级 RBAC（admin / teacher / learner） |
+| **数据库** | 无（IndexedDB + LLM API） | **Supabase**（Postgres + Auth + Storage） |
+| **账号体系** | 自助注册 | 由 admin 创建，学员 6 位 access_code 登录 |
+| **课程所有权** | 无 | `created_by uuid` + RLS 严格隔离 |
+| **课程分发** | 公开 URL | `course_assignments` 表 + access_code redeem |
+| **LLM 提供方** | 用户自配（OpenAI / Anthropic / GLM 等 10+ 家） | **服务端统一配 MiniMax M2.7**（Anthropic 兼容端点） |
+| **TTS 提供方** | 用户自配或浏览器原生 | **服务端统一配 MiniMax TTS** |
+| **客户端可见的 key** | 用户自填 | **零**（所有 key 走服务端） |
+| **生成完成后** | 留在浏览器 IndexedDB | **自动保存到 Supabase**（PR1） |
+| **生成进度反馈** | 无 | **每个 outline 实时状态 UI**（PR2） |
+| **生成超时** | 无 | **单页 3min + 整体 15min watchdog**（PR3） |
+| **分享页安全** | 公开 access code | **登录 + 角色 + 分配关系三层校验** |
+| **Admin 界面** | 无 | 学员/老师/课件/用量报表 |
+
+### 新增的 9 个 SQL 文件（按应用顺序）
+
+1. `supabase-learning-mvp.sql` — learning schema（students / course_assignments / progress_events）
+2. `supabase-auth-mvp.sql` — profiles 表 + role enum (admin/teacher/learner)
+3. `supabase-courses-owner.sql` — courses.created_by 字段
+4. `supabase-auth-triggers.sql` — handle_new_user / upgrade_seed_admin triggers
+5. `supabase-students-disabled.sql` — students.disabled_at 软删除
+6. `supabase-rls-tighten-wave1.sql` — 撤 anon 写入
+7. `supabase-rls-tighten-wave2.sql` — courses 限 SELECT-only
+8. `supabase-rls-tighten-wave5.sql` — 撤全部 anon SELECT
+9. `supabase-rls-tighten-courses-owner.sql` — course_assignments SELECT 收紧
+
+### 适合看哪些文档
+
+- 想了解 fork 改了什么 → [`docs/diff-from-upstream.md`](docs/diff-from-upstream.md)
+- 想接手开发 → [`CLAUDE.md`](CLAUDE.md) + [`docs/DEV.md`](docs/DEV.md)
+- 想了解产品需求 → [`docs/PRD.md`](docs/PRD.md) / [`docs/PRD-mobile.md`](docs/PRD-mobile.md)
+- 想了解安全加固 → [`docs/SECURITY-CHECKLIST-2026-07-23.md`](docs/SECURITY-CHECKLIST-2026-07-23.md)
+- 想了解 AI 教师音色的历史 bug → [`docs/AI-TEACHER-VOICE.md`](docs/AI-TEACHER-VOICE.md)
+
+### 同步上游策略
+
+上游已发布 v0.3.1（含 SSRF 加固、MP4 导出、Postgres 运行时存储、编辑器拖拽）。本 fork 评估后决定**暂不同步**，理由：
+- v0.3.0 → v0.3.1 共 86 commits（其中 RuntimeStore 重构是基础设施层改动）
+- 合并冲突面广（chat sessions / learner state / storage seam 全部迁移）
+- 当前生产稳定，业务优先；SSRF 加固在 RJ-laixue 中通过 `lib/server/api-guard.ts` + service_role 模式已经规避
+
+何时评估同步：当上游出现破坏性 UI 改动、或新功能（视频导出 / Postgres 运行时）成为业务必需时。
+
+---
 
 ## 🗞️ 动态
 
