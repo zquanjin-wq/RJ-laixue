@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@openmaic/dsl": ["./packages/@openmaic/dsl/src/index.ts"]
     }
   },
   "include": [
