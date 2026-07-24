@@ -234,7 +234,19 @@ export async function listMyCourses() {
 // ============================================================
 export async function importCourseFromCloud(courseId: string) {
   const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}`);
-  const json = await res.json();
+  // Server may return a non-JSON body (e.g. 413 from Vercel gateway
+  // or 5xx HTML) — guard the JSON parse so the caller gets a clear
+  // error instead of a generic SyntaxError "Unexpected token ...".
+  let json: { success?: boolean; error?: string; data?: any };
+  try {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(`服务器返回非 JSON 响应（${res.status}）`);
+    }
+    json = await res.json();
+  } catch {
+    throw new Error(`课程请求失败（${res.status}）`);
+  }
   if (!res.ok || !json.success) {
     throw new Error(json.error || '课程不存在');
   }

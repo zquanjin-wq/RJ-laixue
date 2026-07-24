@@ -298,6 +298,17 @@ function GenerationPreviewContent() {
         });
 
         if (!parseResponse.ok) {
+          // Vercel/Next.js framework layer returns plain-text error bodies for
+          // 413 (Request Entity Too Large) and similar gateway-level failures,
+          // which JSON.parse() cannot handle. Inspect status first and only
+          // attempt JSON parsing when the body actually looks like JSON.
+          if (parseResponse.status === 413) {
+            throw new Error('课程材料过大（超过 4.5MB 限制），请压缩 PDF 或拆分后再上传');
+          }
+          const contentType = parseResponse.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            throw new Error(t('generation.courseMaterialParseFailed'));
+          }
           const errorData = await parseResponse.json();
           throw new Error(errorData.error || t('generation.courseMaterialParseFailed'));
         }
