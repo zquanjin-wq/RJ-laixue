@@ -85,6 +85,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ## 推荐：自动化 dump
 
+> ✅ **已就绪**：`.github/workflows/supabase-schema-snapshot.yml` 已创建。  
+> 配 3 个 GitHub Secret 后即生效（详见 workflow 顶部注释）。
+
 可以在 GitHub Actions 每周自动 dump 一次（`.github/workflows/schema-snapshot.yml`）：
 
 ```yaml
