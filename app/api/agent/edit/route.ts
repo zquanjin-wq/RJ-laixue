@@ -8,6 +8,7 @@
 import type { NextRequest } from 'next/server';
 import type { AgentEvent, AgentMessage } from '@earendil-works/pi-agent-core';
 import { isMaicEditorEnabled } from '@/lib/config/feature-flags';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import type { LlmStage } from '@/lib/server/model-routes';
 import { createCallLlmStreamFn } from '@/lib/agent/runtime/stream-fn';
@@ -85,6 +86,16 @@ export async function POST(req: NextRequest) {
   if (!isMaicEditorEnabled()) {
     return new Response('Not found', { status: 404 });
   }
+
+  // ── Auth + rate limit（RJ 加固）─────────────────────────────────
+  // 上游此路由零鉴权（BYOK 模式，用户烧自己的 key）；RJ 服务端统一配
+  // MiniMax，未鉴权调用会直接烧 RJ 配额。编辑是作者侧能力，限定
+  // teacher/admin；一个 agent 回合可能触发多轮工具调用（含 scene 级
+  // 生成），窗口给 60s/10 次，手工编辑够用、脚本滥用被挡。
+  const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+  if (!auth.ok) return auth.response;
+  const rl = rateLimitByUser(auth.user.id, 'agent-edit', 10, 60_000);
+  if (!rl.ok) return rl.response;
 
   const body = (await req.json()) as AgentEditBody & Record<string, unknown>;
   const message = (body.message ?? '').toString().trim();
