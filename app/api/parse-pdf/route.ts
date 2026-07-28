@@ -67,13 +67,9 @@ export async function POST(req: NextRequest) {
           if (e.code === 'UNAUTHENTICATED') {
             return apiError('UNAUTHENTICATED', 401, e.message);
           }
-          return apiError('STORAGE_FETCH_FAILED', 404, e.message);
+          return apiError('UPSTREAM_ERROR', 404, e.message);
         }
-        return apiError(
-          'STORAGE_FETCH_FAILED',
-          404,
-          e instanceof Error ? e.message : '拉取文件失败',
-        );
+        return apiError('UPSTREAM_ERROR', 404, e instanceof Error ? e.message : '拉取文件失败');
       }
       pdfFileName = material.fileName;
 

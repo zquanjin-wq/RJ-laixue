@@ -7,6 +7,7 @@ import {
 import { PDF_PROVIDERS } from '@/lib/pdf/constants';
 import type { PDFProviderId } from '@/lib/pdf/types';
 import type { ParsedPdfContent } from '@/lib/types/pdf';
+import type { DocumentExtractorProviderId } from '@/lib/document/types';
 import {
   documentArtifactToParsedPdfContent,
   getDocumentExtractorProvider,
@@ -104,13 +105,9 @@ export async function POST(req: NextRequest) {
           if (e.code === 'UNAUTHENTICATED') {
             return apiError('UNAUTHENTICATED', 401, e.message);
           }
-          return apiError('STORAGE_FETCH_FAILED', 404, e.message);
+          return apiError('UPSTREAM_ERROR', 404, e.message);
         }
-        return apiError(
-          'STORAGE_FETCH_FAILED',
-          404,
-          e instanceof Error ? e.message : '拉取文件失败',
-        );
+        return apiError('UPSTREAM_ERROR', 404, e instanceof Error ? e.message : '拉取文件失败');
       }
       fileName = material.fileName;
       const mimeType = normalizeDocumentMimeType({
@@ -267,7 +264,7 @@ async function runExtraction(opts: {
   providerId: PDFProviderId;
   apiKey?: string;
   baseUrl?: string;
-  resolvedProviderIdHolder: { current: PDFProviderId | undefined };
+  resolvedProviderIdHolder: { current: DocumentExtractorProviderId | undefined };
 }): Promise<Response> {
   const { mimeType, buffer, fileName, fileSize, providerId, apiKey, baseUrl } = opts;
 
