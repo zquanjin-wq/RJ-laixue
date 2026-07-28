@@ -7,7 +7,10 @@ import {
 import type { PDFProviderId } from '@/lib/pdf/types';
 import type { ParsedPdfContent } from '@/lib/types/pdf';
 import { documentArtifactToParsedPdfContent, extractDocument } from '@/lib/document';
-import { fetchCourseMaterialFromStorage, MaterialFetchError } from '@/lib/server/course-asset-storage';
+import {
+  fetchCourseMaterialFromStorage,
+  MaterialFetchError,
+} from '@/lib/server/course-asset-storage';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
@@ -31,9 +34,11 @@ export async function POST(req: NextRequest) {
 
     if (contentType.includes('application/json')) {
       const session = await getServerSupabase();
-      const { data: { user: sessionUser } } = await session.auth.getUser();
+      const {
+        data: { user: sessionUser },
+      } = await session.auth.getUser();
       if (!sessionUser) {
-        return apiError('UNAUTHORIZED', 401, '请先登录后再使用 path 模式解析 PDF');
+        return apiError('UNAUTHENTICATED', 401, '请先登录后再使用 path 模式解析 PDF');
       }
       const callerUserId = sessionUser.id;
 
@@ -59,12 +64,16 @@ export async function POST(req: NextRequest) {
           if (e.code === 'FORBIDDEN') {
             return apiError('FORBIDDEN', 403, e.message);
           }
-          if (e.code === 'UNAUTHORIZED') {
-            return apiError('UNAUTHORIZED', 401, e.message);
+          if (e.code === 'UNAUTHENTICATED') {
+            return apiError('UNAUTHENTICATED', 401, e.message);
           }
           return apiError('STORAGE_FETCH_FAILED', 404, e.message);
         }
-        return apiError('STORAGE_FETCH_FAILED', 404, e instanceof Error ? e.message : '拉取文件失败');
+        return apiError(
+          'STORAGE_FETCH_FAILED',
+          404,
+          e instanceof Error ? e.message : '拉取文件失败',
+        );
       }
       pdfFileName = material.fileName;
 
@@ -92,7 +101,10 @@ export async function POST(req: NextRequest) {
       });
       const result = documentArtifactToParsedPdfContent(artifact);
       const rawText = result.text || '';
-      const text = rawText.length > MAX_PDF_CONTENT_CHARS ? rawText.substring(0, MAX_PDF_CONTENT_CHARS) : rawText;
+      const text =
+        rawText.length > MAX_PDF_CONTENT_CHARS
+          ? rawText.substring(0, MAX_PDF_CONTENT_CHARS)
+          : rawText;
       const resultWithMetadata: ParsedPdfContent = {
         ...result,
         text,
@@ -158,7 +170,10 @@ export async function POST(req: NextRequest) {
     const result = documentArtifactToParsedPdfContent(artifact);
 
     const rawText = result.text || '';
-    const text = rawText.length > MAX_PDF_CONTENT_CHARS ? rawText.substring(0, MAX_PDF_CONTENT_CHARS) : rawText;
+    const text =
+      rawText.length > MAX_PDF_CONTENT_CHARS
+        ? rawText.substring(0, MAX_PDF_CONTENT_CHARS)
+        : rawText;
     const resultWithMetadata: ParsedPdfContent = {
       ...result,
       text,

@@ -23,7 +23,7 @@ export interface FetchedCourseMaterial {
  * 不允许 .. 跳出;projectId / courseId 仅作越权检查,实际不查表(路由层负责鉴权)。
  *
  * 返回的 Error 实例带一个 `code` 字段,让路由层区分:
- *   - 'UNAUTHORIZED' (401):没传 callerUserId(路由层忘补登录校验)
+ *   - 'UNAUTHENTICATED' (401):没传 callerUserId(路由层忘补登录校验)
  *   - 'FORBIDDEN'    (403):pending 前缀但 userId 不匹配
  *   - 其他           (404):路径不合法或文件不存在
  */
@@ -54,7 +54,7 @@ export async function fetchCourseMaterialFromStorage(
   if (isPending) {
     if (!callerUserId) {
       throw new MaterialFetchError(
-        'UNAUTHORIZED',
+        'UNAUTHENTICATED',
         'pending 路径必须先校验调用方登录态,缺少 callerUserId',
       );
     }
@@ -87,7 +87,7 @@ export async function fetchCourseMaterialFromStorage(
 
 export class MaterialFetchError extends Error {
   constructor(
-    public code: 'INVALID_ID' | 'INVALID_PATH' | 'NOT_FOUND' | 'UNAUTHORIZED' | 'FORBIDDEN',
+    public code: 'INVALID_ID' | 'INVALID_PATH' | 'NOT_FOUND' | 'UNAUTHENTICATED' | 'FORBIDDEN',
     message: string,
   ) {
     super(message);

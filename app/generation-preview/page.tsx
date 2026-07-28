@@ -470,7 +470,9 @@ function GenerationPreviewContent() {
         // Fallback to the provider's built-in defaultModelId when the user's
         // current selection did not pin a specific model (e.g. settings store
         // only carries providerId+voiceId without a modelId).
-        const providerDefaults = (TTS_PROVIDERS as Record<string, { defaultModelId?: string } | undefined>)[s.ttsProviderId];
+        const providerDefaults = (
+          TTS_PROVIDERS as Record<string, { defaultModelId?: string } | undefined>
+        )[s.ttsProviderId];
         const fallbackModelId = providerDefaults?.defaultModelId;
         const teacherVoiceConfig = {
           providerId: s.ttsProviderId,

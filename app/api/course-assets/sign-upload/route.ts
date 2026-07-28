@@ -76,8 +76,11 @@ async function ensureBucket() {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSupabase();
-    const { data: { user } } = await session.auth.getUser();
-    if (!user) return NextResponse.json({ success: false, error: '请先登录后再上传资产' }, { status: 401 });
+    const {
+      data: { user },
+    } = await session.auth.getUser();
+    if (!user)
+      return NextResponse.json({ success: false, error: '请先登录后再上传资产' }, { status: 401 });
 
     const body = (await request.json()) as {
       courseId?: string;
@@ -92,7 +95,11 @@ export async function POST(request: NextRequest) {
     if (!courseId || !kind || !hash || !contentType || !extension) {
       return NextResponse.json({ success: false, error: '资产上传参数无效' }, { status: 400 });
     }
-    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(courseId) || !/^[a-f0-9]{64}$/.test(hash) || !/^[a-z0-9]{2,8}$/.test(extension)) {
+    if (
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(courseId) ||
+      !/^[a-f0-9]{64}$/.test(hash) ||
+      !/^[a-z0-9]{2,8}$/.test(extension)
+    ) {
       return NextResponse.json({ success: false, error: '资产上传参数格式无效' }, { status: 400 });
     }
 
@@ -144,7 +151,10 @@ export async function POST(request: NextRequest) {
     const pendingMatch = courseId.match(/^pending-[a-zA-Z0-9_-]{1,32}$/);
     if (pblMatch) {
       if (pblMatch[1] !== user.id) {
-        return NextResponse.json({ success: false, error: '您没有权限上传此 PBL 项目的资产' }, { status: 403 });
+        return NextResponse.json(
+          { success: false, error: '您没有权限上传此 PBL 项目的资产' },
+          { status: 403 },
+        );
       }
       pathPrefix = `pbl/${pblMatch[2]}/${kind}`;
     } else if (pendingMatch) {
@@ -152,24 +162,40 @@ export async function POST(request: NextRequest) {
       // 安全性靠后续 extract-document 时通过 path 中的 pending 标识 + user.id 二次校验。
       pathPrefix = `pending/${user.id}/${kind}`;
     } else {
-      const { data: course } = await service.from('courses').select('created_by').eq('id', courseId).maybeSingle();
+      const { data: course } = await service
+        .from('courses')
+        .select('created_by')
+        .eq('id', courseId)
+        .maybeSingle();
       if (!course) {
         return NextResponse.json({ success: false, error: '课程不存在' }, { status: 404 });
       }
       if (course.created_by !== user.id) {
-        const { data: profile } = await service.from('profiles').select('role').eq('id', user.id).maybeSingle();
+        const { data: profile } = await service
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
         if (profile?.role !== 'admin') {
-          return NextResponse.json({ success: false, error: '您没有权限上传此课程的资产' }, { status: 403 });
+          return NextResponse.json(
+            { success: false, error: '您没有权限上传此课程的资产' },
+            { status: 403 },
+          );
         }
       }
       pathPrefix = `courses/${courseId}/${kind}`;
     }
 
     const path = `${pathPrefix}/${hash}.${extension}`;
-    const { data, error } = await service.storage.from(COURSE_ASSET_BUCKET).createSignedUploadUrl(path, { upsert: true });
+    const { data, error } = await service.storage
+      .from(COURSE_ASSET_BUCKET)
+      .createSignedUploadUrl(path, { upsert: true });
     if (error || !data) throw new Error(error?.message || '无法创建资产上传授权');
     const { data: publicData } = service.storage.from(COURSE_ASSET_BUCKET).getPublicUrl(path);
-    return NextResponse.json({ success: true, data: { path, token: data.token, publicUrl: publicData.publicUrl } });
+    return NextResponse.json({
+      success: true,
+      data: { path, token: data.token, publicUrl: publicData.publicUrl },
+    });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '资产上传授权失败' },

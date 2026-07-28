@@ -7,14 +7,7 @@ export type CourseAssetKind = 'images' | 'audio' | 'material';
  * 与 lib/document/mime.ts 的 COURSE_MATERIAL_ACCEPT 语义对齐,
  * 这里只取子集以保证 bucket 一致放行。
  */
-export const MATERIAL_EXTENSIONS = new Set([
-  'pdf',
-  'docx',
-  'pptx',
-  'txt',
-  'md',
-  'markdown',
-]);
+export const MATERIAL_EXTENSIONS = new Set(['pdf', 'docx', 'pptx', 'txt', 'md', 'markdown']);
 
 export const MATERIAL_MIME_TYPES: Record<string, string> = {
   pdf: 'application/pdf',

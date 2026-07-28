@@ -926,7 +926,7 @@ function HomePage() {
           </AnimatePresence>
         </motion.div>
       )}
-  {/* ─── Cloud Courses ─── */}
+      {/* ─── Cloud Courses ─── */}
       <CloudCourses />
       {/* Footer — flows with content, at the very end */}
       <div className="mt-auto pt-12 pb-4 text-center text-xs text-muted-foreground/40">
@@ -1368,10 +1368,7 @@ function ClassroomCard({
                   // is set. The `?editor=1` query string is a convention
                   // we propagate to the EditChromeRoot — it auto-enables
                   // the edit-mode toggle when the MAIC Editor flag is on.
-                  window.open(
-                    `/classroom/${classroom.id}?editor=1`,
-                    '_blank',
-                  );
+                  window.open(`/classroom/${classroom.id}?editor=1`, '_blank');
                 }}
               >
                 <Pencil className="size-3.5" />

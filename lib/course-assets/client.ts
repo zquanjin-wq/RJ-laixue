@@ -7,11 +7,7 @@ import {
   type CourseAssetKind,
 } from './shared';
 
-export {
-  COURSE_ASSET_BUCKET,
-  MATERIAL_MAX_BYTES,
-  type CourseAssetKind,
-} from './shared';
+export { COURSE_ASSET_BUCKET, MATERIAL_MAX_BYTES, type CourseAssetKind } from './shared';
 
 const DATA_URI = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/;
 
@@ -116,11 +112,20 @@ export async function uploadCourseBlob(
   kind: CourseAssetKind,
   blob: Blob,
 ): Promise<string> {
-  const contentType = blob.type || (kind === 'images' ? 'image/png' : kind === 'audio' ? 'audio/mpeg' : 'application/pdf');
+  const contentType =
+    blob.type ||
+    (kind === 'images' ? 'image/png' : kind === 'audio' ? 'audio/mpeg' : 'application/pdf');
   const hash = await hashBlob(blob);
   const extension = extensionFor(contentType, kind);
 
-  const signed = await requestSignedUpload({ courseId, kind, contentType, size: blob.size, hash, extension });
+  const signed = await requestSignedUpload({
+    courseId,
+    kind,
+    contentType,
+    size: blob.size,
+    hash,
+    extension,
+  });
   const { error } = await supabase.storage
     .from(COURSE_ASSET_BUCKET)
     .uploadToSignedUrl(signed.path, signed.token, blob, { contentType, upsert: true });
@@ -186,7 +191,10 @@ export async function uploadCourseTextMaterial(
   });
   const { error } = await supabase.storage
     .from(COURSE_ASSET_BUCKET)
-    .uploadToSignedUrl(signed.path, signed.token, blob, { contentType: 'text/plain', upsert: true });
+    .uploadToSignedUrl(signed.path, signed.token, blob, {
+      contentType: 'text/plain',
+      upsert: true,
+    });
   if (error) throw new Error(`文本作业直传失败:${error.message}`);
   return { path: signed.path, size: blob.size };
 }

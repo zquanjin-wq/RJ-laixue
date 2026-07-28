@@ -13,7 +13,10 @@ import {
   selectDocumentExtractorProvider,
 } from '@/lib/document';
 import { normalizeDocumentMimeType } from '@/lib/document/mime';
-import { fetchCourseMaterialFromStorage, MaterialFetchError } from '@/lib/server/course-asset-storage';
+import {
+  fetchCourseMaterialFromStorage,
+  MaterialFetchError,
+} from '@/lib/server/course-asset-storage';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
@@ -66,9 +69,11 @@ export async function POST(req: NextRequest) {
       // path 模式必须登录:任意 path 都可能指向 pending/{userId}/...,如果允许匿名
       // 调用,userId 比对形同虚设(无登录用户就没 userId 可传)。
       const session = await getServerSupabase();
-      const { data: { user: sessionUser } } = await session.auth.getUser();
+      const {
+        data: { user: sessionUser },
+      } = await session.auth.getUser();
       if (!sessionUser) {
-        return apiError('UNAUTHORIZED', 401, '请先登录后再使用 path 模式提取材料');
+        return apiError('UNAUTHENTICATED', 401, '请先登录后再使用 path 模式提取材料');
       }
       const callerUserId = sessionUser.id;
 
@@ -83,7 +88,8 @@ export async function POST(req: NextRequest) {
       if (!courseId || !path) {
         return apiError('MISSING_REQUIRED_FIELD', 400, '请提供 courseId 和 path');
       }
-      const effectiveProviderId = (providerId as PDFProviderId | undefined) || ('unpdf' as PDFProviderId);
+      const effectiveProviderId =
+        (providerId as PDFProviderId | undefined) || ('unpdf' as PDFProviderId);
       fileName = path.split('/').pop() || 'document';
 
       let material;
@@ -95,12 +101,16 @@ export async function POST(req: NextRequest) {
           if (e.code === 'FORBIDDEN') {
             return apiError('FORBIDDEN', 403, e.message);
           }
-          if (e.code === 'UNAUTHORIZED') {
-            return apiError('UNAUTHORIZED', 401, e.message);
+          if (e.code === 'UNAUTHENTICATED') {
+            return apiError('UNAUTHENTICATED', 401, e.message);
           }
           return apiError('STORAGE_FETCH_FAILED', 404, e.message);
         }
-        return apiError('STORAGE_FETCH_FAILED', 404, e instanceof Error ? e.message : '拉取文件失败');
+        return apiError(
+          'STORAGE_FETCH_FAILED',
+          404,
+          e instanceof Error ? e.message : '拉取文件失败',
+        );
       }
       fileName = material.fileName;
       const mimeType = normalizeDocumentMimeType({
@@ -150,19 +160,29 @@ export async function POST(req: NextRequest) {
       fileName: documentFile.name,
     });
     if (!mimeType) {
-      return apiError('INVALID_REQUEST', 400, `Unsupported course material type for "${documentFile.name}"`);
+      return apiError(
+        'INVALID_REQUEST',
+        400,
+        `Unsupported course material type for "${documentFile.name}"`,
+      );
     }
 
     let provider = preferredProviderId
       ? getDocumentExtractorProvider(preferredProviderId)
       : undefined;
     if (preferredProviderId && !provider) {
-      return apiError('INVALID_REQUEST', 400, `Unknown document extractor provider: ${preferredProviderId}`);
+      return apiError(
+        'INVALID_REQUEST',
+        400,
+        `Unknown document extractor provider: ${preferredProviderId}`,
+      );
     }
     if (provider && !supportsMimeType(provider, mimeType)) provider = undefined;
 
     try {
-      provider = provider || selectDocumentExtractorProvider({ mimeType, requiredCapabilities: { text: true } });
+      provider =
+        provider ||
+        selectDocumentExtractorProvider({ mimeType, requiredCapabilities: { text: true } });
     } catch (error) {
       return apiError(
         'INVALID_REQUEST',
@@ -177,7 +197,10 @@ export async function POST(req: NextRequest) {
     if (isSelfHostedMinerUProvider(provider.id) && !managed && !clientBaseUrl) {
       const cloudProvider = getDocumentExtractorProvider('mineru-cloud');
       const cloudManaged = isServerConfiguredProvider('pdf', 'mineru-cloud');
-      const cloudApiKey = resolvePDFApiKey('mineru-cloud', cloudManaged ? undefined : apiKey || undefined);
+      const cloudApiKey = resolvePDFApiKey(
+        'mineru-cloud',
+        cloudManaged ? undefined : apiKey || undefined,
+      );
       if (cloudProvider && supportsMimeType(cloudProvider, mimeType) && cloudApiKey) {
         provider = cloudProvider;
         managed = cloudManaged;
@@ -251,7 +274,10 @@ async function runExtraction(opts: {
   let provider = getDocumentExtractorProvider(providerId);
   if (!provider || !supportsMimeType(provider, mimeType)) {
     try {
-      provider = selectDocumentExtractorProvider({ mimeType, requiredCapabilities: { text: true } });
+      provider = selectDocumentExtractorProvider({
+        mimeType,
+        requiredCapabilities: { text: true },
+      });
     } catch (error) {
       return apiError(
         'INVALID_REQUEST',
@@ -267,7 +293,10 @@ async function runExtraction(opts: {
   if (isSelfHostedMinerUProvider(provider.id) && !managed && !clientBaseUrl) {
     const cloudProvider = getDocumentExtractorProvider('mineru-cloud');
     const cloudManaged = isServerConfiguredProvider('pdf', 'mineru-cloud');
-    const cloudApiKey = resolvePDFApiKey('mineru-cloud', cloudManaged ? undefined : apiKey || undefined);
+    const cloudApiKey = resolvePDFApiKey(
+      'mineru-cloud',
+      cloudManaged ? undefined : apiKey || undefined,
+    );
     if (cloudProvider && supportsMimeType(cloudProvider, mimeType) && cloudApiKey) {
       provider = cloudProvider;
       managed = cloudManaged;
@@ -316,7 +345,8 @@ function trimAndWrap(
   // 服务端截断到 MAX_PDF_CONTENT_CHARS,确保响应体永远 < 4.5MB(Vercel 限制)。
   // 客户端拿到后再做最终截断只用于本地展示,不再承担"防止 413"职责。
   const rawText = result.text || '';
-  const text = rawText.length > MAX_PDF_CONTENT_CHARS ? rawText.substring(0, MAX_PDF_CONTENT_CHARS) : rawText;
+  const text =
+    rawText.length > MAX_PDF_CONTENT_CHARS ? rawText.substring(0, MAX_PDF_CONTENT_CHARS) : rawText;
   return {
     ...result,
     text,
