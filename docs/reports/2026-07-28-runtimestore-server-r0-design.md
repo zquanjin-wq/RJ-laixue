@@ -1,7 +1,14 @@
 # R0 设计文档：RuntimeStore 服务端化 + DocumentStore 服务端化（合并设计）
 
 > 日期：2026-07-28
-> 状态：**待评审**（评审通过才动代码，对应路线图 R0 阶段）
+> 状态：**已拍板**（2026-07-28 晚，负责人逐条同意）：
+> ① mergeLearner 必须携带 access-code 绑定流程签发的短期 merge token，
+>    客户端自报 fromLearnerKey 一律 403（第 5 节）——**同意**；
+> ② 留存策略：archived 会话保留 24 个月后导出对象存储再物理清理（第 7 节）——**同意**；
+> ③ RLS 不开教师口子，教师聚合走 API 层授权（第 1.3 节）——**同意**。
+> 另：脏数据课程 `1I_kD25GX1` 已被负责人直接删除，拍板①的数据修复不再需要，
+> 生成链路误分类 bug 立案（`2026-07-28-agent-text-action-leak.md`）仍有效。
+> 下一步：R1 服务端 adapter（契约测试对服务端实现全绿为验收）。
 > 依据：`docs/reports/2026-07-28-runtimestore-server-first-roadmap.md`（`9b9d768c`，已拍板）
 > 范围：schema + RLS + seq/CAS + 幂等键 + 契约版本化 + 容量/留存 + 弱网 outbox +
 > mergeLearner 服务端实现 + DocumentStore 服务端化合并设计 + 私有化可替换推论。
