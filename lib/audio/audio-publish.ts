@@ -1,4 +1,4 @@
-﻿import type { Action, SpeechAction } from '@/lib/types/action';
+import type { Action, SpeechAction } from '@/lib/types/action';
 import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
@@ -231,17 +231,21 @@ async function generateTTSForText(
 
   const json = await response.json();
 
-  if (!json.success || !json.data?.base64) {
+  // /api/generate/tts 的 apiSuccess 是扁平结构 { success, audioId, base64, format }
+  //（lib/server/api-response.ts）。历史上这里按嵌套 { data: { base64 } } 解析，
+  // 导致发布期 TTS 重生成 100% 抛"TTS 返回数据缺失"。两种结构都兼容。
+  const base64Payload: string | undefined = json.base64 ?? json.data?.base64;
+  if (!json.success || !base64Payload) {
     throw new Error(json.message || json.error || 'TTS 返回数据缺失');
   }
 
-  const binary = atob(json.data.base64);
+  const binary = atob(base64Payload);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
 
-  const format = json.data.format || 'mp3';
+  const format = json.format ?? json.data?.format ?? 'mp3';
 
   return { data: bytes.buffer as ArrayBuffer, format };
 }
