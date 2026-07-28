@@ -74,3 +74,6 @@ kill switch must remain tested before proposing a primary-read task.
 第二轮 Preview 读失败将额外记录标准化的浏览器异常名称，以及更细的本地存储
 类别（模式缺失、不可用、版本、事务或 storage 读取）。这些字段均为枚举，仍不
 包含原始异常文本或课程数据。
+
+若仍发生读取失败，完整异常仅输出到启用 Preview parity 开关的浏览器 Console，
+供受控的人工排障使用；服务端诊断端点继续只接收枚举字段。

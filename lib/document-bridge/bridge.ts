@@ -223,6 +223,16 @@ export async function compareLegacyDocument(
     return outcome;
   } catch (error) {
     const errorCode = parityFailureCode(error);
+    // This path only runs when the explicitly enabled Preview parity flag is
+    // on. Keep the original exception in that browser's console for one-shot
+    // diagnosis, but never transmit its message (which may contain app data)
+    // to the server-side diagnostics endpoint.
+    log.warn('Document parity read failed (local Preview console only).', {
+      courseId,
+      errorCode,
+      errorPhase: phase,
+      error,
+    });
     reportDocumentParityDiagnostic({
       outcome: errorCode === 'identity' ? 'identity' : 'read_failure',
       durationMs: performance.now() - startedAt,
