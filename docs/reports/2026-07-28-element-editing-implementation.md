@@ -39,17 +39,16 @@
 
 ## 4. ⚠️ 合并 main 前必须处理的两个 fork 集成缺口
 
-### 4.1 `/api/agent/edit` 无 api-guard（安全，P0）
+### 4.1 ~~`/api/agent/edit` 无 api-guard~~（已修复，`e372d266`）
 
 - 上游该路由**零鉴权**（上游是 BYOK 模型，用户烧自己的 key）；RJ 是服务端统一配 MiniMax，**未鉴权调用会直接烧 RJ 的 LLM 配额**
-- 现状：路由仅有 `isMaicEditorEnabled()` 开关，无登录/角色/限速
-- 处置：接 `requireAuthOrTeacher` + `rateLimitByUser`（`lib/server/api-guard.ts`），与 PR1 对 `/api/generate/*` 的加固同标准。dry-run 报告 P1-#8 已预告此 hook 时机
+- 处置已完成：接 `requireAuthOrTeacher(['teacher','admin'])` + `rateLimitByUser(uid, 'agent-edit', 10, 60s)`，guard 在 body 解析之前；4 个独立测试覆盖拒绝路径与顺序（`tests/server/agent-edit-route-guard.test.ts`，4/4 通过 + tsc 双通过，合规约 §3）
 
-### 4.2 编辑器开关语义错位（功能，P1）
+### 4.2 ~~编辑器开关语义错位~~（排查完毕，无需改代码）
 
-- 上游用 `isMaicEditorEnabled()`（env flag `NEXT_PUBLIC_MAIC_EDITOR_ENABLED`）门控 agent 路由 + `EditChromeRoot` + `stage.tsx` 入口
-- RJ 已改为 **URL 区分**（`/classroom/[id]?editor=1`），CLAUDE.md 明确"isMaicEditorEnabled() 不再用"
-- 需确认：Vercel env 里该 flag 的实际取值；agent 面板入口与 URL 模式的衔接需人工走查
+- 实证：`agentEnabled = authoringEnabled || scene.type === 'interactive'`（`EditChromeRoot.tsx:83`）——agent 面板由**场景能力注册表**驱动，不读 env flag；它挂载在 RJ 老师生产在用的 EditChromeRoot 右栏（`RightRailTabs`）
+- env flag `NEXT_PUBLIC_MAIC_EDITOR_ENABLED` 只门控 EditChromeRoot 本身是否渲染——RJ 生产编辑器在用 ⇒ 该 flag 在 Vercel 必已为 `true`（CLAUDE.md"不再用"指的是已删除的旧拼写 `MIAC` flag）
+- 结论：**无需改代码**，agent 面板会随编辑器表面自然出现；最终确认并入 owner 冒烟清单
 
 ## 5. 未验证项（不影响代码正确性，影响体验）
 
@@ -71,7 +70,11 @@
 
 ## 7. 下一步
 
-1. owner 在 Vercel preview（`feat/element-editing-v031`）冒烟：确认 agent 面板出现、4 旧工具正常、`edit_elements` 端到端可用
-2. Kimi 补 §4.1 api-guard（~1h，含测试）
-3. 确认 §4.2 开关语义（~30min）
-4. 以上齐了 → PR 合 main
+1. ~~Kimi 补 §4.1 api-guard~~ ✅ 已完成（`e372d266`）
+2. ~~确认 §4.2 开关语义~~ ✅ 排查完毕，无需改代码
+3. owner 在 Vercel preview（`feat/element-editing-v031`）冒烟，清单：
+   - 打开 `/classroom/[id]?editor=1`，确认右栏 AI 面板出现
+   - 4 个旧工具回归（重生成场景/交互页编辑）
+   - **`edit_elements` 端到端**："把标题改成红色"类指令 → JSON Patch → 画布精准应用 → 撤销可用（MiniMax M2.7 Patch 质量的最终考场）
+   - 未登录/learner 访问 `/api/agent/edit` 应 401/403（api-guard 生效）
+4. 冒烟通过 → PR 合 main（建议顺手开 main 分支保护，见 §6 教训）
