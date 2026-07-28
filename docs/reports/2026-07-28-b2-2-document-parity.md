@@ -77,3 +77,5 @@ kill switch must remain tested before proposing a primary-read task.
 
 若仍发生读取失败，完整异常仅输出到启用 Preview parity 开关的浏览器 Console，
 供受控的人工排障使用；服务端诊断端点继续只接收枚举字段。
+项目 logger 对 `Error` 的 JSON 序列化会丢失正文，因此 Preview Console 使用原生
+`console.warn` 输出“异常名称: 异常信息”；该文本不会发往服务器。

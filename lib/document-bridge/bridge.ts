@@ -227,11 +227,16 @@ export async function compareLegacyDocument(
     // on. Keep the original exception in that browser's console for one-shot
     // diagnosis, but never transmit its message (which may contain app data)
     // to the server-side diagnostics endpoint.
+    const localErrorDetail =
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    // Do not route this through createLogger: its JSON serialization turns an
+    // Error into `{}`. This text remains in the opt-in Preview browser console
+    // only and is never posted to /api/client-diagnostics.
+    console.warn('[DocumentBridge] Document parity read failed (local Preview console only):', localErrorDetail);
     log.warn('Document parity read failed (local Preview console only).', {
       courseId,
       errorCode,
       errorPhase: phase,
-      error,
     });
     reportDocumentParityDiagnostic({
       outcome: errorCode === 'identity' ? 'identity' : 'read_failure',
