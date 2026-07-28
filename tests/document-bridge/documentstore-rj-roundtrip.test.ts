@@ -231,7 +231,7 @@ describe('DocumentStore × RJ 文档形状 round-trip（真实存储后端）', 
     const courseId = 'course-widened-missing-title';
     const bad = { ...interactiveScene(courseId, 0) } as Record<string, unknown>;
     delete bad.title;
-    const snap = snapshot(courseId, [bad as RjScene]);
+    const snap = snapshot(courseId, [bad as unknown as RjScene]);
 
     await expect(bridgeLegacyDocument(snap)).resolves.toBe('skipped');
     expect(mocks.report).toHaveBeenCalledWith(
