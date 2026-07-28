@@ -47,3 +47,5 @@ Do not switch any course read/write path to DocumentStore until a controlled
 deployment has collected representative parity data with the flags enabled.
 The evidence must show no unexplained mismatch/read-failure pattern, and the
 kill switch must remain tested before proposing a primary-read task.
+
+<!-- Trigger Preview deployment for B2.2 validation. -->
