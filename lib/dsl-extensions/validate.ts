@@ -200,10 +200,31 @@ export function validateStageExtended(stage: unknown): ExtendedValidationResult 
 
 /**
  * 包装上游 validateScene：先跑 DSL，再跑 RJ 扩展校验。
+ *
+ * Widened-kind 放行（2026-07-28 拍板，方案 A）：DSL 只拥有 slide/quiz，
+ * 上游 BrowserDocumentStore 的设计意图是"app 注入接受自有 kind 的
+ * validator，且 gate 保持 fail-loud"。因此当 dslValidateScene 的
+ * 唯一错误是 `/type` 的 unknown scene type、且类型属于 RJ 注册种类
+ * （interactive/pbl，即 lib/types/stage.ts 的 AppSceneContent 扩展判别）时，
+ * 吞掉该单一判别错误，改由 validateWidenedContent 做 RJ 内容校验；
+ * DSL 的任何其他错误（id/stageId/title/order/content/actions）仍然失败。
  */
 export function validateSceneExtended(scene: unknown): ExtendedValidationResult {
   const dslResult = dslValidateScene(scene);
-  if (!dslResult.valid) return dslResult;
+  if (!dslResult.valid) {
+    const t = (scene as { type?: unknown } | null)?.type;
+    const hasUnknownKindIssue = dslResult.errors.some(isUnknownSceneKindIssue);
+    const nonKindIssues = dslResult.errors.filter((e) => !isUnknownSceneKindIssue(e));
+    const isWidenedKind = typeof t === 'string' && WIDENED_SCENE_KINDS.has(t);
+    if (!isWidenedKind || !hasUnknownKindIssue || nonKindIssues.length > 0) {
+      return dslResult;
+    }
+    // 仅类型判别不拥有该 kind；RJ 内容校验 fail-loud（不走 guard mode）。
+    const widenedIssues = validateWidenedContent(scene as Record<string, unknown>, t);
+    if (widenedIssues.length > 0) {
+      return { valid: false, errors: widenedIssues };
+    }
+  }
 
   const mode = readGuardMode();
   const extIssues = validateSceneExtensions(scene);
@@ -215,6 +236,59 @@ export function validateSceneExtended(scene: unknown): ExtendedValidationResult 
     return { valid: true, warnings: extIssues };
   }
   return { valid: true };
+}
+
+/** RJ 注册的 widened scene kinds（AppSceneContent 中 DSL 不拥有的判别）。 */
+const WIDENED_SCENE_KINDS = new Set(['interactive', 'pbl']);
+
+/** 识别 DSL checkScene 对未知 scene 类型报出的 `/type` 错误。 */
+function isUnknownSceneKindIssue(issue: ValidationIssue): boolean {
+  return issue.path === '/type' && issue.message.startsWith('unknown scene type');
+}
+
+/**
+ * widened kind 的 RJ 内容校验（结构不变量，fail-loud，与资产守卫的
+ * warn/error 开关无关）：
+ * - content.type 必须与 scene.type 一致（与 DSL 对 slide/quiz 的要求对齐）；
+ * - interactive：必须有 https 的 content.url，或非空的 content.html
+ *   （真实课程存在 url 为空、html 内嵌的合法形态）；
+ * - pbl：必须有对象形态的 content.projectConfig。
+ */
+function validateWidenedContent(
+  scene: Record<string, unknown>,
+  kind: string,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const content = scene.content;
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    // dslValidateScene 已会报告非对象 content；防御性兜底。
+    return [{ path: '/content', message: 'scene `content` must be an object' }];
+  }
+  const c = content as Record<string, unknown>;
+  if (c.type !== kind) {
+    issues.push({
+      path: '/content/type',
+      message: `content type ${JSON.stringify(c.type)} does not match scene type ${JSON.stringify(kind)}`,
+    });
+  }
+  if (kind === 'interactive') {
+    const hasHttpsUrl = typeof c.url === 'string' && c.url.startsWith('https://');
+    const hasHtml = typeof c.html === 'string' && c.html.length > 0;
+    if (!hasHttpsUrl && !hasHtml) {
+      issues.push({
+        path: '/content',
+        message: 'interactive content requires an https `url` or a non-empty `html`',
+      });
+    }
+  } else if (kind === 'pbl') {
+    if (!c.projectConfig || typeof c.projectConfig !== 'object' || Array.isArray(c.projectConfig)) {
+      issues.push({
+        path: '/content/projectConfig',
+        message: 'pbl content requires an object `projectConfig`',
+      });
+    }
+  }
+  return issues;
 }
 
 export { ASSET_URL_PATHS, CLOUD_PERSISTED };

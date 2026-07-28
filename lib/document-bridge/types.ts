@@ -2,7 +2,7 @@ import type { Scene, Stage } from '@/lib/types/stage';
 import type { StageOutlinesRecord } from '@/lib/utils/database';
 
 /** Increment only when the bridge representation itself changes. */
-export const DOCUMENT_BRIDGE_VERSION = 'b2.1';
+export const DOCUMENT_BRIDGE_VERSION = 'b2.2';
 /** Increment only when the Dexie/DocumentStore parity representation changes. */
 export const DOCUMENT_PARITY_VERSION = 'b2.2';
 

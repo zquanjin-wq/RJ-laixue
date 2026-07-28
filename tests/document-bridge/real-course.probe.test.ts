@@ -94,13 +94,10 @@ describe.runIf(courseData)('真实课程探针', () => {
     }
   });
 
-  it('完整课程：bridge 应因 interactive 场景失败（复现 Preview 现象）', async () => {
+  it('完整课程：widened-kind 放行后 bridge 应 migrated 且 parity 应 match', async () => {
     const snap = makeSnapshot(courseData.scenes);
-    await expect(bridgeLegacyDocument(snap)).resolves.toBe('skipped');
-    expect(mocks.report).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'failure', errorCode: 'validation' }),
-    );
-    await expect(compareLegacyDocument(snap, 'cloud_hydration')).resolves.toBe('missing_document');
+    await expect(bridgeLegacyDocument(snap)).resolves.toBe('migrated');
+    await expect(compareLegacyDocument(snap, 'cloud_hydration')).resolves.toBe('match');
   });
 
   it('剔除 interactive 场景后：bridge 应 migrated 且 parity 应 match', async () => {

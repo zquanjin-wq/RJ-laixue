@@ -134,6 +134,31 @@ function interactiveScene(stageId: string, order: number): RjScene {
   } as unknown as RjScene;
 }
 
+function pblScene(stageId: string, order: number): RjScene {
+  return {
+    id: `pbl-${order}`,
+    stageId,
+    title: `PBL ${order}`,
+    order,
+    seq: order,
+    type: 'pbl',
+    content: { type: 'pbl', projectConfig: { title: '项目制学习', milestones: [] } },
+  } as unknown as RjScene;
+}
+
+/** url 为空且无 html 的 interactive：放行类型判别，但内容结构必须仍被拒。 */
+function malformedInteractiveScene(stageId: string, order: number): RjScene {
+  return {
+    id: `interactive-bad-${order}`,
+    stageId,
+    title: `Malformed interactive ${order}`,
+    order,
+    seq: order,
+    type: 'interactive',
+    content: { type: 'interactive', url: '' },
+  } as unknown as RjScene;
+}
+
 function snapshot(
   id: string,
   scenes: RjScene[],
@@ -177,19 +202,40 @@ describe('DocumentStore × RJ 文档形状 round-trip（真实存储后端）', 
     await expect(compareLegacyDocument(snap, 'cloud_hydration')).resolves.toBe('match');
   });
 
-  it('含 interactive 场景的课程：当前桥接无法复制（记录 widened-kind 缺口）', async () => {
-    // DSL validateScene 只拥有 slide/quiz；validateSceneExtended 先跑 DSL 校验，
-    // 因此 interactive/pbl 场景在 saveDocument 边界被拒。这意味着 B2.1/B2.2 的
-    // 影子路径结构性覆盖不了 v0.3.x 的扩展场景课程——此处固化为显性行为。
+  it('widened kind（interactive/pbl）放行后：影子复制与比对成立', async () => {
+    // 2026-07-28 拍板（方案 A）：validateSceneExtended 对 RJ 注册种类
+    // （interactive/pbl）吞掉 DSL 的 unknown-kind 判别错误，改走 RJ 内容校验。
     const courseId = 'HsxJTCOZuK'; // Preview 复现课程之一
-    const snap = snapshot(courseId, [slideScene(courseId, 0), interactiveScene(courseId, 1)]);
+    const snap = snapshot(courseId, [
+      slideScene(courseId, 0),
+      interactiveScene(courseId, 1),
+      pblScene(courseId, 2),
+    ]);
+
+    await expect(bridgeLegacyDocument(snap)).resolves.toBe('migrated');
+    await expect(compareLegacyDocument(snap, 'cloud_hydration')).resolves.toBe('match');
+  });
+
+  it('interactive 内容结构不合法（无 https url 且无 html）仍 fail-loud', async () => {
+    const courseId = 'course-bad-interactive';
+    const snap = snapshot(courseId, [malformedInteractiveScene(courseId, 0)]);
 
     await expect(bridgeLegacyDocument(snap)).resolves.toBe('skipped');
     expect(mocks.report).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'failure', errorCode: 'validation' }),
     );
-
-    // 影子库中没有任何写入 → 双读比对报 missing_document（而非 read_failure）。
     await expect(compareLegacyDocument(snap, 'cloud_hydration')).resolves.toBe('missing_document');
+  });
+
+  it('widened kind 的其余 DSL 错误不因放行被吞掉（缺 title 仍失败）', async () => {
+    const courseId = 'course-widened-missing-title';
+    const bad = { ...interactiveScene(courseId, 0) } as Record<string, unknown>;
+    delete bad.title;
+    const snap = snapshot(courseId, [bad as RjScene]);
+
+    await expect(bridgeLegacyDocument(snap)).resolves.toBe('skipped');
+    expect(mocks.report).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failure', errorCode: 'validation' }),
+    );
   });
 });
