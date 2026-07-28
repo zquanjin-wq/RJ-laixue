@@ -43,7 +43,10 @@ export type DocumentParityFailureCode =
   | 'indexeddb'
   | 'idb_version'
   | 'idb_state'
+  | 'idb_schema'
+  | 'idb_unavailable'
   | 'migration'
+  | 'storage'
   | 'identity'
   | 'unknown';
 
@@ -52,6 +55,19 @@ export type DocumentParityFailurePhase =
   | 'identity'
   | 'load_document'
   | 'fingerprint';
+
+/** Standardized browser exception names only; never an exception message. */
+export type DocumentParityErrorName =
+  | 'AbortError'
+  | 'DataError'
+  | 'InvalidStateError'
+  | 'NotFoundError'
+  | 'SecurityError'
+  | 'TransactionInactiveError'
+  | 'TypeError'
+  | 'VersionError'
+  | 'Error'
+  | 'Other';
 
 /** Identifies which safe read path supplied an observational document snapshot. */
 export type DocumentParitySource = 'legacy_dexie' | 'cloud_hydration';

@@ -147,6 +147,7 @@ describe('DocumentStore bridge fallback guarantee', () => {
         outcome: 'read_failure',
         errorCode: 'indexeddb',
         errorPhase: 'load_document',
+        errorName: 'Error',
       }),
     );
   });

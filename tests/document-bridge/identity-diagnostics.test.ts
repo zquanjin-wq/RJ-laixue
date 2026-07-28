@@ -80,6 +80,7 @@ describe('DocumentStore bridge diagnostics', () => {
       courseId: 'course-2',
       errorCode: 'idb_version',
       errorPhase: 'load_document',
+      errorName: 'VersionError',
     });
     await Promise.resolve();
 
@@ -100,6 +101,7 @@ describe('DocumentStore bridge diagnostics', () => {
       source: 'cloud_hydration',
       errorCode: 'idb_version',
       errorPhase: 'load_document',
+      errorName: 'VersionError',
     });
   });
 });

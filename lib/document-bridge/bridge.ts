@@ -13,6 +13,7 @@ import {
   DOCUMENT_PARITY_VERSION,
   type BridgeFailureCode,
   type DocumentParityFailureCode,
+  type DocumentParityErrorName,
   type DocumentParityFailurePhase,
   type LegacyDocumentSnapshot,
   type DocumentParitySource,
@@ -91,10 +92,31 @@ function parityFailureCode(error: unknown): DocumentParityFailureCode {
   const signal = `${name} ${message}`;
   if (/crypto|user id|authenticated/i.test(signal)) return 'identity';
   if (/migrat|dsl version/i.test(signal)) return 'migration';
+  if (/indexeddb is not defined|cannot read .*open/i.test(signal)) return 'idb_unavailable';
+  if (/objectstore|by-stage|stages|scenes|outlines/i.test(signal)) return 'idb_schema';
   if (/versionerror|version/i.test(signal)) return 'idb_version';
   if (/invalidstate|aborterror|transactioninactive/i.test(signal)) return 'idb_state';
+  if (/@openmaic\/storage/i.test(signal)) return 'storage';
   if (/indexeddb|idb|transaction|database|notfounderror/i.test(signal)) return 'indexeddb';
   return 'unknown';
+}
+
+function parityErrorName(error: unknown): DocumentParityErrorName {
+  const name = error instanceof Error ? error.name : '';
+  const recognized = new Set<DocumentParityErrorName>([
+    'AbortError',
+    'DataError',
+    'InvalidStateError',
+    'NotFoundError',
+    'SecurityError',
+    'TransactionInactiveError',
+    'TypeError',
+    'VersionError',
+    'Error',
+  ]);
+  return recognized.has(name as DocumentParityErrorName)
+    ? (name as DocumentParityErrorName)
+    : 'Other';
 }
 
 function scheduleIdle(task: () => void): void {
@@ -209,6 +231,7 @@ export async function compareLegacyDocument(
       courseId,
       errorCode,
       errorPhase: phase,
+      errorName: parityErrorName(error),
     });
     return 'skipped';
   }

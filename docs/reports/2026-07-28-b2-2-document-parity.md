@@ -70,3 +70,7 @@ kill switch must remain tested before proposing a primary-read task.
 课程不可读。后续诊断将只上报受限的失败阶段（身份、DocumentStore 读取或指纹
 比对）及错误类别（例如 IndexedDB 版本或事务状态），不记录原始异常、课程正文
 或用户敏感资料。
+
+第二轮 Preview 读失败将额外记录标准化的浏览器异常名称，以及更细的本地存储
+类别（模式缺失、不可用、版本、事务或 storage 读取）。这些字段均为枚举，仍不
+包含原始异常文本或课程数据。

@@ -17,12 +17,27 @@ const PARITY_FAILURE_CODES = new Set([
   'indexeddb',
   'idb_version',
   'idb_state',
+  'idb_schema',
+  'idb_unavailable',
   'migration',
+  'storage',
   'identity',
   'unknown',
 ]);
 const PARITY_SOURCES = new Set(['legacy_dexie', 'cloud_hydration']);
 const PARITY_FAILURE_PHASES = new Set(['identity', 'load_document', 'fingerprint']);
+const PARITY_ERROR_NAMES = new Set([
+  'AbortError',
+  'DataError',
+  'InvalidStateError',
+  'NotFoundError',
+  'SecurityError',
+  'TransactionInactiveError',
+  'TypeError',
+  'VersionError',
+  'Error',
+  'Other',
+]);
 
 /** Best-effort observability for client-only document bridge outcomes. */
 export async function POST(request: NextRequest) {
@@ -63,6 +78,12 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+      if (body.errorName && !PARITY_ERROR_NAMES.has(body.errorName)) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid parity error name' },
+          { status: 400 },
+        );
+      }
       log.info('document_parity', {
         userId: guard.user.id,
         outcome: body.outcome,
@@ -72,6 +93,7 @@ export async function POST(request: NextRequest) {
         ...(body.outcome !== 'match' ? { courseId: body.courseId } : {}),
         ...(body.errorCode ? { errorCode: body.errorCode } : {}),
         ...(body.errorPhase ? { errorPhase: body.errorPhase } : {}),
+        ...(body.errorName ? { errorName: body.errorName } : {}),
       });
       return NextResponse.json({ success: true });
     }
