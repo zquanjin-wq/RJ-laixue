@@ -13,6 +13,7 @@ import {
   DOCUMENT_PARITY_VERSION,
   type BridgeFailureCode,
   type LegacyDocumentSnapshot,
+  type DocumentParitySource,
 } from './types';
 
 const log = createLogger('DocumentBridge');
@@ -113,13 +114,16 @@ export function scheduleLegacyDocumentBridge(snapshot: LegacyDocumentSnapshot): 
  * B2.2: compare the already-loaded legacy document with its isolated
  * DocumentStore copy. This is strictly observational; callers never await it.
  */
-export function scheduleDocumentParityCheck(snapshot: LegacyDocumentSnapshot): void {
+export function scheduleDocumentParityCheck(
+  snapshot: LegacyDocumentSnapshot,
+  source: DocumentParitySource = 'legacy_dexie',
+): void {
   if (!isDocumentParityCheckEnabled() || typeof window === 'undefined') return;
   scheduleIdle(() => {
     queue = queue
       .catch(() => undefined)
       .then(async () => {
-        await compareLegacyDocument(snapshot);
+        await compareLegacyDocument(snapshot, source);
       })
       .catch((error) => log.warn('Unexpected queued parity failure:', error));
   });
@@ -127,6 +131,7 @@ export function scheduleDocumentParityCheck(snapshot: LegacyDocumentSnapshot): v
 
 export async function compareLegacyDocument(
   snapshot: LegacyDocumentSnapshot,
+  source: DocumentParitySource = 'legacy_dexie',
 ): Promise<'match' | 'missing_document' | 'mismatch' | 'skipped'> {
   if (!isDocumentParityCheckEnabled()) return 'skipped';
   const startedAt = performance.now();
@@ -140,6 +145,7 @@ export async function compareLegacyDocument(
         outcome: 'identity',
         durationMs: performance.now() - startedAt,
         parityVersion: DOCUMENT_PARITY_VERSION,
+        source,
         courseId,
         errorCode: 'identity',
       });
@@ -151,6 +157,7 @@ export async function compareLegacyDocument(
         outcome: 'missing_document',
         durationMs: performance.now() - startedAt,
         parityVersion: DOCUMENT_PARITY_VERSION,
+        source,
         courseId,
       });
       return 'missing_document';
@@ -170,6 +177,7 @@ export async function compareLegacyDocument(
       outcome,
       durationMs: performance.now() - startedAt,
       parityVersion: DOCUMENT_PARITY_VERSION,
+      source,
       ...(outcome === 'mismatch' ? { courseId } : {}),
     });
     return outcome;
@@ -184,6 +192,7 @@ export async function compareLegacyDocument(
       outcome: errorCode === 'identity' ? 'identity' : 'read_failure',
       durationMs: performance.now() - startedAt,
       parityVersion: DOCUMENT_PARITY_VERSION,
+      source,
       courseId,
       errorCode,
     });

@@ -66,11 +66,17 @@ describe('DocumentStore bridge diagnostics', () => {
     vi.stubGlobal('window', {});
     vi.stubGlobal('fetch', fetchMock);
 
-    reportDocumentParityDiagnostic({ outcome: 'match', durationMs: 20, parityVersion: 'b2.2' });
+    reportDocumentParityDiagnostic({
+      outcome: 'match',
+      durationMs: 20,
+      parityVersion: 'b2.2',
+      source: 'legacy_dexie',
+    });
     reportDocumentParityDiagnostic({
       outcome: 'mismatch',
       durationMs: 300,
       parityVersion: 'b2.2',
+      source: 'cloud_hydration',
       courseId: 'course-2',
     });
     await Promise.resolve();
@@ -80,6 +86,7 @@ describe('DocumentStore bridge diagnostics', () => {
       event: 'document_parity',
       outcome: 'match',
       durationBucket: 'lt_50ms',
+      source: 'legacy_dexie',
     });
     expect(matchBody).not.toHaveProperty('courseId');
     const mismatchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
@@ -88,6 +95,7 @@ describe('DocumentStore bridge diagnostics', () => {
       outcome: 'mismatch',
       durationBucket: 'lt_1s',
       courseId: 'course-2',
+      source: 'cloud_hydration',
     });
   });
 });

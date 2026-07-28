@@ -105,9 +105,11 @@ describe('DocumentStore bridge fallback guarantee', () => {
     const legacy = snapshot('course-match');
     mocks.loadDocument.mockResolvedValue({ stage: legacy.stage, scenes: [] });
 
-    await expect(compareLegacyDocument(legacy)).resolves.toBe('match');
+    await expect(compareLegacyDocument(legacy, 'cloud_hydration')).resolves.toBe('match');
 
-    expect(mocks.parityReport).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'match' }));
+    expect(mocks.parityReport).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'match', source: 'cloud_hydration' }),
+    );
     expect(mocks.parityReport.mock.calls[0][0]).not.toHaveProperty('courseId');
   });
 

@@ -4,6 +4,7 @@ import type {
   BridgeOutcome,
   DocumentParityFailureCode,
   DocumentParityOutcome,
+  DocumentParitySource,
 } from './types';
 
 export function durationBucket(durationMs: number): BridgeDurationBucket {
@@ -50,6 +51,7 @@ export function reportDocumentParityDiagnostic(payload: {
   outcome: DocumentParityOutcome;
   durationMs: number;
   parityVersion: string;
+  source: DocumentParitySource;
   courseId?: string;
   errorCode?: DocumentParityFailureCode;
 }): void {
@@ -62,6 +64,7 @@ export function reportDocumentParityDiagnostic(payload: {
       outcome: payload.outcome,
       durationBucket: durationBucket(payload.durationMs),
       parityVersion: payload.parityVersion,
+      source: payload.source,
       ...(payload.outcome !== 'match' && payload.courseId ? { courseId: payload.courseId } : {}),
       ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
     }),

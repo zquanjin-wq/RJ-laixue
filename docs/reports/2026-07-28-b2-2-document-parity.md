@@ -32,6 +32,20 @@ carry it for support triage. Outcomes are `match`, `missing_document`,
 duration bucket and parity version, so match rate and latency can be measured.
 Diagnostic delivery is best-effort and never participates in the course path.
 
+### Preview validation source
+
+Preview deployments use a different `vercel.app` origin and therefore begin
+with an empty legacy Dexie database. A cloud-loaded course would otherwise
+never enter the legacy-load bridge path, producing no diagnostic at all.
+
+When the existing bridge and parity flags are enabled, a successful cloud
+course hydration now performs the same isolated DocumentStore shadow copy and
+comparison. Its event is explicitly labeled `source: cloud_hydration`; legacy
+Dexie reads remain labeled `source: legacy_dexie`. The cloud path never writes
+legacy Dexie and never changes the classroom's active source. It validates the
+Preview end-to-end path, but it is not evidence that historical Dexie migration
+is safe; that remains a separate B2.2 production-cache gate.
+
 ## Automated verification
 
 - match: reports success without a course ID;

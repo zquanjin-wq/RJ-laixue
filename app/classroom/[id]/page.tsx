@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth/use-auth';
 import { useMobileDetection } from '@/lib/hooks/use-mobile-detection';
 import { useRouter } from 'next/navigation';
 import type { Scene } from '@/lib/types/stage';
+import type { StageOutlinesRecord } from '@/lib/utils/database';
 import { inspectOrderField } from '@/lib/utils/scene-order';
 
 const log = createLogger('Classroom');
@@ -465,6 +466,31 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
                 generatingOutlines: [],
                 generationStatus: 'completed',
               });
+              // Fresh browser origins (including Preview) start with an empty
+              // Dexie database, so a cloud-loaded course otherwise cannot
+              // exercise the B2 shadow bridge. This remains an observational
+              // copy only: it neither writes legacy Dexie nor changes the
+              // classroom's active source.
+              const cloudOutlineRecord: StageOutlinesRecord = {
+                stageId: stage.id,
+                outlines,
+                generationComplete: true,
+                // Cloud course payloads do not carry the Dexie record times.
+                // Fixed values keep this diagnostic source fingerprint stable.
+                createdAt: 0,
+                updatedAt: 0,
+              };
+              void import('@/lib/document-bridge/bridge')
+                .then(({ scheduleDocumentParityCheck, scheduleLegacyDocumentBridge }) => {
+                  const snapshot = {
+                    stage,
+                    scenes: migrated,
+                    outlineRecord: cloudOutlineRecord,
+                  };
+                  scheduleLegacyDocumentBridge(snapshot);
+                  scheduleDocumentParityCheck(snapshot, 'cloud_hydration');
+                })
+                .catch((error) => log.warn('DocumentStore preview bridge module failed to load:', error));
               log.info('Loaded from cloud course:', classroomId);
             }
           } else {

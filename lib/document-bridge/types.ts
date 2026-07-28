@@ -39,3 +39,6 @@ export type DocumentParityOutcome =
   | 'identity';
 
 export type DocumentParityFailureCode = 'indexeddb' | 'identity' | 'unknown';
+
+/** Identifies which safe read path supplied an observational document snapshot. */
+export type DocumentParitySource = 'legacy_dexie' | 'cloud_hydration';

@@ -14,6 +14,7 @@ const PARITY_OUTCOMES = new Set([
   'identity',
 ]);
 const PARITY_FAILURE_CODES = new Set(['indexeddb', 'identity', 'unknown']);
+const PARITY_SOURCES = new Set(['legacy_dexie', 'cloud_hydration']);
 
 /** Best-effort observability for client-only document bridge outcomes. */
 export async function POST(request: NextRequest) {
@@ -28,7 +29,8 @@ export async function POST(request: NextRequest) {
       if (
         !PARITY_OUTCOMES.has(body.outcome) ||
         !BUCKETS.has(body.durationBucket) ||
-        typeof body.parityVersion !== 'string'
+        typeof body.parityVersion !== 'string' ||
+        !PARITY_SOURCES.has(body.source)
       ) {
         return NextResponse.json(
           { success: false, error: 'Invalid parity diagnostic payload' },
@@ -52,6 +54,7 @@ export async function POST(request: NextRequest) {
         outcome: body.outcome,
         durationBucket: body.durationBucket,
         parityVersion: body.parityVersion,
+        source: body.source,
         ...(body.outcome !== 'match' ? { courseId: body.courseId } : {}),
         ...(body.errorCode ? { errorCode: body.errorCode } : {}),
       });
