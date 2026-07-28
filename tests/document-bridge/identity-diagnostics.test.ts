@@ -78,6 +78,8 @@ describe('DocumentStore bridge diagnostics', () => {
       parityVersion: 'b2.2',
       source: 'cloud_hydration',
       courseId: 'course-2',
+      errorCode: 'idb_version',
+      errorPhase: 'load_document',
     });
     await Promise.resolve();
 
@@ -96,6 +98,8 @@ describe('DocumentStore bridge diagnostics', () => {
       durationBucket: 'lt_1s',
       courseId: 'course-2',
       source: 'cloud_hydration',
+      errorCode: 'idb_version',
+      errorPhase: 'load_document',
     });
   });
 });

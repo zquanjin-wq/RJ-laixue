@@ -63,3 +63,10 @@ The evidence must show no unexplained mismatch/read-failure pattern, and the
 kill switch must remain tested before proposing a primary-read task.
 
 <!-- Trigger Preview deployment for B2.2 validation. -->
+# Preview 读失败诊断（2026-07-28）
+
+首次 Preview 验证确认 `cloud_hydration` 影子路径已触发；两个课程均报告
+`read_failure/unknown`。该路径不改写 Dexie、不改变课堂展示，也不代表生产
+课程不可读。后续诊断将只上报受限的失败阶段（身份、DocumentStore 读取或指纹
+比对）及错误类别（例如 IndexedDB 版本或事务状态），不记录原始异常、课程正文
+或用户敏感资料。

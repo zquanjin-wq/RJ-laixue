@@ -13,8 +13,16 @@ const PARITY_OUTCOMES = new Set([
   'read_failure',
   'identity',
 ]);
-const PARITY_FAILURE_CODES = new Set(['indexeddb', 'identity', 'unknown']);
+const PARITY_FAILURE_CODES = new Set([
+  'indexeddb',
+  'idb_version',
+  'idb_state',
+  'migration',
+  'identity',
+  'unknown',
+]);
 const PARITY_SOURCES = new Set(['legacy_dexie', 'cloud_hydration']);
+const PARITY_FAILURE_PHASES = new Set(['identity', 'load_document', 'fingerprint']);
 
 /** Best-effort observability for client-only document bridge outcomes. */
 export async function POST(request: NextRequest) {
@@ -49,6 +57,12 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+      if (body.errorPhase && !PARITY_FAILURE_PHASES.has(body.errorPhase)) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid parity error phase' },
+          { status: 400 },
+        );
+      }
       log.info('document_parity', {
         userId: guard.user.id,
         outcome: body.outcome,
@@ -57,6 +71,7 @@ export async function POST(request: NextRequest) {
         source: body.source,
         ...(body.outcome !== 'match' ? { courseId: body.courseId } : {}),
         ...(body.errorCode ? { errorCode: body.errorCode } : {}),
+        ...(body.errorPhase ? { errorPhase: body.errorPhase } : {}),
       });
       return NextResponse.json({ success: true });
     }

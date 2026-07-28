@@ -38,7 +38,20 @@ export type DocumentParityOutcome =
   | 'read_failure'
   | 'identity';
 
-export type DocumentParityFailureCode = 'indexeddb' | 'identity' | 'unknown';
+/** Bounded, non-sensitive classification for a failed observational read. */
+export type DocumentParityFailureCode =
+  | 'indexeddb'
+  | 'idb_version'
+  | 'idb_state'
+  | 'migration'
+  | 'identity'
+  | 'unknown';
+
+/** Which safe operation failed; never includes browser error text or course content. */
+export type DocumentParityFailurePhase =
+  | 'identity'
+  | 'load_document'
+  | 'fingerprint';
 
 /** Identifies which safe read path supplied an observational document snapshot. */
 export type DocumentParitySource = 'legacy_dexie' | 'cloud_hydration';

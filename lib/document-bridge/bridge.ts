@@ -12,6 +12,8 @@ import {
   DOCUMENT_BRIDGE_VERSION,
   DOCUMENT_PARITY_VERSION,
   type BridgeFailureCode,
+  type DocumentParityFailureCode,
+  type DocumentParityFailurePhase,
   type LegacyDocumentSnapshot,
   type DocumentParitySource,
 } from './types';
@@ -83,6 +85,18 @@ function failureCode(error: unknown): BridgeFailureCode {
   return 'unknown';
 }
 
+function parityFailureCode(error: unknown): DocumentParityFailureCode {
+  const name = error instanceof Error ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error);
+  const signal = `${name} ${message}`;
+  if (/crypto|user id|authenticated/i.test(signal)) return 'identity';
+  if (/migrat|dsl version/i.test(signal)) return 'migration';
+  if (/versionerror|version/i.test(signal)) return 'idb_version';
+  if (/invalidstate|aborterror|transactioninactive/i.test(signal)) return 'idb_state';
+  if (/indexeddb|idb|transaction|database|notfounderror/i.test(signal)) return 'indexeddb';
+  return 'unknown';
+}
+
 function scheduleIdle(task: () => void): void {
   const idle = (window as Window & { requestIdleCallback?: (callback: () => void) => number })
     .requestIdleCallback;
@@ -136,6 +150,7 @@ export async function compareLegacyDocument(
   if (!isDocumentParityCheckEnabled()) return 'skipped';
   const startedAt = performance.now();
   const courseId = snapshot.stage.id;
+  let phase: DocumentParityFailurePhase = 'identity';
   try {
     const {
       data: { user },
@@ -151,7 +166,9 @@ export async function compareLegacyDocument(
       });
       return 'skipped';
     }
-    const document = await storeFor(await accountNamespace(user.id)).loadDocument(courseId);
+    const namespace = await accountNamespace(user.id);
+    phase = 'load_document';
+    const document = await storeFor(namespace).loadDocument(courseId);
     if (!document) {
       reportDocumentParityDiagnostic({
         outcome: 'missing_document',
@@ -162,6 +179,7 @@ export async function compareLegacyDocument(
       });
       return 'missing_document';
     }
+    phase = 'fingerprint';
     const [legacy, stored] = await Promise.all([
       parityHash(snapshot),
       parityHash({
@@ -182,12 +200,7 @@ export async function compareLegacyDocument(
     });
     return outcome;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const errorCode = /crypto|user id|authenticated/i.test(message)
-      ? 'identity'
-      : /indexeddb|idb|transaction|database/i.test(message)
-        ? 'indexeddb'
-        : 'unknown';
+    const errorCode = parityFailureCode(error);
     reportDocumentParityDiagnostic({
       outcome: errorCode === 'identity' ? 'identity' : 'read_failure',
       durationMs: performance.now() - startedAt,
@@ -195,6 +208,7 @@ export async function compareLegacyDocument(
       source,
       courseId,
       errorCode,
+      errorPhase: phase,
     });
     return 'skipped';
   }

@@ -143,7 +143,11 @@ describe('DocumentStore bridge fallback guarantee', () => {
     await expect(compareLegacyDocument(snapshot('course-read-failure'))).resolves.toBe('skipped');
 
     expect(mocks.parityReport).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'read_failure', errorCode: 'indexeddb' }),
+      expect.objectContaining({
+        outcome: 'read_failure',
+        errorCode: 'indexeddb',
+        errorPhase: 'load_document',
+      }),
     );
   });
 

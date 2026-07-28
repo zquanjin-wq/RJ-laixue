@@ -3,6 +3,7 @@ import type {
   BridgeFailureCode,
   BridgeOutcome,
   DocumentParityFailureCode,
+  DocumentParityFailurePhase,
   DocumentParityOutcome,
   DocumentParitySource,
 } from './types';
@@ -54,6 +55,7 @@ export function reportDocumentParityDiagnostic(payload: {
   source: DocumentParitySource;
   courseId?: string;
   errorCode?: DocumentParityFailureCode;
+  errorPhase?: DocumentParityFailurePhase;
 }): void {
   if (typeof window === 'undefined') return;
   void fetch('/api/client-diagnostics', {
@@ -67,6 +69,7 @@ export function reportDocumentParityDiagnostic(payload: {
       source: payload.source,
       ...(payload.outcome !== 'match' && payload.courseId ? { courseId: payload.courseId } : {}),
       ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
+      ...(payload.errorPhase ? { errorPhase: payload.errorPhase } : {}),
     }),
     keepalive: true,
   }).catch(() => {});
