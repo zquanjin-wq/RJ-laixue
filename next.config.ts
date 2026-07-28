@@ -10,15 +10,18 @@ if (process.env.E2E_TEST_MODE === '1') {
 const nextConfig: NextConfig = {
   output: process.env.VERCEL ? undefined : 'standalone',
   transpilePackages: ['mathml2omml', 'pptxgenjs', '@openmaic/importer'],
-  // tsc needs the DSL source mapping in tsconfig for workspace type checking,
-  // but Turbopack must consume its built ESM entry. The source index imports
+  // tsc needs the workspace source mappings in tsconfig for type checking,
+  // but Turbopack must consume the built ESM entries. The source indexes import
   // sibling files as `.js`, which Turbopack does not remap to `.ts` in a
-  // production build. postinstall builds this dist entry before `next build`.
+  // production build. postinstall builds these dist entries before `next build`.
+  // Every @openmaic/* package whose tsconfig path points at source MUST have a
+  // matching dist alias here — see tests/openmaic-package-resolution.test.ts.
   turbopack: {
     resolveAlias: {
       // Keep this relative and POSIX-style: Turbopack does not support a
       // Windows absolute alias path during local production builds.
       '@openmaic/dsl': './packages/@openmaic/dsl/dist/index.js',
+      '@openmaic/storage': './packages/@openmaic/storage/dist/index.js',
       ...e2eAuthAlias,
     },
   },
