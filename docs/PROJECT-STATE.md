@@ -25,6 +25,7 @@
 
 | 决策 | 日期 | 理由 | 记录位置 |
 |---|---|---|---|
+| **AI 协作分工拍板**：Codex = 上游对齐主线工程执行（B2 本地 DocumentStore 迁移验证 → Phase 4 服务端 adapter、Supabase/私有化后端、测试、CI、报告、独立 commit）；Kimi K3 = edit_elements 元素级 AI 编辑的上游评估、方案与实施；Phase 4 实施前由 Kimi 审查 API 契约 / learnerKey=auth.uid() / Supabase+RLS / 私有化可替换后端 / 迁移方案；最终业务决策与优先级归培训部门负责人 | 2026-07-28 | 负责人明确分工，避免双 AI 施工互相污染 | 负责人 2026-07-28 分工说明 |
 | **v0.3.1 同步走混合路线**（不全量 merge）：元素级编辑 5-commit 链定向 cherry-pick；SSRF `redirect:'manual'` 精准回捞；资料导入增强等 course-assets 收尾；架构对齐挂 Phase 4 | 2026-07-28 | 全量 merge 实测 1-1.5 周全职且强行带入 RuntimeStore 业务切流，与 B2.x 渐进策略冲突；编辑链与 fork 自研文件零业务冲突、零架构依赖 | `docs/reports/2026-07-28-merge-vs-cherry-pick-decision.md` |
 | **Phase 4 接法选型 A**：Next.js API routes 实现上游 HTTP 契约，服务端再访问 Supabase；不让浏览器直连 PostgREST 写 RuntimeStore | 2026-07-28 | append/CAS/冲突处理需事务边界；统一走 api-guard 做 Auth/角色/课程访问/审计；service_role 必须显式鉴权 | 同上 + Codex 施工边界确认 |
 | **持久化目标架构 = 部署期可替换 adapter**：上游 HttpStore 客户端 → RJ Next.js API → adapter（云上 Supabase+RLS / 私有化自托管 Postgres+企业认证）；**每部署单权威后端，不做双写** | 2026-07-28 | 私有化部署已立项（GFW 阻断事件加速）；上游 compose/reference server 可作私有化运行形态参考，但其身份授权不进生产 | `docs/handoffs/2026-07-27-gfw-block-handoff.md` |
