@@ -13,9 +13,12 @@
  *   5. merge 与 create 并发——learner 锁串行化，无行丢失、计数正确；
  *   6. 并发 merge_with_grant 同一 grant——恰好一个成功，另一个 'invalid_grant'。
  *
- * 运行方式（env 门控，默认 skip）：
- *   RUNTIME_LIVE_PG_URL=postgres://user:pass@localhost:5432/rj_runtime_scratch \
- *     pnpm vitest run tests/runtime-store-pg/live-pg-concurrency.test.ts
+ * 运行方式（env 门控，默认 skip），二选一：
+ *   A. 嵌入式零依赖（无需 Docker/本地 PG，embedded-postgres 下载原生二进制）：
+ *      RUNTIME_LIVE_PG_EMBED=1 pnpm vitest run tests/runtime-store-pg/live-pg-concurrency.test.ts
+ *   B. 已有 scratch 库：
+ *      RUNTIME_LIVE_PG_URL=postgres://user:pass@localhost:5432/rj_runtime_scratch \
+ *        pnpm vitest run tests/runtime-store-pg/live-pg-concurrency.test.ts
  *
  * 安全约束：
  *   - URL 必须指向 localhost/127.0.0.1（除非显式 RUNTIME_LIVE_PG_ALLOW_REMOTE=1）；
@@ -23,15 +26,21 @@
  *     绝不指向生产/预览数据库。
  */
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { execFile, spawn } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { cp, rm } from 'fs/promises';
+import { createRequire } from 'module';
+import { tmpdir } from 'os';
+import { dirname, join, resolve } from 'path';
+import { promisify } from 'util';
 import { Pool, type PoolClient } from 'pg';
 import { splitMigrationStatements, isRlsStatement } from './pg-mem-harness';
 
+const EMBED = process.env.RUNTIME_LIVE_PG_EMBED === '1';
 const LIVE_URL = process.env.RUNTIME_LIVE_PG_URL;
 const ALLOW_REMOTE = process.env.RUNTIME_LIVE_PG_ALLOW_REMOTE === '1';
 const IS_LOCAL = !!LIVE_URL && /(@|\/\/)(localhost|127\.0\.0\.1)(:|\/|$)/.test(LIVE_URL);
-const ENABLED = !!LIVE_URL && (IS_LOCAL || ALLOW_REMOTE);
+const ENABLED = EMBED || (!!LIVE_URL && (IS_LOCAL || ALLOW_REMOTE));
 
 const RUN = describe.runIf(ENABLED);
 
@@ -47,6 +56,53 @@ const V = '0.1.0'; // RUNTIME_DSL_VERSION（避免引入 alias，测试内保持
 const NOW = '2026-07-29T00:00:00.000Z';
 
 let pool: Pool;
+let pgBinDir: string | undefined;
+let pgDataDir: string | undefined;
+
+/**
+ * 自举嵌入式 scratch PG（Windows 中文路径安全）：
+ * embedded-postgres 包原样调用 initdb 会失败——它的二进制在含中文的工作区
+ * 路径下，initdb 以 UTF8 解析 GBK 路径字节（0xb5）即崩。这里把
+ * @embedded-postgres/windows-x64 的 native 二进制复制到系统临时目录
+ * （纯 ASCII），再手动 initdb + 起 postgres + 等就绪。
+ */
+async function bootstrapEmbeddedPg(): Promise<string> {
+  const req = createRequire(import.meta.url);
+  // 经主入口解析（exports 不暴露 package.json）；pnpm 下真实路径形如
+  // .pnpm/embedded-postgres@x/node_modules/embedded-postgres/dist/index.js，
+  // 上两级即与 @embedded-postgres/windows-x64 同级
+  const epMain = req.resolve('embedded-postgres');
+  const binSrc = join(dirname(epMain), '..', '..', '@embedded-postgres', 'windows-x64', 'native');
+  const binDst = join(tmpdir(), 'rj-pg-bin');
+  if (!existsSync(join(binDst, 'bin', 'postgres.exe'))) {
+    await rm(binDst, { recursive: true, force: true });
+    await cp(binSrc, binDst, { recursive: true });
+  }
+  pgBinDir = binDst;
+  pgDataDir = join(tmpdir(), 'rj-live-pg-runtime');
+  await rm(pgDataDir, { recursive: true, force: true });
+  const execFileP = promisify(execFile);
+  // 中文 Windows 的系统 locale（Chinese_China.936）会让 initdb 找不到文本
+  // 搜索配置——固定 no-locale + UTF8；trust 认证省去密码传递（仅本机临时库）
+  await execFileP(join(binDst, 'bin', 'initdb.exe'), [
+    '-D', pgDataDir, '-U', 'postgres', '--no-locale', '-E', 'UTF8', '-A', 'trust',
+  ]);
+  const child = spawn(join(binDst, 'bin', 'postgres.exe'),
+    ['-D', pgDataDir, '-p', '55433', '-h', '127.0.0.1'], { stdio: 'ignore' });
+  child.on('error', () => {});
+  const url = 'postgres://postgres@localhost:55433/postgres';
+  for (let i = 0; i < 60; i++) {
+    try {
+      const probe = new Pool({ connectionString: url, max: 1 });
+      await probe.query('select 1');
+      await probe.end();
+      return url;
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  throw new Error('embedded postgres did not become ready on :55433');
+}
 
 async function scalar(client: PoolClient, fn: string, args: unknown[]): Promise<unknown> {
   const placeholders = args.map((_, i) => `$${i + 1}`).join(', ');
@@ -81,7 +137,11 @@ async function withAdvisoryBarrier<T>(learnerKey: string, fn: () => Promise<T>):
 
 beforeAll(async () => {
   if (!ENABLED) return;
-  pool = new Pool({ connectionString: LIVE_URL, max: 4 });
+  let url = LIVE_URL;
+  if (!url && EMBED) {
+    url = await bootstrapEmbeddedPg();
+  }
+  pool = new Pool({ connectionString: url, max: 4 });
   // 重建 scratch schema：drop 级联清掉旧函数（签名变更时 create-or-replace 不够）
   await pool.query(`
     drop table if exists runtime_merge_grants cascade;
@@ -95,10 +155,18 @@ beforeAll(async () => {
     await pool.query(stmt);
   }
   // RLS 在迁移里被跳过——scratch 库无 auth.uid()；并发语义不依赖 RLS
-}, 60_000);
+  // 超时长：嵌入式首次运行需下载 PG 二进制
+}, 600_000);
 
 afterAll(async () => {
   if (pool) await pool.end();
+  if (pgBinDir && pgDataDir) {
+    // pg_ctl fast stop——绝不留下后台 PG 进程
+    try {
+      await promisify(execFile)(join(pgBinDir, 'bin', 'pg_ctl.exe'),
+        ['stop', '-D', pgDataDir, '-m', 'fast', '-w', '-t', '30']);
+    } catch { /* best effort */ }
+  }
 });
 
 async function createSession(

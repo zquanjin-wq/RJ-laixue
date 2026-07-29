@@ -120,6 +120,12 @@ pg_advisory_xact_lock 同签名实现；moved/claimed 计数走 cross join 而�
 
 验收结果：pg-mem 契约套件 28/28 绿（含新增 revision CAS、merge_with_grant
 三分支）；tsc 0 错；全量 vitest 2047 通过（仅 8 个 tests/edit/round-trip/
-存量失败，与本次无关）。真实 PG 双连接套件已交付
-（tests/runtime-store-pg/live-pg-concurrency.test.ts，env 门控），
-待有库环境执行后回填本行。
+存量失败，与本次无关）。真实 PG 双连接套件已于 2026-07-29 在本机执行并六场景全绿
+（tests/runtime-store-pg/live-pg-concurrency.test.ts，PostgreSQL 18.4
+嵌入式 scratch，RUNTIME_LIVE_PG_EMBED=1 一条命令自举；中文 Windows 的
+locale 与 GBK 路径两个坑已在套件内处置，二进制复制到系统临时目录运行）。
+含 Codex 终审两条强化：claim UPDATE 直接重写全部可变条件（used_at is
+null 等，EvalPlanQual 对最新行版本重检，挡住快照过期导致的双重核销）；
+场景 5/6 用第三连接咨询锁屏障把「快照先建立、随后等待锁」从概率事件
+变成必然事件，场景 5 断言报告移动数 == 实际搬移行数，场景 6 稳定得到
+一个 ok:1 + 一个 invalid_grant。测试结束 pg_ctl fast stop，无进程残留。
