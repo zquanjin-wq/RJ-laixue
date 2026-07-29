@@ -1,10 +1,23 @@
 # R2 设计稿：RuntimeStore 影子双写（Shadow Write）
 
-> 日期：2026-07-29 ｜ 状态：**设计稿，待 Codex 评审**（R1.1 终审许可：允许开 R2，
-> 仅限先出设计稿，不直接实施）
+> 日期：2026-07-29 ｜ 状态：**设计稿 v2（按 Codex 终审修订），方向已通过，修订后即开实施卡**
 > 前置：R0（已拍板）→ R1/R1.1（已签字，`52862d2e`）
 > 本文档逐条覆盖终审提出的六个必答点。范围纪律：不含任何 Supabase 迁移执行；
-> 不含读源切换；影子写实施需本稿评审通过后另行开卡。
+> 不含读源切换；影子写实施按本稿开卡（仅影子写、默认关闭、本地读源不动）。
+>
+> **v2 修订记录（Codex 终审四项拍板 + 两条 P0，2026-07-29）：**
+> ① 字段裁剪接受，仅限 R2 影子期——影子数据不能作为未来读源或完整审计依据，
+>    R3 切读前必须另行评审补齐完整消息语义（1.1）；
+> ② `ac:<code>` 匿名键约定**否决并删除**——access code 是凭证，不得作分区键、
+>    grant 响应字段或日志内容；未来匿名写用服务端签发的随机不透明 ID（1.4/6）；
+> ③ 匿名期不影子写接受——redeem 的 merge-grant 签发**移出 R2 施工范围**，
+>    保留为后续匿名 RuntimeStore 的设计前提（6/7）；
+> ④ 开关用环境变量 `NEXT_PUBLIC_RUNTIME_SHADOW`，默认关，不建站点配置表（7）；
+> ⑤ P0：playback 的事件 id 改为随快照持久化到 Dexie 的 `runtimeShadowEventId`
+>    （UUID），不得用内存单调计数器（1.3）；
+> ⑥ P0：quiz 的 `learnerLocalId` 未定义，改为每个答题周期在 localStorage
+>    持久化的 `attemptId`（1.2）。确定性一律建立在持久化字段上，不建立在
+>    内存变量上。
 
 ---
 
@@ -36,10 +49,11 @@ quiz 数据在 localStorage，且提交前只有 draft。R2 的 quizAttempt 映�
   （确定性生成，重试幂等的关键，见第 4 点）；`payload = { role, content }`
   （ChatMessageSkeleton 子集）；锚点：`sceneId` 取自会话级 `sceneId`，
   `actionIndex` 取自消息在数组中的下标（回放序 = seq 序，天然一致）。
-- **裁剪（已知且有意）**：`title/config/toolCalls/pendingToolCalls` 是 RJ 应用层
-  字段，不在 RuntimeSession 信封内，R1.1 最终 schema 也无 `app_meta` 列。
-  影子期**不带**这些字段；R3 读切换前若确需保留，另开评审决定进
-  独立元数据 record 还是扩展列——不阻塞 R2。
+- **裁剪（终审拍板，仅限 R2 影子期）**：`title/config/toolCalls/pendingToolCalls`
+  是 RJ 应用层字段，不在 RuntimeSession 信封内，R1.1 最终 schema 也无
+  `app_meta` 列。影子期**不带**这些字段。推论两条（Codex 原话入档）：
+  **影子数据不能作为未来读源或完整审计依据**；R3 切读前必须另行评审并补齐
+  完整消息语义（至少明确 toolCalls、config 等是否要保存、以什么形态保存）。
 - **增量写的折叠**：Dexie 是整行覆写（每发一条消息 messages 全量回写），
   影子写客户端维护「已影子化的 message.id 集合」（内存 + IndexedDB 标记位），
   每次只把**新增** message 转成 append 调用——把覆写模型折叠成 append-only。
@@ -47,8 +61,13 @@ quiz 数据在 localStorage，且提交前只有 draft。R2 的 quizAttempt 映�
 ### 1.2 quizAttempt：localStorage → 单会话 + 相位 records
 
 - **一个 scene 的一次答题周期 → 一个 `RuntimeSession`**：
-  `id = qa:<stageId>:<sceneId>:<learnerLocalId>`（确定性，retry 重开周期换新 id）；
-  `kind = 'quizAttempt'`；提交时 `status: active → completed`。
+  `id = qa:<stageId>:<sceneId>:<attemptId>`。
+  **`attemptId` 的生成与持久化（P0，终审判定）**：每个答题周期开始时生成一个
+  UUID，立即写入 localStorage 键 `quizAttemptId:<sceneId>`；整个周期（含任何
+  重试/刷新/跨标签页恢复）只复用这个持久化值；`clearSubmitted` 之后才允许
+  生成新 id。**确定性建立在持久化字段上，不建立在内存变量上**——内存态的
+  「当前周期 id」在刷新后丢失会导致同周期生成两个会话 id，服务端出现重复
+  周期。`kind = 'quizAttempt'`；提交时 `status: active → completed`。
 - **相位迁移 → records**（对齐 `QuizAttemptSkeleton { phase, answers }`）：
   - 提交（`writeSubmittedAnswers`）→ record payload `{ phase: 'answering', answers }`，
     `record.id = <sessionId>:submit`，锚点 `sceneId`；
@@ -64,16 +83,24 @@ quiz 数据在 localStorage，且提交前只有 draft。R2 的 quizAttempt 映�
 - **一个 stage → 一个 `RuntimeSession`**：`id = pb:<stageId>`（每学员分区天然隔离），
   `kind = 'playback'`，status 常 `active`。
 - **每次进度推进 → 一条 record**：payload = 整份快照
-  `{ sceneIndex, actionIndex, consumedDiscussions }`（app-owned 形状），
-  `record.id = pb:<stageId>:<monotonic-n>`（客户端计数器）；读时取最后一条即现状。
-  快照语义天然适配 append-only，无需折叠。
+  `{ sceneIndex, actionIndex, consumedDiscussions }`（app-owned 形状）。
+  **record id 的生成与持久化（P0，终审判定）**：每次保存进度**之前**生成一个
+  新 UUID `runtimeShadowEventId`，**随快照一起持久化到 Dexie 的
+  `playbackState` 行**（行加同名字段）；影子写用
+  `record.id = pb:<stageId>:<runtimeShadowEventId>`；重试只能复用这个已持久化
+  的 id，下一次保存必须生成新 id。原方案的内存单调计数器
+  `pb:<stageId>:<monotonic-n>` **否决**——刷新、跨标签页或计数器丢失会复用
+  旧序号撞幂等键（不同内容 → `IDEMPOTENCY_CONFLICT`）。
+  读时取最后一条即现状；快照语义天然适配 append-only，无需折叠。
 
-### 1.4 匿名学员的 learnerKey
+### 1.4 匿名学员（终审拍板：R2 不覆盖，且不定任何匿名键约定）
 
-匿名期（access-code 验证通过但未登录）影子写**不启动**——R2 的影子写只覆盖
-已登录学员。匿名期数据留在本地，绑定登录后由 merge 链路处理（第 6 点）。
-理由：匿名写服务端需要匿名会话授权机制，超出 R2 范围，且 RJ 课堂主流程
-（redeem 绑定）已是登录态。
+匿名期影子写**不启动**——R2 只覆盖 `auth.uid()` 已登录用户（`/api/access-code/
+redeem` 本身就要求 Supabase 登录，范围一致）。匿名期数据留在本地。
+**原 `ac:<code>` 匿名 learnerKey 约定删除**（终审否决：access code 是凭证，
+绝不能作为数据库分区键、grant 响应字段或日志内容）。未来若开放匿名服务端
+写，匿名身份采用**服务端签发的随机不透明 ID**（如 `ac:<uuid>`），绝不使用
+原始 code；该机制与匿名数据迁移合并，另立任务（见第 6 节）。
 
 ## 2. 影子写失败 / 超时 / 重复写行为（终审查点 ②）
 
@@ -111,11 +138,14 @@ playback 推进），**读源完全不动**。
 
 ## 4. 弱网 outbox / 重试 / 幂等 record id 门禁（终审查点 ④）
 
-- **record id 确定性生成是 R2 的硬门禁**（第 1 节各规则）：
-  `<sessionId>:<message.id>`、`qa:…:submit|grade`、`pb:<stageId>:<n>`——
-  全部可由内容推导，任何重试/刷新/重进都生成同一个 id，服务端幂等键
+- **record id 可复现生成是 R2 的硬门禁**（第 1 节各规则，含终审两条 P0 修订）：
+  `<sessionId>:<message.id>`（message.id 本身持久化在 Dexie 行内）、
+  `qa:…:submit|grade`（attemptId 持久化在 localStorage）、
+  `pb:<stageId>:<runtimeShadowEventId>`（UUID 随快照持久化在 Dexie）——
+  共同原则：**id 的「确定性」一律锚定在持久化字段上，绝不锚定在内存变量上**；
+  任何重试/刷新/跨标签页恢复都取回同一个 id，服务端幂等键
   （`runtime_records_id_unique` + IDEMPOTENCY_CONFLICT 语义，R1.1 已验证）
-  保证不双写。
+  保证不双写、id 复用串内容时响亮失败。
 - **重试**：影子写客户端对 `timeout/network/http_5xx` 做**最多 2 次**指数退避
   （1s/4s），仍败则丢弃；`validation/auth/http_4xx/idempotency_conflict` 不重试。
 - **outbox**：R2 不做；重申 R0 门禁——**R3 评审时 IndexedDB outbox 未落地
@@ -135,40 +165,45 @@ playback 推进），**读源完全不动**。
 
 切换顺序建议：playback（最简，快照语义）→ quizAttempt → chat（最重，消息流）。
 
-## 6. merge 签发端对接（终审查点 ⑥）
+## 6. merge 签发端——后续匿名 RuntimeStore 的设计前提（终审拍板：**不在 R2 施工范围**）
 
-对接点 = `app/api/access-code/redeem/route.ts`（绑定成功处，R1.1 已留好
-`runtime_merge_grants` 表与 `runtime_merge_with_grant` 原子函数）：
+R2 不做匿名影子写，服务端不存在可合并的匿名 runtime 数据，此时把 grant
+签发挂进 redeem 只会无谓扩大安全面。本节保留为**设计前提记录**，待「匿名
+服务端授权与迁移合并」任务（1.4）启动时按此对接：
 
-1. redeem 绑定成功（含 `alreadyBound` 幂等路径之外的首次绑定）后，同一路由内
-   用 service role 插入 grant 行：
-   `id = ulid()`、`from_learner_key = ac:<code>`、`to_learner_key = auth.uid()`、
-   `expires_at = now() + 15 minutes`；
-2. redeem 响应增加 `mergeGrant: { grantId, fromLearnerKey, expiresAt }` 字段；
-3. 客户端拿到后调 `POST /api/runtime/v1/learners/merge { fromLearnerKey, grantId }`；
-   `version_conflict` 由路由自动迁移重试（R1.1 已实现）；客户端对 403 静默
-   （grant 过期/已用不影响主流程）；
-4. **匿名 learnerKey 约定**：`ac:<ACCESS_CODE>`——access-code 是学员在绑定前
-   的唯一稳定身份锚点，且 redeem 流程天然持有它。匿名期若产生服务端 runtime
-   数据（R2 不覆盖，见 1.4；R3+ 若开放匿名写），其分区键即此值，merge 后并入
-   `auth.uid()` 分区；
-5. grant 一次性、15 分钟、仅 service role 可写（RLS 无可见策略，R1.1 已落地）；
-   绑定流程是**唯一**签发端，任何其他路径不得插入 `runtime_merge_grants`。
+1. 对接点 = `app/api/access-code/redeem/route.ts`（绑定成功处）。R1.1 已备好
+   `runtime_merge_grants` 表与 `runtime_merge_with_grant` 原子函数（一次性、
+   15 分钟、仅 service role 可写、RLS 无可见策略、version_conflict 不烧 grant、
+   路由自动迁移重试）；
+2. 届时 redeem 绑定成功后用 service role 插入 grant 行并在响应中携带
+   `{ grantId, fromLearnerKey, expiresAt }`，客户端调
+   `POST /api/runtime/v1/learners/merge`；客户端对 403 静默（不影响主流程）；
+3. **fromLearnerKey 绝不允许出现原始 access code**（终审判定，见 1.4）——
+   匿名分区键必须是服务端签发的随机不透明 ID；grant 响应字段与日志同样
+   不得包含 code；
+4. 绑定流程是**唯一**签发端，任何其他路径不得插入 `runtime_merge_grants`。
 
-## 7. R2 实施边界（评审通过后开卡的施工范围）
+## 7. R2 实施边界（按本稿开卡的施工范围）
 
-- 只做：`lib/runtime/shadow-writer.ts` + 三个写路径挂点 + ClientDiagnostics
-  `runtime_shadow` 指标 + redeem 签发端（第 6 点 1–2）+ 开关
-  （`NEXT_PUBLIC_RUNTIME_SHADOW`，默认关）+ 对应 vitest（id 生成确定性、
-  折叠逻辑、遥测分母）；
-- 不做：迁移执行、读切换、双读比对基础设施（那是第 5 点第 3 条的独立卡）、
-  outbox、匿名写、教师聚合视图；
+- 只做：`lib/runtime/shadow-writer.ts` + 三个写路径挂点（chat 发送、quiz
+  提交/批改、playback 推进，含 1.2/1.3 的持久化 id 字段）+ ClientDiagnostics
+  `runtime_shadow` 指标 + 开关 `NEXT_PUBLIC_RUNTIME_SHADOW`（**默认关，
+  环境变量形态，不建站点配置表**——站点配置与「课程→学员」灰度是 R3
+  切读源前的能力，不为影子写提前扩大控制面）+ 对应 vitest（持久化 id 的
+  生成/复用/刷新恢复、折叠逻辑、遥测分母）；
+- 不做：迁移执行、读切换、双读比对基础设施（第 5 点第 3 条的独立卡）、
+  outbox、匿名写、redeem 的 merge-grant 签发（第 6 节）、教师聚合视图；
 - 验收：影子写全链路在预览环境可观测（指标上报），本地读源零改动回归全绿。
 
-## 8. 待评审拍板的开放问题
+## 8. 开放问题处置记录（终审已全部拍板，无遗留）
 
-1. 1.1 的字段裁剪（title/config/toolCalls 影子期不带）是否接受？
-2. 匿名 learnerKey 取 `ac:<code>` 是否认可（第 6.4 条）？
-3. 1.4「匿名期不影子写」是否认可？若业务要求匿名期也上服务端，R2 范围需
-   追加匿名授权机制设计（工作量显著增加）；
-4. 灰度开关形态：环境变量够用，还是要站点配置表（运行时切换）？
+| 原问题 | 终审结论 |
+|---|---|
+| ① 字段裁剪 | 接受，仅限 R2 影子期；影子数据不作未来读源/审计依据，R3 前另行评审补齐完整消息语义（1.1） |
+| ② `ac:<code>` 匿名键 | **否决**，约定删除；未来用服务端签发随机不透明 ID（1.4/6.3） |
+| ③ 匿名期不影子写 | 接受；匿名授权与迁移合并另立任务（1.4） |
+| ④ 开关形态 | 环境变量 `NEXT_PUBLIC_RUNTIME_SHADOW` 默认关；站点配置/灰度是 R3 能力（7） |
+
+R3 遗留清单（非本稿范围，仅登记）：完整消息语义评审（toolCalls/config 形态）、
+匿名服务端授权 + 不透明 ID + 迁移合并、站点配置表与两级灰度、双读比对
+基础设施、IndexedDB outbox。
