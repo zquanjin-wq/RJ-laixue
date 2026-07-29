@@ -32,6 +32,12 @@ import {
   writeSubmittedResults,
   type SubmittedState,
 } from '@/lib/quiz/persistence';
+import { useStageStore } from '@/lib/store/stage';
+import {
+  shadowQuizReviewed,
+  shadowQuizRetry,
+  shadowQuizSubmitted,
+} from '@/lib/runtime/shadow-writer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -688,6 +694,8 @@ function ScoreBanner({
 
 export function QuizView({ questions, sceneId }: QuizViewProps) {
   const { t, locale } = useI18n();
+  // R2 影子写需要 stageId（runtime 会话 id 的组成 + 服务端课程可读门禁）
+  const stageId = useStageStore((s) => s.stage?.id ?? null);
 
   // Rehydrate submitted state from localStorage on first mount. Runs once.
   const [initialSubmitted] = useState<SubmittedState>(() => readSubmittedState(sceneId));
@@ -757,7 +765,9 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
     setPhase('grading');
     clearAnswersCache();
     writeSubmittedAnswers(sceneId, answers);
-  }, [clearAnswersCache, answers, sceneId]);
+    // R2 影子写（fire-and-forget，须在 writeSubmittedAnswers 之后：attemptId 已持久化）
+    void shadowQuizSubmitted(stageId, sceneId, answers);
+  }, [clearAnswersCache, answers, sceneId, stageId]);
 
   // When entering grading phase, grade choice questions locally + call API for short-answer
   useEffect(() => {
@@ -788,20 +798,25 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
       setResults(ordered);
       setPhase('reviewing');
       writeSubmittedResults(sceneId, ordered);
+      // R2 影子写（fire-and-forget）
+      void shadowQuizReviewed(stageId, sceneId, ordered);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [phase, questions, answers, locale, sceneId]);
+  }, [phase, questions, answers, locale, sceneId, stageId]);
 
   const handleRetry = useCallback(() => {
     setPhase('not_started');
     setAnswers({});
     setResults([]);
     clearAnswersCache();
+    // R2 影子写：归档本周期的 runtime 会话——必须先于 clearSubmitted
+    // （后者会清除 attemptId，之后无法再定位要归档的会话）
+    void shadowQuizRetry(stageId, sceneId);
     clearSubmitted(sceneId);
-  }, [clearAnswersCache, sceneId]);
+  }, [clearAnswersCache, sceneId, stageId]);
 
   const earnedScore = useMemo(() => results.reduce((sum, r) => sum + r.earned, 0), [results]);
 

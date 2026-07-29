@@ -26,6 +26,19 @@ const PARITY_FAILURE_CODES = new Set([
 ]);
 const PARITY_SOURCES = new Set(['legacy_dexie', 'cloud_hydration']);
 const PARITY_FAILURE_PHASES = new Set(['identity', 'load_document', 'fingerprint']);
+const SHADOW_OUTCOMES = new Set([
+  'ok',
+  'ok_idempotent',
+  'idempotency_conflict',
+  'validation',
+  'auth',
+  'timeout',
+  'http_4xx',
+  'http_5xx',
+  'network',
+]);
+const SHADOW_OPS = new Set(['create_session', 'append_record', 'set_status']);
+const SHADOW_KINDS = new Set(['chat', 'quizAttempt', 'playback']);
 const PARITY_ERROR_NAMES = new Set([
   'AbortError',
   'DataError',
@@ -94,6 +107,29 @@ export async function POST(request: NextRequest) {
         ...(body.errorCode ? { errorCode: body.errorCode } : {}),
         ...(body.errorPhase ? { errorPhase: body.errorPhase } : {}),
         ...(body.errorName ? { errorName: body.errorName } : {}),
+      });
+      return NextResponse.json({ success: true });
+    }
+    if (body?.event === 'runtime_shadow') {
+      if (
+        !SHADOW_OUTCOMES.has(body.outcome) ||
+        !BUCKETS.has(body.durationBucket) ||
+        typeof body.shadowVersion !== 'string' ||
+        !SHADOW_OPS.has(body.op) ||
+        !SHADOW_KINDS.has(body.kind)
+      ) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid runtime shadow diagnostic payload' },
+          { status: 400 },
+        );
+      }
+      log.info('runtime_shadow', {
+        userId: guard.user.id,
+        outcome: body.outcome,
+        durationBucket: body.durationBucket,
+        shadowVersion: body.shadowVersion,
+        op: body.op,
+        kind: body.kind,
       });
       return NextResponse.json({ success: true });
     }

@@ -9,6 +9,10 @@ import type { QuestionResult } from '@/lib/quiz/grading';
  *                            cleared at submit time.
  *   quizAnswers:<sceneId>  — answers written once at submit, cleared on retry.
  *   quizResults:<sceneId>  — graded results written once at reviewing, cleared on retry.
+ *   quizAttemptId:<sceneId>— R2 影子写的答题周期 UUID。在 writeSubmittedAnswers
+ *                            内与 answers 同一次 localStorage 写入（Codex P0 裁决：
+ *                            确定性 ID 锚定持久化字段，不锚定内存变量），
+ *                            clearSubmitted 后才允许生成新值。draft 阶段不生成。
  *
  * Both quiz-view (to rehydrate its own state) and the classroom-complete page
  * (to compute aggregate scores) read through this module so the storage
@@ -18,6 +22,7 @@ import type { QuestionResult } from '@/lib/quiz/grading';
 export const DRAFT_KEY_PREFIX = 'quizDraft:';
 export const ANSWERS_KEY_PREFIX = 'quizAnswers:';
 export const RESULTS_KEY_PREFIX = 'quizResults:';
+export const ATTEMPT_ID_PREFIX = 'quizAttemptId:';
 
 /** Build the draft cache key for a scene. Use this everywhere that needs the
  *  in-progress quiz answers (e.g. `useDraftCache`) so the prefix stays in
@@ -104,7 +109,17 @@ export function readAnswersForSummary(sceneId: string): QuizAnswers {
 
 /** Called by quiz-view at submit time. */
 export function writeSubmittedAnswers(sceneId: string, answers: QuizAnswers): void {
+  // R2 P0：attemptId 必须与 answers 同一次本地写入持久化（localStorage 同步写
+  // 天然满足）。已有 attemptId（刷新后继续本周期）则复用，不重新生成。
+  if (!safeGet(ATTEMPT_ID_PREFIX + sceneId)) {
+    safeSet(ATTEMPT_ID_PREFIX + sceneId, crypto.randomUUID());
+  }
   safeSet(ANSWERS_KEY_PREFIX + sceneId, JSON.stringify(answers));
+}
+
+/** R2 影子写读取当前答题周期 id；无（尚未提交过）返回 null。 */
+export function readAttemptId(sceneId: string): string | null {
+  return safeGet(ATTEMPT_ID_PREFIX + sceneId);
 }
 
 /** Called by quiz-view when grading transitions to reviewing. */
@@ -116,6 +131,8 @@ export function writeSubmittedResults(sceneId: string, results: QuestionResult[]
 export function clearSubmitted(sceneId: string): void {
   safeRemove(ANSWERS_KEY_PREFIX + sceneId);
   safeRemove(RESULTS_KEY_PREFIX + sceneId);
+  // R2：周期归档——清除 attemptId，下一次 writeSubmittedAnswers 生成新周期 id
+  safeRemove(ATTEMPT_ID_PREFIX + sceneId);
 }
 
 /** Called by the stage-delete flow: wipes all three keys for a single scene. */
@@ -123,4 +140,5 @@ export function clearAllForScene(sceneId: string): void {
   safeRemove(DRAFT_KEY_PREFIX + sceneId);
   safeRemove(ANSWERS_KEY_PREFIX + sceneId);
   safeRemove(RESULTS_KEY_PREFIX + sceneId);
+  safeRemove(ATTEMPT_ID_PREFIX + sceneId);
 }

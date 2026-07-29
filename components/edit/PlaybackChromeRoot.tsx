@@ -20,6 +20,7 @@ import { CanvasArea } from '@/components/canvas/canvas-area';
 import { Roundtable } from '@/components/roundtable';
 import { PlaybackEngine, computePlaybackView } from '@/lib/playback';
 import type { EngineMode, TriggerEvent, Effect } from '@/lib/playback';
+import { shadowPlaybackProgress } from '@/lib/runtime/shadow-writer';
 import { ActionEngine } from '@/lib/action/engine';
 import { createAudioPlayer } from '@/lib/utils/audio-player';
 import { useDiscussionTTS } from '@/lib/hooks/use-discussion-tts';
@@ -538,6 +539,11 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         },
         onSceneChange: (_sceneId) => {
           // Scene change handled by engine
+        },
+        // R2 影子写：进度快照 → RuntimeStore（开关默认关闭时零副作用；
+        // 同时恢复 savePlaybackState 的本地持久化——v0.3.1 rebase 后该接线丢失）
+        onProgress: (snapshot) => {
+          void shadowPlaybackProgress(stage?.id ?? null, snapshot);
         },
         onSpeechStart: (text) => {
           setLectureSpeech(text);

@@ -8,6 +8,7 @@
 import type { ChatSession, ChatMessageMetadata, SessionStatus } from '@/lib/types/chat';
 import type { UIMessage } from 'ai';
 import { db, type ChatSessionRecord } from './database';
+import { shadowChatSessions } from '@/lib/runtime/shadow-writer';
 
 /** Maximum messages per session to avoid IndexedDB bloat */
 const MAX_MESSAGES_PER_SESSION = 200;
@@ -48,6 +49,11 @@ export async function saveChatSessions(stageId: string, sessions: ChatSession[])
     await db.chatSessions.where('stageId').equals(stageId).delete();
     await db.chatSessions.bulkPut(records);
   });
+
+  // R2 影子双写：本地覆写成功后 fire-and-forget 镜像到 RuntimeStore。
+  // 开关默认关闭（NEXT_PUBLIC_RUNTIME_SHADOW !== '1' 时零副作用）；
+  // 空 sessions（删除路径）影子期不动。
+  void shadowChatSessions(stageId, sessions);
 }
 
 /**
