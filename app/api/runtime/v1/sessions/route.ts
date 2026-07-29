@@ -10,6 +10,7 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { rateLimitByUser } from '@/lib/server/api-guard';
 import { requireRuntimeUser, makeRuntimeStore } from '@/lib/server/runtime-store/request-context';
 import { runtimeStoreErrorResponse } from '@/lib/server/runtime-store/http-error';
+import { checkCourseReadAccess } from '@/lib/server/course-access';
 
 export async function POST(req: NextRequest) {
   const guard = await requireRuntimeUser();
@@ -23,15 +24,27 @@ export async function POST(req: NextRequest) {
   } catch {
     return apiError('INVALID_REQUEST', 400, '请求体不是合法 JSON');
   }
-  const { id, kind, stageId, status, createdAt, updatedAt } = body as {
+  const { id, kind, stageId, status, createdAt, updatedAt, share } = body as {
     id?: string; kind?: string; stageId?: string; status?: string;
-    createdAt?: string; updatedAt?: string;
+    createdAt?: string; updatedAt?: string; share?: boolean;
   };
   if (!id || !kind || !stageId || !status || !createdAt || !updatedAt) {
     return apiError(
       'MISSING_REQUIRED_FIELD', 400,
       'id / kind / stageId / status / createdAt / updatedAt 均为必填',
     );
+  }
+  // stageId == courseId：与 courses GET 同一判定（R1.1 补授权缺口——此前任何
+  // 登录用户可在任意 courseId 下建会话）。会话写入的是 learner 自己的分区，
+  // 但课程不可读就意味着不该产生任何运行时数据。
+  const access = await checkCourseReadAccess(guard.user.id, stageId, {
+    shareLink: share === true,
+  });
+  if (!access.ok) {
+    if (access.reason === 'not_found') {
+      return apiError('NOT_FOUND', 404, '课程不存在');
+    }
+    return apiError('FORBIDDEN', 403, '您没有权限在该课程下创建学习会话');
   }
   try {
     // learnerKey 由服务端注入登录用户 id——客户端自报的一律忽略（防越权写入他人分区）

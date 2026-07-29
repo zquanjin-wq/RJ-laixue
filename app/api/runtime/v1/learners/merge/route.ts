@@ -9,10 +9,13 @@
  *   - toLearnerKey 强制 = auth.uid()（不接受客户端传入）；
  *   - 必须携带 access-code 绑定流程签发的短期一次性 grant（runtime_merge_grants），
  *     客户端自报 fromLearnerKey 一律 403——否则任意匿名分区可被劫走；
- *   - grant 原子核销（runtime_claim_merge_grant），核销与 merge 顺序执行：
- *     claim 成功才 merge；merge 失败 grant 已核销（一次性语义，防重放爆破）。
+ *   - grant 校验 + 核销与数据搬移在单条原子 SQL（runtime_merge_with_grant）
+ *     内完成：grant 无效（403）或版本冲突（迁移后重试）都不烧 grant，
+ *     只有搬移真正成功才核销——v1.1 修复「claim 与 merge 分步导致失败烧
+ *     grant」的竞态（docs/reports/2026-07-29-runtimestore-r1-concurrency-gap.md）。
  */
 import { type NextRequest } from 'next/server';
+import { RUNTIME_DSL_VERSION } from '@openmaic/dsl';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { rateLimitByUser } from '@/lib/server/api-guard';
 import { requireRuntimeUser, makeRuntimeStore } from '@/lib/server/runtime-store/request-context';
@@ -39,25 +42,31 @@ export async function POST(req: NextRequest) {
     return apiSuccess({ moved: 0 });
   }
   try {
-    // 1) 原子核销 grant（一次性、短期；核销失败 = 无权 merge）
-    const { data: claim, error: claimErr } = await getServiceSupabase().rpc(
-      'runtime_claim_merge_grant',
-      {
+    const store = makeRuntimeStore();
+    // 原子 merge：grant 校验 + 核销 + 搬移同一条 SQL。version_conflict 时
+    // 先迁移该 learner 的过期版本行（不烧 grant）再重试一次。
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { data, error } = await getServiceSupabase().rpc('runtime_merge_with_grant', {
         p_grant_id: body.grantId,
         p_from: body.fromLearnerKey,
         p_to: guard.user.id,
+        p_expect_version: RUNTIME_DSL_VERSION,
         p_now: new Date().toISOString(),
-      },
-    );
-    if (claimErr) {
-      return apiError('INTERNAL_ERROR', 500, `grant 核销失败：${claimErr.message}`);
+      });
+      if (error) {
+        return apiError('INTERNAL_ERROR', 500, `merge 执行失败：${error.message}`);
+      }
+      const outcome = String(data);
+      if (outcome.startsWith('ok:')) {
+        return apiSuccess({ moved: Number(outcome.slice('ok:'.length)) });
+      }
+      if (outcome === 'invalid_grant') {
+        return apiError('FORBIDDEN', 403, 'merge 授权无效、已过期或已使用');
+      }
+      // 'version_conflict'：存在过期版本行——迁移后重试；再冲突则落入 500
+      await store.migrateLearnerRuntime(body.fromLearnerKey);
     }
-    if (claim !== 'ok') {
-      return apiError('FORBIDDEN', 403, 'merge 授权无效、已过期或已使用');
-    }
-    // 2) grant 有效 → 执行合并
-    const moved = await makeRuntimeStore().mergeLearner(body.fromLearnerKey, guard.user.id);
-    return apiSuccess({ moved });
+    return apiError('INTERNAL_ERROR', 500, 'merge 迁移后仍版本冲突，请重试');
   } catch (err) {
     return runtimeStoreErrorResponse(err);
   }

@@ -26,16 +26,21 @@ afterAll(async () => {
 runRuntimeStoreContract('postgres (pg-mem)', harness.makeStore);
 
 describe('migration file sanity', () => {
-  test('splits into statements covering both tables and all 13 rpc functions', () => {
+  test('splits into statements covering all tables and all 14 rpc functions', () => {
     const sql = readFileSync(resolve(__dirname, '../../supabase-runtime-store-v1.sql'), 'utf-8');
     const stmts = splitMigrationStatements(sql);
     const joined = stmts.join('\n');
     for (const needle of [
       'create table if not exists runtime_sessions',
       'create table if not exists runtime_records',
+      'create table if not exists runtime_merge_grants',
+      // learner 级协调：咨询锁（锁表方案已废弃，见迁移头注 ②）
+      'pg_advisory_xact_lock(hashtext(p_learner_key))',
+      'pg_advisory_xact_lock(hashtext(p_from))',
       'runtime_create_session',
       'runtime_get_session',
       'runtime_list_sessions',
+      'runtime_list_sessions_by_learner',
       'runtime_update_session',
       'runtime_append_record',
       'runtime_list_records',
@@ -43,10 +48,12 @@ describe('migration file sanity', () => {
       'runtime_get_record',
       'runtime_delete_session',
       'runtime_merge_learner',
+      'runtime_merge_with_grant',
       'runtime_delete_learner_runtime',
       'runtime_delete_stage_runtime',
-      'runtime_claim_merge_grant',
-      'create table if not exists runtime_merge_grants',
+      // EXECUTE 收口：浏览器/普通角色不可执行任何 runtime_* 函数
+      'revoke execute on function runtime_merge_with_grant(text,text,text,text,text)',
+      'grant execute on function runtime_merge_with_grant(text,text,text,text,text) to service_role',
     ]) {
       expect(joined).toContain(needle);
     }
@@ -130,38 +137,112 @@ describe('RuntimeStorePg backend-specific behaviour', () => {
     expect(typeof RuntimeStorePg).toBe('function');
   });
 
-  test('merge grant: atomic one-shot claim (ok → invalid on replay, wrong to/from → invalid)', async () => {
-    const { pool } = harness.makeStoreWithDb();
-    await pool.query(
-      `insert into runtime_merge_grants (id, from_learner_key, to_learner_key, expires_at)
-       values ($1, $2, $3, $4)`,
-      ['grant-1', 'anon:temp', 'user:42', '2099-01-01T00:00:00Z'],
-    );
-    const claim = async (grantId: string, from: string, to: string) =>
-      (
-        await pool.query(
-          `select runtime_claim_merge_grant($1, $2, $3, $4) as v`,
-          [grantId, from, to, '2026-07-29T00:00:00Z'],
-        )
-      ).rows[0]?.v;
+  test('revision CAS: stale p_expect_revision → conflict; 正确 revision → ok 且 revision 递增', async () => {
+    const { store, pool } = harness.makeStoreWithDb();
+    await store.createSession({
+      id: 'sess-1',
+      kind: 'chat',
+      stageId: 'stage-1',
+      learnerKey: 'anon:1',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const revision = async () =>
+      Number((await pool.query(`select revision from runtime_sessions where id = 'sess-1'`)).rows[0]?.revision);
+    expect(await revision()).toBe(0);
 
-    expect(await claim('grant-1', 'anon:temp', 'user:42')).toBe('ok');
-    // 一次性：重放核销失败
-    expect(await claim('grant-1', 'anon:temp', 'user:42')).toBe('invalid');
+    const update = (expectRevision: number) =>
+      pool.query(`select runtime_update_session($1,$2,$3,$4,$5,$6,$7,$8,$9) as v`, [
+        'sess-1', RUNTIME_DSL_VERSION, 'chat', 'stage-1', 'anon:1', 'completed',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', expectRevision,
+      ]).then((r) => r.rows[0]?.v);
 
-    await pool.query(
-      `insert into runtime_merge_grants (id, from_learner_key, to_learner_key, expires_at)
-       values ($1, $2, $3, $4)`,
-      ['grant-2', 'anon:temp', 'user:42', '2099-01-01T00:00:00Z'],
-    );
+    // 陈旧 revision（模拟并发方已写入）→ CAS 失败
+    expect(await update(99)).toBe('conflict');
+    expect(await revision()).toBe(0);
+    // 正确 revision → 写入成功且递增；此后旧 revision 永远失效
+    expect(await update(0)).toBe('ok');
+    expect(await revision()).toBe(1);
+    expect(await update(0)).toBe('conflict');
+  });
+
+  test('merge_with_grant: 无效/过期/目标不匹配 → invalid_grant 且不搬移、不烧 grant', async () => {
+    const { store, pool } = harness.makeStoreWithDb();
+    await store.createSession({
+      id: 'sess-1', kind: 'chat', stageId: 'stage-1', learnerKey: 'anon:temp',
+      status: 'active', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const grant = async (id: string, expires: string) =>
+      pool.query(
+        `insert into runtime_merge_grants (id, from_learner_key, to_learner_key, expires_at)
+         values ($1, $2, $3, $4)`,
+        [id, 'anon:temp', 'user:42', expires],
+      );
+    const merge = (grantId: string, from = 'anon:temp', to = 'user:42') =>
+      pool.query(`select runtime_merge_with_grant($1,$2,$3,$4,$5) as v`, [
+        grantId, from, to, RUNTIME_DSL_VERSION, '2026-07-29T00:00:00Z',
+      ]).then((r) => String(r.rows[0]?.v));
+    const usedAt = async (grantId: string) =>
+      (await pool.query(`select used_at from runtime_merge_grants where id = $1`, [grantId])).rows[0]?.used_at;
+    const ownerOf = async (id: string) =>
+      (await pool.query(`select learner_key from runtime_sessions where id = $1`, [id])).rows[0]?.learner_key;
+
+    await grant('grant-expired', '2020-01-01T00:00:00Z');
+    expect(await merge('grant-expired')).toBe('invalid_grant');
+    expect(await usedAt('grant-expired')).toBeNull();
+    expect(await ownerOf('sess-1')).toBe('anon:temp');
+
+    await grant('grant-2', '2099-01-01T00:00:00Z');
     // 目标用户不匹配（防止把他人分区并给自己）
-    expect(await claim('grant-2', 'anon:temp', 'user:99')).toBe('invalid');
-    // 过期 grant
+    expect(await merge('grant-2', 'anon:temp', 'user:99')).toBe('invalid_grant');
+    expect(await usedAt('grant-2')).toBeNull();
+    expect(await ownerOf('sess-1')).toBe('anon:temp');
+
+    // 成功：搬移 + 核销原子完成；重放 → invalid_grant（一次性语义）
+    expect(await merge('grant-2')).toBe('ok:1');
+    expect(await ownerOf('sess-1')).toBe('user:42');
+    expect(await usedAt('grant-2')).not.toBeNull();
+    expect(await merge('grant-2')).toBe('invalid_grant');
+  });
+
+  test('merge_with_grant: version_conflict 不烧 grant，迁移后同一 grant 可重试成功', async () => {
+    const { pool } = harness.makeStoreWithDb();
+    // 直接插入一行旧版本会话（模拟等待迁移的数据）
+    await pool.query(
+      `insert into runtime_sessions (id, runtime_dsl_version, kind, stage_id, learner_key, status, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      ['sess-old', '0.0.0', 'chat', 'stage-1', 'anon:temp', 'active',
+       '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'],
+    );
     await pool.query(
       `insert into runtime_merge_grants (id, from_learner_key, to_learner_key, expires_at)
        values ($1, $2, $3, $4)`,
-      ['grant-3', 'anon:temp', 'user:42', '2020-01-01T00:00:00Z'],
+      ['grant-v', 'anon:temp', 'user:42', '2099-01-01T00:00:00Z'],
     );
-    expect(await claim('grant-3', 'anon:temp', 'user:42')).toBe('invalid');
+    const merge = () =>
+      pool.query(`select runtime_merge_with_grant($1,$2,$3,$4,$5) as v`, [
+        'grant-v', 'anon:temp', 'user:42', RUNTIME_DSL_VERSION, '2026-07-29T00:00:00Z',
+      ]).then((r) => String(r.rows[0]?.v));
+    const usedAt = async () =>
+      (await pool.query(`select used_at from runtime_merge_grants where id = 'grant-v'`)).rows[0]?.used_at;
+
+    expect(await merge()).toBe('version_conflict');
+    // 关键断言：版本冲突不烧 grant、不搬移
+    expect(await usedAt()).toBeNull();
+    expect(
+      (await pool.query(`select learner_key from runtime_sessions where id = 'sess-old'`)).rows[0]?.learner_key,
+    ).toBe('anon:temp');
+
+    // 模拟 TS 层迁移（路由在 version_conflict 后做 migrateLearnerRuntime 再重试）
+    await pool.query(
+      `update runtime_sessions set runtime_dsl_version = $1 where id = 'sess-old'`,
+      [RUNTIME_DSL_VERSION],
+    );
+    expect(await merge()).toBe('ok:1');
+    expect(await usedAt()).not.toBeNull();
+    expect(
+      (await pool.query(`select learner_key from runtime_sessions where id = 'sess-old'`)).rows[0]?.learner_key,
+    ).toBe('user:42');
   });
 });

@@ -16,7 +16,10 @@
  *   1. record id 全局唯一（幂等键）；同 id 同内容重放返回已有行，
  *      同 id 不同内容抛 IDEMPOTENCY_CONFLICT；
  *   2. setSessionStatus / appendRecord 的「父会话迁移后写回」用整行乐观 CAS
- *      （p_expect_version），并发写冲突时重试一次再 fail-loud。
+ *      （p_expect_revision——独立递增的并发版本号，DSL 版本不兼任），并发写
+ *      冲突时重试一次再 fail-loud；
+ *   3. mergeLearner 以函数返回的真实移动数为准（不比较预读行数——预读与
+ *      搬移之间的并发变化由 learner 锁消除，见 runtime_learner_locks）。
  */
 import {
   RUNTIME_DSL_VERSION,
@@ -60,6 +63,9 @@ export interface RuntimeStorePgOptions {
 interface SessionRow {
   id: string;
   runtime_dsl_version: string; // semver 'x.y.z'；顺序比较走 @openmaic/dsl，SQL 只做相等 CAS
+  // 并发版本号（bigint）：node-pg/pg-mem 可能返回 string，PostgREST 返回 number——
+  // 用 Number() 归一化后才可作 p_expect_revision 传回。
+  revision: number | string;
   kind: string;
   stage_id: string;
   learner_key: string;
@@ -274,7 +280,7 @@ export class RuntimeStorePg implements RuntimeStore {
         p_status: updated.status,
         p_created_at: updated.createdAt,
         p_updated_at: updated.updatedAt,
-        p_expect_version: row.runtime_dsl_version,
+        p_expect_revision: Number(row.revision),
       });
       if (outcome === 'ok') return updated;
       if (outcome === 'no_session') {
@@ -335,11 +341,11 @@ export class RuntimeStorePg implements RuntimeStore {
         p_sub_anchor: init.subAnchor ?? '',
         p_created_at: init.createdAt,
         p_payload: JSON.stringify(init.payload === undefined ? null : init.payload),
-        p_expect_version: parent.runtime_dsl_version,
+        p_expect_revision: Number(parent.revision),
       });
-      if (outcome !== 'version_conflict') break;
-      // 版本在预读与写入之间被并发改动：重读裁决——未来版本响亮失败，
-      // 否则按新版本重试一次
+      if (outcome !== 'conflict') break;
+      // revision 在预读与写入之间被并发改动：重读裁决——未来版本响亮失败，
+      // 否则按新 revision 重试一次
       const fresh = await this.readSessionRow(init.sessionId);
       if (!fresh) {
         throw new Error(`@openmaic/storage-pg: no session ${JSON.stringify(init.sessionId)}`);
@@ -353,7 +359,7 @@ export class RuntimeStorePg implements RuntimeStore {
     if (outcome === 'no_session') {
       throw new Error(`@openmaic/storage-pg: no session ${JSON.stringify(init.sessionId)}`);
     }
-    if (outcome === 'version_conflict') {
+    if (outcome === 'conflict') {
       throw new Error(
         `@openmaic/storage-pg: session ${JSON.stringify(init.sessionId)} was concurrently modified`,
       );
@@ -399,6 +405,30 @@ export class RuntimeStorePg implements RuntimeStore {
     return rows.map((r) => recordFromRow(r));
   }
 
+  /**
+   * 将某 learner 名下的过期版本会话逐行就地迁移到当前 DSL 版本。
+   * 不在 RuntimeStore 契约内——供 API 层在 runtime_merge_with_grant 返回
+   * 'version_conflict' 时调用（不核销 grant），迁移完成后由调用方重试原子
+   * merge。未来版本行直接响亮失败（同 mergeLearner 的守护）。
+   */
+  async migrateLearnerRuntime(learnerKey: string): Promise<void> {
+    const rows = await this.rpc.rows<SessionRow>('runtime_list_sessions_by_learner', {
+      p_learner_key: learnerKey,
+    });
+    for (const row of rows) {
+      const session = sessionFromRow(row);
+      if (isFutureRuntimeVersioned(session)) {
+        throw new Error(
+          `@openmaic/storage-pg: cannot merge learner ${JSON.stringify(learnerKey)} — ` +
+            `session ${JSON.stringify(row.id)} was written at a newer runtime DSL version`,
+        );
+      }
+      if (needsRuntimeMigration(session)) {
+        await this.readModifyWriteSession(row.id, (s) => s);
+      }
+    }
+  }
+
   async mergeLearner(fromLearnerKey: string, toLearnerKey: string): Promise<number> {
     if (
       typeof fromLearnerKey !== 'string' ||
@@ -411,30 +441,23 @@ export class RuntimeStorePg implements RuntimeStore {
     if (fromLearnerKey === toLearnerKey) return 0;
 
     // browser 语义：整并原子——任一行是未来版本则整并不动（semver 守护在 TS 层，
-    // SQL 只做相等 CAS）；过期版本先逐行就地迁移再合并。
+    // SQL 只做相等判断）；过期版本先逐行就地迁移再合并。
     for (let attempt = 0; attempt < 2; attempt++) {
-      const rows = await this.rpc.rows<SessionRow>('runtime_list_sessions_by_learner', {
-        p_learner_key: fromLearnerKey,
-      });
-      for (const row of rows) {
-        const session = sessionFromRow(row);
-        if (isFutureRuntimeVersioned(session)) {
-          throw new Error(
-            `@openmaic/storage-pg: cannot merge learner ${JSON.stringify(fromLearnerKey)} — ` +
-              `session ${JSON.stringify(row.id)} was written at a newer runtime DSL version`,
-          );
-        }
-        if (needsRuntimeMigration(session)) {
-          await this.readModifyWriteSession(row.id, (s) => s);
-        }
+      await this.migrateLearnerRuntime(fromLearnerKey);
+      // learner 锁（runtime_learner_locks）使预读与搬移之间的并发变化不可能发生，
+      // 因此以函数返回的真实移动数为准，不再比较预读行数（P0-2）。
+      const outcome = String(
+        await this.rpc.scalar('runtime_merge_learner', {
+          p_from: fromLearnerKey,
+          p_to: toLearnerKey,
+          p_expect_version: RUNTIME_DSL_VERSION,
+        }),
+      );
+      if (outcome.startsWith('ok:')) {
+        return Number(outcome.slice('ok:'.length));
       }
-      const moved = (await this.rpc.scalar('runtime_merge_learner', {
-        p_from: fromLearnerKey,
-        p_to: toLearnerKey,
-        p_expect_version: RUNTIME_DSL_VERSION,
-      })) as number;
-      if (moved === rows.length) return moved;
-      // 并发改动（行数/版本在预读与合并之间变化）：重读重试一次
+      // 'version_conflict'：预读之后又有过期版本行并发插入（迁移窗口竞态）——
+      // 重读后再次迁移并重试一次；再失败则响亮抛出
     }
     throw new Error(
       `@openmaic/storage-pg: learner ${JSON.stringify(fromLearnerKey)} was concurrently modified during merge`,

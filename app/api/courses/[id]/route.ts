@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase, getServerSupabase } from '@/lib/supabase/server';
+import { checkCourseReadAccess } from '@/lib/server/course-access';
 
 // GET /api/courses/[id] — 获取单个课程完整数据
 //
@@ -43,55 +44,19 @@ export async function GET(
       );
     }
 
-    // 2. Authorization: check the caller's role + ownership / assignment.
+    // 2. Authorization: 共享判定（lib/server/course-access.ts，与 runtime
+    //    写入门禁同一事实来源）。A share link is intentionally read-only at
+    //    the UI layer. It changes only this GET authorization decision;
+    //    POST/DELETE ownership checks below remain unchanged.
     const serviceSupabase = getServiceSupabase();
-
-    // Load caller's role + the course's created_by in parallel (cheap).
-    const [{ data: profile }, { data: course }] = await Promise.all([
-      serviceSupabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
-      serviceSupabase.from('courses').select('id, created_by').eq('id', id).maybeSingle(),
-    ]);
-
-    if (!course) {
-      return NextResponse.json(
-        { success: false, errorCode: 'NOT_FOUND', error: '课程不存在' },
-        { status: 404 },
-      );
-    }
-
-    const role = (profile?.role ?? 'learner') as 'admin' | 'teacher' | 'learner';
-
-    // A share link is intentionally read-only at the UI layer. It changes
-    // only this GET authorization decision; POST/DELETE ownership checks
-    // below remain unchanged.
-    let authorized = isShareLink;
-
-    if (!isShareLink && (role === 'admin' || role === 'teacher')) {
-      // Author / admin path: own course OR cross-author browse (catalog).
-      // If created_by is null/empty (legacy data) we still allow teacher
-      // / admin to read so the wave-2 catalog doesn't break on dirty
-      // rows. Tighten after running supabase-rls-tighten-courses.sql
-      // (see docs/SECURITY-CHECKLIST-2026-07-23.md).
-      authorized = !course.created_by || course.created_by === user.id;
-      // Teachers and admins can still browse other authors' published
-      // courses; this preserves the catalog UX. Learners below are
-      // gated strictly by assignment.
-      if (role === 'admin') authorized = true;
-    }
-
-    if (!authorized && role === 'learner') {
-      // Learner path: must have a course_assignments row pointing at
-      // a students row whose user_id is the caller.
-      const { data: assignment } = await serviceSupabase
-        .from('course_assignments')
-        .select('id, student_id, students!inner(user_id)')
-        .eq('course_id', id)
-        .eq('students.user_id', user.id)
-        .maybeSingle();
-      if (assignment) authorized = true;
-    }
-
-    if (!authorized) {
+    const access = await checkCourseReadAccess(user.id, id, { shareLink: isShareLink });
+    if (!access.ok) {
+      if (access.reason === 'not_found') {
+        return NextResponse.json(
+          { success: false, errorCode: 'NOT_FOUND', error: '课程不存在' },
+          { status: 404 },
+        );
+      }
       return NextResponse.json(
         {
           success: false,

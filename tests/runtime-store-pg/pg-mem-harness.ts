@@ -12,11 +12,18 @@
  *   3. 绑定 null 参数不可靠——SQL 函数集设计为哨兵值传参（'' / -1），
  *      本 harness 与生产 PostgREST 走同一形状；
  *   4. ON CONFLICT DO NOTHING 的 returning 在冲突时仍非空——append 函数用
- *      not-exists 前置守卫规避，TS 层取回行比对做终判。
+ *      not-exists 前置守卫规避，TS 层取回行比对做终判；
+ *   5. REVOKE / GRANT（EXECUTE 收口）不支持——harness 跳过（权限语义只在
+ *      真实 PG 生效，契约行为不依赖它）；
+ *   6. hashtext / pg_advisory_xact_lock 未内置——harness 注册同签名 no-op
+ *      （pg-mem 单线程，锁无语义；并发证据归 live PG 双连接套件）。
+ *      教训（探针 15–17）：PG 的 WITH 子语句共享快照、互不可见——
+ *      「同语句先建行再锁行」在真实 PG 也不成立，learner 协调必须用
+ *      咨询锁而非锁表。
  */
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { newDb } from 'pg-mem';
+import { newDb, DataType } from 'pg-mem';
 import { RuntimeStorePg, type RuntimeStoreRpcClient } from '@/lib/server/runtime-store/pg';
 import type { RuntimeStore } from '@openmaic/storage';
 
@@ -31,11 +38,11 @@ const PARAM_ORDER: Record<string, string[]> = {
   runtime_list_sessions_by_learner: ['p_learner_key'],
   runtime_update_session: [
     'p_id', 'p_version', 'p_kind', 'p_stage_id', 'p_learner_key',
-    'p_status', 'p_created_at', 'p_updated_at', 'p_expect_version',
+    'p_status', 'p_created_at', 'p_updated_at', 'p_expect_revision',
   ],
   runtime_append_record: [
     'p_session_id', 'p_id', 'p_scene_id', 'p_action_index',
-    'p_sub_anchor', 'p_created_at', 'p_payload', 'p_expect_version',
+    'p_sub_anchor', 'p_created_at', 'p_payload', 'p_expect_revision',
   ],
   runtime_list_records: ['p_session_id'],
   runtime_list_records_by_scene: ['p_session_id', 'p_scene_id'],
@@ -44,7 +51,7 @@ const PARAM_ORDER: Record<string, string[]> = {
   runtime_merge_learner: ['p_from', 'p_to', 'p_expect_version'],
   runtime_delete_learner_runtime: ['p_stage_id', 'p_learner_key'],
   runtime_delete_stage_runtime: ['p_stage_id'],
-  runtime_claim_merge_grant: ['p_grant_id', 'p_from', 'p_to', 'p_now'],
+  runtime_merge_with_grant: ['p_grant_id', 'p_from', 'p_to', 'p_expect_version', 'p_now'],
 };
 
 interface PgLikePool {
@@ -81,8 +88,11 @@ export function splitMigrationStatements(sql: string): string[] {
   return statements.filter((s) => s.length > 0);
 }
 
-/** pg-mem 不支持的语句：RLS 相关（授权在 API 层，契约测试不涉及）。 */
-function isRlsStatement(stmt: string): boolean {
+/**
+ * pg-mem 不支持的语句：RLS / REVOKE / GRANT（授权在 API 层，契约测试不涉及；
+ * live PG 并发套件在 scratch 库上同样跳过这些语句）。
+ */
+export function isRlsStatement(stmt: string): boolean {
   // 语句可能带前导注释行，去掉注释后取首个有效行判断
   const code = stmt
     .split('\n')
@@ -93,7 +103,9 @@ function isRlsStatement(stmt: string): boolean {
   return (
     code.startsWith('alter table') ||
     code.startsWith('create policy') ||
-    code.startsWith('drop policy')
+    code.startsWith('drop policy') ||
+    code.startsWith('revoke') ||
+    code.startsWith('grant')
   );
 }
 
@@ -124,6 +136,27 @@ export function createPgMemHarness(): PgMemHarness {
 
   const makeStoreWithDb = (): { store: RuntimeStore; pool: PgLikePool } => {
     const db = newDb();
+    // pg-mem 未内置的两个 PG 内部函数：注册同签名实现（见头注偏差 6）
+    db.public.registerFunction({
+      name: 'hashtext',
+      args: [DataType.text],
+      returns: DataType.integer,
+      implementation: (s: string) => {
+        let h = 0;
+        for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0;
+        return h;
+      },
+    });
+    for (const argType of [DataType.integer, DataType.bigint]) {
+      db.public.registerFunction({
+        name: 'pg_advisory_xact_lock',
+        args: [argType],
+        // pg-mem 的 DataType 无 void 成员；返回值在 SQL 里不被使用，整数即可
+        returns: DataType.integer,
+        implementation: () => 0,
+        impure: true,
+      });
+    }
     for (const stmt of statements) {
       db.public.query(stmt);
     }
