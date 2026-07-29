@@ -351,11 +351,18 @@ bad_version as (
 claim as (
   -- 核销先行（data-modifying CTE，PG 保证恰好执行一次）；version_conflict
   -- 时不核销，grant 保留供迁移后重试。
-  -- 门控用 exists(grant_ok) 而非 id in (select … from grant_ok)——
-  -- UPDATE WHERE 里的 IN-CTE 子查询有执行器兼容风险（探针 18），
-  -- grant_ok 已完整校验 id/from/to/未用/未过期，二者等价。
+  -- 关键可变条件（from/to/未用/未过期）在 UPDATE WHERE 里直接重写一遍——
+  -- 这不是冗余：两个请求共用同一 grant 时，等待咨询锁的一方持语句快照，
+  -- CTE 里的 grant_ok 仍看见「未使用」；只有 UPDATE 自身的直接条件会在
+  -- READ COMMITTED 的 EvalPlanQual 里对最新行版本重检，挡住双重核销
+  -- （Codex R1.1 联合评审第 1 条）。IN-CTE 子查询有执行器兼容风险
+  -- （探针 18），故用 exists(grant_ok) + 直接列条件。
   update runtime_merge_grants set used_at = p_now::timestamptz
   where id = p_grant_id
+    and from_learner_key = p_from
+    and to_learner_key = p_to
+    and used_at is null
+    and expires_at > p_now::timestamptz
     and exists (select 1 from grant_ok)
     and exists (select 1 from lock)
     and not exists (select 1 from bad_version)

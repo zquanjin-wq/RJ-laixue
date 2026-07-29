@@ -59,6 +59,26 @@ async function inParallel<T>(a: () => Promise<T>, b: () => Promise<T>): Promise<
   return Promise.all([a(), b()]) as Promise<[T, T]>;
 }
 
+/**
+ * 强制竞争屏障（Codex R1.1 评审第 2 条）：第三个连接在显式事务里预先
+ * 持有同一 learner 的咨询锁，待测 RPC 启动并真实阻塞在锁上后再释放——
+ * 把「语句快照先建立、随后等待锁」的棘手窗口从概率事件变成必然事件。
+ */
+async function withAdvisoryBarrier<T>(learnerKey: string, fn: () => Promise<T>): Promise<T> {
+  const gate = await pool.connect();
+  try {
+    await gate.query('begin');
+    await gate.query(`select pg_advisory_xact_lock(hashtext($1))`, [learnerKey]);
+    const pending = fn();
+    // 给阻塞方足够时间真正进入锁等待队列
+    await new Promise((r) => setTimeout(r, 400));
+    await gate.query('commit');
+    return await pending;
+  } finally {
+    gate.release();
+  }
+}
+
 beforeAll(async () => {
   if (!ENABLED) return;
   pool = new Pool({ connectionString: LIVE_URL, max: 4 });
@@ -189,34 +209,41 @@ RUN('live PG concurrency (real postgres, two connections)', () => {
     }
   });
 
-  test('5. merge 与 create 并发：learner 锁串行化，无行丢失', async () => {
+  test('5. merge 与 create 并发（屏障强制竞争）：报告数与实际移动数精确一致', async () => {
     const c1 = await pool.connect();
     const c2 = await pool.connect();
     try {
       expect(await createSession(c1, 'lv-s5-a', 'anon:from')).toBe('ok');
       expect(await createSession(c1, 'lv-s5-b', 'anon:from')).toBe('ok');
-      // 并发：merge from→to 与在 from 下再建一个会话（两把 learner 锁互斥）
-      const [mergeOutcome] = await inParallel(
-        () => scalar(c1, 'runtime_merge_learner', ['anon:from', 'user:to', V]),
-        () => createSession(c2, 'lv-s5-c', 'anon:from'),
+      // 屏障：merge 与 create 都真实阻塞在同一 learner 咨询锁上后放行
+      const [mergeOutcome, createOutcome] = await withAdvisoryBarrier('anon:from', () =>
+        Promise.all([
+          scalar(c1, 'runtime_merge_learner', ['anon:from', 'user:to', V]),
+          createSession(c2, 'lv-s5-c', 'anon:from'),
+        ]),
       );
+      expect(createOutcome).toBe('ok');
       expect(String(mergeOutcome)).toMatch(/^ok:\d+$/);
       const rows = await c1.query(
         `select learner_key, count(*)::int as n from runtime_sessions
          where id like 'lv-s5-%' group by learner_key`,
       );
       const byLearner = Object.fromEntries(rows.rows.map((r) => [r.learner_key, r.n]));
-      // 锁串行化：create 要么在 merge 前落库（则被搬走 3 行），要么在其后（剩 1 行）
+      // 无行丢失：3 个会话必然都在（锁串行化：create 在 merge 前落库则被搬走，
+      // 在其后落库则留在 anon:from——两种交错都合法）
       const total = (byLearner['user:to'] ?? 0) + (byLearner['anon:from'] ?? 0);
       expect(total).toBe(3);
-      expect(byLearner['user:to'] === 3 || byLearner['anon:from'] === 1).toBe(true);
+      // 精确一致（Codex 评审强化点）：merge 报告的移动数 == 实际归属 user:to 的行数
+      const reported = Number(String(mergeOutcome).slice('ok:'.length));
+      expect(byLearner['user:to']).toBe(reported);
+      expect(reported === 2 || reported === 3).toBe(true);
     } finally {
       c1.release();
       c2.release();
     }
   });
 
-  test('6. 并发 merge_with_grant 同一 grant：恰好一个成功', async () => {
+  test('6. 并发 merge_with_grant 同一 grant（屏障强制竞争）：稳定一个 ok:1 一个 invalid_grant', async () => {
     const c1 = await pool.connect();
     const c2 = await pool.connect();
     try {
@@ -227,7 +254,12 @@ RUN('live PG concurrency (real postgres, two connections)', () => {
       );
       const merge = (c: PoolClient) =>
         scalar(c, 'runtime_merge_with_grant', ['lv-grant-6', 'anon:g', 'user:to', V, NOW]);
-      const [r1, r2] = await inParallel(() => merge(c1), () => merge(c2));
+      // 屏障：双方都进入「快照已建立、等待咨询锁」状态后放行——后放行方的
+      // claim 依赖 UPDATE 里的直接条件（used_at is null）在 EvalPlanQual 下
+      // 对最新行版本重检，挡住双重核销（Codex 评审第 1 条的实证场景）
+      const [r1, r2] = await withAdvisoryBarrier('anon:g', () =>
+        Promise.all([merge(c1), merge(c2)]),
+      );
       const outcomes = [String(r1), String(r2)].sort();
       expect(outcomes[0]).toBe('invalid_grant');
       expect(outcomes[1]).toBe('ok:1');
@@ -235,6 +267,10 @@ RUN('live PG concurrency (real postgres, two connections)', () => {
         `select used_at from runtime_merge_grants where id = 'lv-grant-6'`,
       );
       expect(grant.rows[0].used_at).not.toBeNull();
+      const owner = await c1.query(
+        `select count(*)::int as n from runtime_sessions where id = 'lv-s6' and learner_key = 'user:to'`,
+      );
+      expect(owner.rows[0].n).toBe(1);
     } finally {
       c1.release();
       c2.release();
