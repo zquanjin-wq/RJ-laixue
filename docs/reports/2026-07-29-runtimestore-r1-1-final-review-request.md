@@ -79,3 +79,29 @@ RUNTIME_LIVE_PG_EMBED=1 pnpm vitest run tests/runtime-store-pg/live-pg-concurren
 ---
 
 附：完整证据链在 `docs/reports/2026-07-29-runtimestore-r1-concurrency-gap.md`（缺口报告 + 修复落地记录 + 验收回填）；pg-mem 兼容性探针 15–19 在 `tmp/pgmem-probe/`（不入库，可随时重跑）。
+
+---
+
+## 8. 终审结论（Codex，2026-07-29）——已签字
+
+**R1.1 代码与真实 PostgreSQL 并发门禁通过。** 签字范围：R1.1 作为「已验证的
+服务端基础设施代码」入库。**不等于批准执行任何 Supabase 迁移。**
+
+迁移顺序与回滚（Codex 建议，生产数据负责人拍板）：
+
+1. 硬前提：Vercel Preview 必须连接**独立的 Supabase Preview/Scratch 项目**；
+   若 Preview 与生产共用同一 Supabase 项目，则禁止以「预览迁移」名义执行
+   任何 SQL——那就是在改生产库；
+2. 建议顺序：建独立 Supabase Preview/Scratch → 仅在那里执行 SQL 并验证
+   路由/RLS/service role/EXECUTE 收口 → 通过后由生产数据负责人单独授权
+   生产执行 → 生产执行前确认 `runtime_*` 表不存在或为空；
+3. 回滚纪律：R2 影子写上线前的回退只关开关/回退代码、保留 runtime 表；
+   只有在「尚未写入任何业务 runtime 数据」的窗口才允许 DROP `runtime_*`
+   作为物理回滚；写入后不得靠删表回滚。
+
+R2 许可：**允许开卡，仅限先出设计稿，不直接实施。** 设计稿必须覆盖六点
+（quizAttempt→Runtime 映射 / 影子写失败与重试行为 / 诊断指标与成功率分母 /
+弱网 outbox 与幂等门禁 / 读源切换时机 / merge 签发端对接）。
+
+推进顺序拍板：R1.1 收官（本节）→ R2 设计评审 → 建隔离 Supabase 环境并
+迁移验证 → R2 影子双写。
