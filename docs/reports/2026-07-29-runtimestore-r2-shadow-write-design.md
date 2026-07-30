@@ -1,9 +1,25 @@
 # R2 设计稿：RuntimeStore 影子双写（Shadow Write）
 
-> 日期：2026-07-29 ｜ 状态：**设计稿 v2（按 Codex 终审修订），方向已通过，修订后即开实施卡**
+> 日期：2026-07-29 ｜ 状态：**设计稿 v2.1（含 Codex 验收卡勘误，2026-07-30）**
 > 前置：R0（已拍板）→ R1/R1.1（已签字，`52862d2e`）
 > 本文档逐条覆盖终审提出的六个必答点。范围纪律：不含任何 Supabase 迁移执行；
 > 不含读源切换；影子写实施按本稿开卡（仅影子写、默认关闭、本地读源不动）。
+>
+> **v2.1 勘误（Codex R2 验收卡，2026-07-30）：**
+> ⓵ quizAttempt phase 枚举：本稿 1.2 的 `answering`/`reviewing` 是本地
+>    `SubmittedState.kind` 词表，**不能发送给服务端**；DSL `QuizAttemptPhase`
+>    枚举为 `'draft'|'submitted'|'reviewed'`。实施已按 DSL 枚举（submitted/
+>    reviewed），本稿相应行作废，以实施为准。Codex 已认可实施。
+> ⓶ **playback 移出 R2**，另立 R2.1/R3 前置卡：初版实现只在单次函数调用内
+>    重试复用 eventId，Dexie 中的 eventId 无读回路径，测试未覆盖刷新恢复——
+>    不满足「任何重试/刷新/跨标签页恢复都取回同一个 id」的硬门禁；补恢复
+>    实质是建设 pending/outbox，与 R2 排除 outbox 的边界冲突。本稿 1.3 节
+>    及各处 playback 内容仅作 R2.1 设计素材保留，**不属于 R2 范围**。
+> ⓷ quiz attemptId 持久化升级为**单键提交 envelope**（见 1.2）：初版
+>    `setItem(attemptId)+setItem(answers)` 双键写不具备跨键原子性，
+>    第二次失败会留下孤立 attemptId。改为 `quizAnswers:<sceneId>` 单键
+>    envelope `{v, attemptId, answers}` 一次原子写入；影子路径只认持久化
+>    读回的 envelope，写失败即跳过，禁止使用调用方内存数据。
 >
 > **v2 修订记录（Codex 终审四项拍板 + 两条 P0，2026-07-29）：**
 > ① 字段裁剪接受，仅限 R2 影子期——影子数据不能作为未来读源或完整审计依据，
@@ -14,10 +30,10 @@
 >    保留为后续匿名 RuntimeStore 的设计前提（6/7）；
 > ④ 开关用环境变量 `NEXT_PUBLIC_RUNTIME_SHADOW`，默认关，不建站点配置表（7）；
 > ⑤ P0：playback 的事件 id 改为随快照持久化到 Dexie 的 `runtimeShadowEventId`
->    （UUID），不得用内存单调计数器（1.3）；
+>    （UUID），不得用内存单调计数器（1.3）——**已随 playback 一并移出 R2（v2.1-⓶）**；
 > ⑥ P0：quiz 的 `learnerLocalId` 未定义，改为每个答题周期在 localStorage
->    持久化的 `attemptId`（1.2）。确定性一律建立在持久化字段上，不建立在
->    内存变量上。
+>    持久化的 `attemptId`（1.2）——**已升级为单键 envelope（v2.1-⓷）**。
+>    确定性一律建立在持久化字段上，不建立在内存变量上。
 
 ---
 
