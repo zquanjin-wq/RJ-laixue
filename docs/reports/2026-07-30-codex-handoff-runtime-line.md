@@ -64,10 +64,13 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
 - **真实 PostgreSQL 18.4 六场景并发套件 6/6 绿**（pg-mem 仅作快速单测，不替代真实 PG）
 - **签字原文（52862d2e）**：R1.1 可作为「已验证的服务端基础设施代码」入库；**不等于批准执行任何 Supabase 迁移**
 
-### R2 影子双写 ✅ 代码完工，待 Codex 验收
-- 设计稿 v2：`692cf9b7`（Codex 终审 4 项拍板 + 2 个 P0 已落实，见 §3）
-- 实施：`5e6c1366`（代码+30 测试）+ `4244e4ae`（实施报告 `docs/reports/2026-07-29-runtimestore-r2-shadow-write-implementation.md`）
-- 门禁：68/68 新增相关测试绿；tsc 0 error；全量 2076 passed（仅 8 个存量失败）
+### R2 影子双写 ✅ 已签字收官（2026-07-30 SIGNED）
+- 设计稿 v2.1：`692cf9b7` + 勘误（Codex 终审 4 项拍板 + 2 个 P0 已落实，见 §3）
+- 实施：`5e6c1366`（初版）→ `cbfd3b91`（验收卡修订：quiz 单键 envelope 原子写、
+  playback 移出 R2）→ `57a10a18`/`30c71f01`（文档勘误）
+- 签字记录：`docs/reports/2026-07-30-runtimestore-r2-signed.md`——
+  **范围限定 chat + quizAttempt；playback 另立 R2.1 前置卡；签字不授权生产 SQL**
+- 门禁：专项 69/69（Codex 独立重跑确认）；tsc 0 error；全量 2077 passed（仅 8 个存量失败）
 
 ## 3. R2 终审裁决（不可重开，已实施）
 
@@ -89,12 +92,18 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
 
 ## 5. 待办（按优先级）
 
-1. **【你的第一件事】验收 R2 实施报告**（`docs/reports/2026-07-29-runtimestore-r2-shadow-write-implementation.md`），重点拍板 §4 两个设计前提偏差：
-   - ① quizAttempt phase 枚举：设计稿的 `answering`/`reviewing` 是本地 SubmittedState 词表，DSL 枚举实为 `'draft'|'submitted'|'reviewed'`；实施已按 DSL 枚举（否则服务端校验 400），设计稿需勘误
-   - ② playback 本地持久化是死代码：设计稿假设的「保存进度到 Dexie」在 v0.3.1 rebase 后不存在（`savePlaybackState` 全仓无调用方）。处置：影子路径仅在开关开启时恢复该本地写入（eventId 随快照同一次 put），开关关闭时与现状逐字节一致。认可此处置，还是要求 playback 移出 R2 单独立项？
-2. **生成链路误分类 bug 修复**（你的地盘）：`docs/reports/2026-07-28-agent-text-action-leak.md`
-3. **迁移路径**：满足 §4 前置条件后，受控环境开 `NEXT_PUBLIC_RUNTIME_SHADOW=1`，观察 `runtime_shadow` 遥测成功率分布（Vercel logs 搜 `runtime_shadow`），再定 SLO
-4. **R3（切读源）设计稿立项**，至少覆盖：chat 完整消息语义（toolCalls/config 是否保存）、playback record 量级/聚合策略、弱网 outbox/重试/幂等门禁、何时允许从 Dexie 读源切到 RuntimeStore、匿名写 + merge-grant 签发端（redeem 对接，用 `ac:<uuid>` 不透明 ID）、课程→学员灰度控制面
+1. ~~验收 R2~~ **已完成（2026-07-30 SIGNED）**——范围 chat + quizAttempt，
+   playback 移出 R2。签字记录：`docs/reports/2026-07-30-runtimestore-r2-signed.md`
+2. **【你的第一件事】建立隔离 Supabase Preview/Scratch**（§4 硬前提：先查证
+   Vercel Preview 当前连的是哪个 Supabase 项目——若与生产共用，必须先拆开）
+3. **生成链路误分类 bug 修复**（你的地盘）：`docs/reports/2026-07-28-agent-text-action-leak.md`
+4. **迁移验证**：仅在隔离环境执行 SQL，验证路由/RLS/service role/RPC EXECUTE 收口；
+   通过后由负责人单独授权生产执行
+5. **受控开影子写**：`NEXT_PUBLIC_RUNTIME_SHADOW=1`（chat + quizAttempt），
+   观察 `runtime_shadow` 遥测（Vercel logs 搜 `runtime_shadow`），再定 SLO
+6. **playback R2.1 前置设计卡**：pending/outbox、刷新及跨标签页恢复语义
+   （R3 切读门禁的输入）；**然后**才立 R3 总设计稿（含 chat 完整消息语义、
+   匿名写 + merge-grant 签发端用 `ac:<uuid>` 不透明 ID、灰度控制面）
 
 ## 6. 关键文件索引
 
