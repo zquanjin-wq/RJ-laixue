@@ -765,8 +765,9 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
     setPhase('grading');
     clearAnswersCache();
     writeSubmittedAnswers(sceneId, answers);
-    // R2 影子写（fire-and-forget，须在 writeSubmittedAnswers 之后：attemptId 已持久化）
-    void shadowQuizSubmitted(stageId, sceneId, answers);
+    // R2 影子写（fire-and-forget，须在 writeSubmittedAnswers 之后：envelope 已持久化；
+    // 影子路径只从持久化 envelope 读回 attemptId+answers，不用内存数据）
+    void shadowQuizSubmitted(stageId, sceneId);
   }, [clearAnswersCache, answers, sceneId, stageId]);
 
   // When entering grading phase, grade choice questions locally + call API for short-answer

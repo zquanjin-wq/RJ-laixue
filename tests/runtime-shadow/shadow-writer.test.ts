@@ -6,9 +6,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
  */
 
 const store: Record<string, string> = {};
+let throwOnKeys: string[] = [];
 const localStorageStub = {
   getItem: (k: string) => (k in store ? store[k] : null),
   setItem: (k: string, v: string) => {
+    if (throwOnKeys.some((p) => k.startsWith(p))) {
+      throw new Error('QuotaExceededError (injected)');
+    }
     store[k] = String(v);
   },
   removeItem: (k: string) => {
@@ -97,6 +101,7 @@ function makeChatSession(id: string, messageIds: string[], status = 'interrupted
 describe('runtime shadow writer', () => {
   beforeEach(() => {
     localStorageStub.clear();
+    throwOnKeys = [];
     fetchCalls.length = 0;
     fetchMock.mockClear();
     uuidCounter = 0;
@@ -113,7 +118,7 @@ describe('runtime shadow writer', () => {
   it('flag off (unset): zero fetch, zero local writes for all three kinds', async () => {
     expect(isRuntimeShadowEnabled()).toBe(false);
     await shadowChatSessions('stage1', [makeChatSession('cs1', ['m1'])]);
-    await shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted('stage1', 'scene1');
     await shadowQuizReviewed('stage1', 'scene1', []);
     await shadowQuizRetry('stage1', 'scene1');
     expect(fetchCalls).toHaveLength(0);
@@ -130,7 +135,37 @@ describe('runtime shadow writer', () => {
   it('flag on without stageId: quiz shadow skips silently', async () => {
     process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
     writeSubmittedAnswers('scene1', { q1: 'a' });
-    await shadowQuizSubmitted(null, 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted(null, 'scene1');
+    expect(apiCalls()).toHaveLength(0);
+  });
+
+  // ─── Codex 验收卡门禁：写失败/无 envelope → 零影子请求 ─────────────────
+
+  it('injected submit-write failure: no envelope persisted → zero shadow requests', async () => {
+    process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
+    throwOnKeys = ['quizAnswers:'];
+    writeSubmittedAnswers('scene1', { q1: 'a' }); // safeSet 吞错，envelope 未持久化
+    await shadowQuizSubmitted('stage1', 'scene1');
+    await shadowQuizReviewed('stage1', 'scene1', []);
+    await shadowQuizRetry('stage1', 'scene1');
+    // 不得生成错误周期，也不得发送任何影子请求
+    expect(apiCalls()).toHaveLength(0);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it('stale in-memory submit (no persisted envelope): shadow path refuses memory data', async () => {
+    process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
+    // 调用方内存里"以为提交成功"，但 localStorage 没有 envelope——
+    // 影子路径只认持久化读回的数据
+    await shadowQuizSubmitted('stage1', 'scene1');
+    expect(apiCalls()).toHaveLength(0);
+  });
+
+  it('legacy raw answers (pre-envelope): shadow skips, no attempt fabricated', async () => {
+    process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
+    store['quizAnswers:scene1'] = JSON.stringify({ q1: 'legacy' });
+    await shadowQuizSubmitted('stage1', 'scene1');
+    await shadowQuizReviewed('stage1', 'scene1', []);
     expect(apiCalls()).toHaveLength(0);
   });
 
@@ -143,7 +178,7 @@ describe('runtime shadow writer', () => {
   it('submit: creates session with deterministic id, appends submit record, sets completed', async () => {
     process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
     writeSubmittedAnswers('scene1', { q1: 'a' });
-    await shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted('stage1', 'scene1');
 
     const calls = apiCalls();
     expect(calls.map((c) => c.method)).toEqual(['POST', 'POST', 'PATCH']);
@@ -175,12 +210,12 @@ describe('runtime shadow writer', () => {
   it('resubmit after refresh reuses the same session id (attemptId persisted)', async () => {
     process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
     writeSubmittedAnswers('scene1', { q1: 'a' });
-    await shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted('stage1', 'scene1');
     // 模拟刷新后重试影子写：attemptId 从 localStorage 读回 → 同一会话 id；
     // create 撞 409 → ok_idempotent，append 幂等重放同内容
     responder = (url) => ({ status: url === '/api/runtime/v1/sessions' ? 409 : 201 });
     fetchCalls.length = 0;
-    await shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted('stage1', 'scene1');
     // created marker 已在上一轮写入 → 本轮不发 create，直接 append + PATCH
     expect(apiCalls().map((c) => c.method)).toEqual(['POST', 'PATCH']);
     expect(apiCalls()[0].body.id).toBe('qa:stage1:scene1:uuid-1:submit');
@@ -192,7 +227,7 @@ describe('runtime shadow writer', () => {
     process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
     writeSubmittedAnswers('scene1', { q1: 'a' });
     responder = (url) => ({ status: url === '/api/runtime/v1/sessions' ? 409 : 201 });
-    await shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted('stage1', 'scene1');
     expect(apiCalls()).toHaveLength(3);
     expect(telemetryOutcomes()).toEqual(['ok_idempotent', 'ok', 'ok']);
   });
@@ -217,7 +252,7 @@ describe('runtime shadow writer', () => {
     expect(apiCalls()).toHaveLength(0);
 
     // 影子化过的周期：PATCH archived
-    await shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    await shadowQuizSubmitted('stage1', 'scene1');
     fetchCalls.length = 0;
     await shadowQuizRetry('stage1', 'scene1');
     const calls = apiCalls();
@@ -297,7 +332,7 @@ describe('runtime shadow writer', () => {
     vi.useFakeTimers();
     responder = () => ({ status: 500 });
     writeSubmittedAnswers('scene1', { q1: 'a' });
-    const p = shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    const p = shadowQuizSubmitted('stage1', 'scene1');
     await vi.runAllTimersAsync();
     await p;
     expect(apiCalls()).toHaveLength(3);
@@ -320,7 +355,7 @@ describe('runtime shadow writer', () => {
     });
     responder = () => ({ status: 400 });
     writeSubmittedAnswers('scene1', { q1: 'a' });
-    const p = shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    const p = shadowQuizSubmitted('stage1', 'scene1');
     await vi.runAllTimersAsync();
     await p;
     // 第 1 次 network（reject）→ 1s 后第 2 次得到 400 → 不重试
@@ -347,7 +382,7 @@ describe('runtime shadow writer', () => {
     );
     responder = () => ({ status: 401 });
     writeSubmittedAnswers('scene1', { q1: 'a' });
-    const p = shadowQuizSubmitted('stage1', 'scene1', { q1: 'a' });
+    const p = shadowQuizSubmitted('stage1', 'scene1');
     await vi.runAllTimersAsync();
     await p;
     // timeout → 重试 1 次 → 401 终态不重试

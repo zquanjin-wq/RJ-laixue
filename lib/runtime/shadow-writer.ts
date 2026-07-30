@@ -1,9 +1,13 @@
 /**
  * lib/runtime/shadow-writer.ts
  *
- * R2 影子双写（shadow write）：把本地运行时数据（chat / quizAttempt / playback）
- * 以 fire-and-forget 方式镜像到 RuntimeStore 服务端（R1.1 已上线的
+ * R2 影子双写（shadow write）：把本地运行时数据（chat / quizAttempt）以
+ * fire-and-forget 方式镜像到 RuntimeStore 服务端（R1.1 已上线的
  * /api/runtime/v1/* 路由）。
+ * ※ playback 已按 Codex 验收卡（2026-07-30）移出 R2，另立 R2.1/R3 前置卡——
+ *   初版只在单次调用内重试复用 eventId，没有刷新/跨标签页恢复重放，不满足
+ *   「任何重试/刷新/跨标签页恢复都取回同一个 id」的硬门禁；补恢复实质是
+ *   建设 pending/outbox，与 R2 排除 outbox 的边界冲突。
  *
  * 授权边界（2026-07-29 R2 实施卡）：
  *   - 只做影子写；开关 NEXT_PUBLIC_RUNTIME_SHADOW 默认关闭（=== '1' 才启用）；
@@ -11,10 +15,12 @@
  *   - 不接 redeem merge-grant / 匿名写 / outbox / 双读 / 读源切换；
  *   - 影子写失败对业务零影响（不抛出、不阻塞调用方）。
  *
- * 幂等锚点（Codex P0 裁决）：确定性 ID 一律锚定在持久化字段上，绝不锚定在内存变量上——
- *   - playback：runtimeShadowEventId 随快照同一次 Dexie put 持久化（savePlaybackState）；
- *   - quizAttempt：attemptId 在 writeSubmittedAnswers 内与 answers 同一次 localStorage 写入
- *     持久化（lib/quiz/persistence.ts），clearSubmitted 后才允许生成新值；
+ * 幂等锚点（Codex P0 裁决 + 验收卡修订）：确定性 ID 一律锚定在持久化字段上，
+ * 影子写只认持久化读回的数据，绝不使用调用方内存状态——
+ *   - quizAttempt：attemptId 与 answers 在 writeSubmittedAnswers 内以单键 envelope
+ *     同一次原子写入（lib/quiz/persistence.ts）；影子路径经 readSubmittedEnvelope
+ *     读回，写失败/legacy 裸 answers 时读不到即跳过；clearSubmitted 删 envelope
+ *     后才允许生成新值；
  *   - chat：折叠游标持久化在 localStorage（rshadow:*），刷新后续传不重复 append。
  *
  * 失败语义：8s AbortController 超时；timeout/network/http_5xx 最多重试 2 次（1s/4s）；
@@ -23,14 +29,11 @@
  */
 
 import type { ChatSession } from '@/lib/types/chat';
-import type { QuizAnswers } from '@/lib/quiz/persistence';
-import { readAttemptId, readSubmittedState } from '@/lib/quiz/persistence';
+import { readSubmittedEnvelope } from '@/lib/quiz/persistence';
 import type { QuestionResult } from '@/lib/quiz/grading';
-import type { PlaybackSnapshot } from '@/lib/utils/playback-storage';
-import { savePlaybackState } from '@/lib/utils/playback-storage';
 import { durationBucket } from '@/lib/document-bridge/diagnostics';
 
-export const RUNTIME_SHADOW_VERSION = 'r2.1';
+export const RUNTIME_SHADOW_VERSION = 'r2.2';
 
 const TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [1_000, 4_000] as const;
@@ -51,7 +54,8 @@ export type RuntimeShadowOutcome =
   | 'network';
 
 export type RuntimeShadowOp = 'create_session' | 'append_record' | 'set_status';
-export type RuntimeShadowKind = 'chat' | 'quizAttempt' | 'playback';
+// Codex 验收卡（2026-07-30）：playback 移出 R2，另立 R2.1/R3 前置卡
+export type RuntimeShadowKind = 'chat' | 'quizAttempt';
 
 /** 开关：默认关闭，显式 '1' 才启用；SSR/测试环境无 window 一律关闭。 */
 export function isRuntimeShadowEnabled(): boolean {
@@ -406,20 +410,21 @@ function quizSessionId(stageId: string, sceneId: string, attemptId: string): str
 
 /**
  * 提交影子写（quiz-view handleSubmit 挂点，writeSubmittedAnswers 之后调用）。
- * 一个答题周期 = 一个会话；提交即 completed。attemptId 已在
- * writeSubmittedAnswers 内与 answers 同一次 localStorage 写入持久化，
- * 刷新后再提交仍复用同一 attemptId → 同一会话 id。
+ * 一个答题周期 = 一个会话；提交即 completed。
+ *
+ * Codex 验收卡（2026-07-30）：attemptId 与 answers 只从持久化的提交 envelope
+ * 读回（lib/quiz/persistence.ts 单键原子写），禁止使用调用方内存数据——
+ * 写失败/legacy 裸 answers 时读不到 envelope，直接跳过，不产生错误周期。
  */
 export async function shadowQuizSubmitted(
   stageId: string | null | undefined,
   sceneId: string,
-  answers: QuizAnswers,
 ): Promise<void> {
   if (!isRuntimeShadowEnabled() || !stageId) return;
   try {
-    const attemptId = readAttemptId(sceneId);
-    if (!attemptId) return; // writeSubmittedAnswers 保证已写入；防御性兜底
-    const sessionId = quizSessionId(stageId, sceneId, attemptId);
+    const envelope = readSubmittedEnvelope(sceneId);
+    if (!envelope) return;
+    const sessionId = quizSessionId(stageId, sceneId, envelope.attemptId);
     const now = new Date().toISOString();
     const created = await ensureSession(sessionId, 'quizAttempt', stageId, 'active', now, now);
     if (!created) return;
@@ -429,7 +434,7 @@ export async function shadowQuizSubmitted(
         id: `${sessionId}:submit`,
         createdAt: now,
         sceneId,
-        payload: { phase: 'submitted', answers },
+        payload: { phase: 'submitted', answers: envelope.answers },
       },
       'quizAttempt',
     );
@@ -443,7 +448,7 @@ export async function shadowQuizSubmitted(
 /**
  * 批改完成影子写（quiz-view grading effect 挂点，writeSubmittedResults 之后）。
  * phase 枚举使用 DSL QuizAttemptPhase 的 'reviewed'（设计稿中的 'reviewing'
- * 是本地 SubmittedState 词表，不是 DSL 枚举值——实施时校正）。
+ * 是本地 SubmittedState 词表，不是 DSL 枚举值——实施时校正，Codex 已认可）。
  */
 export async function shadowQuizReviewed(
   stageId: string | null | undefined,
@@ -452,22 +457,21 @@ export async function shadowQuizReviewed(
 ): Promise<void> {
   if (!isRuntimeShadowEnabled() || !stageId) return;
   try {
-    const attemptId = readAttemptId(sceneId);
-    if (!attemptId) return;
-    const sessionId = quizSessionId(stageId, sceneId, attemptId);
+    const envelope = readSubmittedEnvelope(sceneId);
+    if (!envelope) return;
+    const sessionId = quizSessionId(stageId, sceneId, envelope.attemptId);
     const now = new Date().toISOString();
     // submit 影子写可能已丢失（fire-and-forget）：此处兜底重建会话，
     // 409 幂等成功路径保证已存在时零副作用。
     const created = await ensureSession(sessionId, 'quizAttempt', stageId, 'completed', now, now);
     if (!created) return;
-    const answers = readSubmittedState(sceneId)?.answers ?? {};
     await appendRecord(
       sessionId,
       {
         id: `${sessionId}:grade`,
         createdAt: now,
         sceneId,
-        payload: { phase: 'reviewed', answers, results },
+        payload: { phase: 'reviewed', answers: envelope.answers, results },
       },
       'quizAttempt',
     );
@@ -478,7 +482,7 @@ export async function shadowQuizReviewed(
 
 /**
  * 重答影子写（quiz-view handleRetry 挂点）——必须在 clearSubmitted 之前调用，
- * 否则 attemptId 已被清除，无法定位要归档的会话。
+ * 否则 envelope 已被清除，无法定位要归档的会话。
  * 从未影子化过的周期（本地答题但开关中途才开）直接跳过。
  */
 export async function shadowQuizRetry(
@@ -487,7 +491,7 @@ export async function shadowQuizRetry(
 ): Promise<void> {
   if (!isRuntimeShadowEnabled() || !stageId) return;
   try {
-    const attemptId = readAttemptId(sceneId);
+    const attemptId = readSubmittedEnvelope(sceneId)?.attemptId;
     if (!attemptId) return;
     const sessionId = quizSessionId(stageId, sceneId, attemptId);
     if (!isSessionMarkedCreated(sessionId)) return;
@@ -496,55 +500,6 @@ export async function shadowQuizRetry(
       'archived',
       new Date().toISOString(),
       'quizAttempt',
-    );
-  } catch {
-    // fire-and-forget
-  }
-}
-
-// ─── playback ────────────────────────────────────────────────────────────────
-
-/**
- * 播放进度影子写（PlaybackChromeRoot 的 PlaybackEngine onProgress 挂点）。
- *
- * 设计前提校正（实施发现）：上游 v0.3.1 rebase 后 savePlaybackState 已无调用方
- * （引擎 onProgress 从未接线），本地 playbackState 表当前不产生任何写入。
- * 因此本函数在开关开启时先恢复「快照 + runtimeShadowEventId 同一次 Dexie put」
- * 的本地写入（P0 裁决要求的幂等锚点），再做影子 append；开关关闭时整段跳过，
- * 本地零写入——满足「默认关闭 = 行为零变化」。playbackState 表无任何读取方
- * （loadPlaybackState 同样无调用方），开启影子写不会改变任何本地读取行为。
- *
- * record id = pb:<stageId>:<runtimeShadowEventId>，重试复用持久化的 eventId。
- */
-export async function shadowPlaybackProgress(
-  stageId: string | null | undefined,
-  snapshot: PlaybackSnapshot,
-): Promise<void> {
-  if (!isRuntimeShadowEnabled() || !stageId) return;
-  try {
-    const runtimeShadowEventId = crypto.randomUUID();
-    // P0：eventId 必须与快照同一次本地写入持久化；本地写失败则放弃本次影子写，
-    // 否则重试将无法复用同一 ID。
-    await savePlaybackState(stageId, { ...snapshot, runtimeShadowEventId });
-
-    const sessionId = `pb:${stageId}`;
-    const now = new Date().toISOString();
-    const created = await ensureSession(sessionId, 'playback', stageId, 'active', now, now);
-    if (!created) return;
-    await appendRecord(
-      sessionId,
-      {
-        id: `pb:${stageId}:${runtimeShadowEventId}`,
-        createdAt: now,
-        ...(snapshot.sceneId ? { sceneId: snapshot.sceneId } : {}),
-        actionIndex: snapshot.actionIndex,
-        payload: {
-          sceneIndex: snapshot.sceneIndex,
-          actionIndex: snapshot.actionIndex,
-          consumedDiscussions: snapshot.consumedDiscussions.length,
-        },
-      },
-      'playback',
     );
   } catch {
     // fire-and-forget

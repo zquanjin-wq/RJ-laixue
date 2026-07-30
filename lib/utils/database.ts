@@ -150,8 +150,6 @@ export interface PlaybackStateRecord {
   actionIndex: number;
   consumedDiscussions: string[];
   updatedAt: number;
-  /** R2 影子写幂等锚点：随快照同一次 put 持久化（IndexedDB 无模式约束，无需升版本） */
-  runtimeShadowEventId?: string;
 }
 
 /**

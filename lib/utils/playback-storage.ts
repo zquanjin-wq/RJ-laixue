@@ -12,8 +12,6 @@ export interface PlaybackSnapshot {
   actionIndex: number;
   consumedDiscussions: string[];
   sceneId?: string; // Scene this snapshot belongs to; discard on mismatch
-  /** R2 影子写幂等锚点：由调用方生成，随快照同一次 put 持久化（Codex P0） */
-  runtimeShadowEventId?: string;
 }
 
 /**
@@ -30,7 +28,6 @@ export async function savePlaybackState(
     actionIndex: snapshot.actionIndex,
     consumedDiscussions: snapshot.consumedDiscussions,
     sceneId: snapshot.sceneId,
-    runtimeShadowEventId: snapshot.runtimeShadowEventId,
     updatedAt: Date.now(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);

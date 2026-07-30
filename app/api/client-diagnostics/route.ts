@@ -38,7 +38,8 @@ const SHADOW_OUTCOMES = new Set([
   'network',
 ]);
 const SHADOW_OPS = new Set(['create_session', 'append_record', 'set_status']);
-const SHADOW_KINDS = new Set(['chat', 'quizAttempt', 'playback']);
+// playback 已按 Codex 验收卡（2026-07-30）移出 R2，另立 R2.1/R3 前置卡
+const SHADOW_KINDS = new Set(['chat', 'quizAttempt']);
 const PARITY_ERROR_NAMES = new Set([
   'AbortError',
   'DataError',
