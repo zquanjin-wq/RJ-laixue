@@ -10,8 +10,11 @@
 >    **是错误声明**——`setItem(attemptId)` 与 `setItem(answers)` 不具备跨键原子性，
 >    第二次失败会留下孤立 attemptId。已按修复卡改为**单键提交 envelope**
 >    （`quizAnswers:<sceneId>` = `{v, attemptId, answers}`，一次 setItem 原子写入）；
->    影子路径只认持久化读回的 envelope（`readSubmittedEnvelope`），写失败/legacy
->    裸 answers 时读不到即跳过，**禁止使用调用方内存数据**。§3 P0-2、§5 已改正。
+>    影子路径的 **attemptId 与 answers 只认持久化读回的 envelope**
+>    （`readSubmittedEnvelope`），写失败/legacy 裸 answers 时读不到即跳过，
+>    这两类数据**禁止使用调用方内存值**（`shadowQuizReviewed` 的 `results`
+>    仍来自函数参数——与 `writeSubmittedResults` 的持久化写同刻发生，
+>    Codex 验收确认该表述范围不构成 P0）。§3 P0-2、§5 已改正。
 > 2. **playback 移出 R2**（Codex 拍板）：初版 §4-② 的处置不被认可——eventId 只在
 >    单次函数调用内复用、Dexie 无读回路径、测试未覆盖刷新恢复，不满足
 >    「任何重试/刷新/跨标签页恢复都取回同一个 id」硬门禁；补恢复实质是建设
@@ -58,7 +61,7 @@
 
 **P0-1 playback `runtimeShadowEventId`**：**已移出 R2**（Codex 验收卡拍板）。初版实现只在单次函数调用内重试复用 eventId，没有从 Dexie 读回做刷新/跨标签页恢复，不满足硬门禁；补恢复实质是 pending/outbox，与 R2 边界冲突。playback 影子写另立 R2.1/R3 前置卡，设计稿 1.3 节留作素材。
 
-**P0-2 quiz `attemptId`（envelope 修订版）**：attemptId 与 answers 在 `writeSubmittedAnswers` 内以**单键 envelope 同一次原子写入**——一次 setItem 要么整体成功要么整体失败，不存在孤立 attemptId（初版「双 setItem 天然原子」是错误声明，已改正）。safeSet 吞错不再影响正确性：影子路径只认 `readSubmittedEnvelope` 读回的持久化数据，写失败/legacy 裸 answers 读不到 envelope 即跳过，**不使用调用方内存数据**。draft 阶段不生成；`clearSubmitted` 删 envelope 后下一周期才生成新值。会话 id = `qa:<stageId>:<sceneId>:<attemptId>`。
+**P0-2 quiz `attemptId`（envelope 修订版）**：attemptId 与 answers 在 `writeSubmittedAnswers` 内以**单键 envelope 同一次原子写入**——一次 setItem 要么整体成功要么整体失败，不存在孤立 attemptId（初版「双 setItem 天然原子」是错误声明，已改正）。safeSet 吞错不再影响正确性：影子路径的 **attemptId 与 answers** 只认 `readSubmittedEnvelope` 读回的持久化数据，写失败/legacy 裸 answers 读不到 envelope 即跳过，这两类数据**不使用调用方内存值**。例外说明（Codex 验收确认不构成 P0）：`shadowQuizReviewed` 的 `results` 取自函数参数，与 `writeSubmittedResults` 的持久化写同刻发生。draft 阶段不生成 attemptId；`clearSubmitted` 删 envelope 后下一周期才生成新值。会话 id = `qa:<stageId>:<sceneId>:<attemptId>`。
 
 ## 4. 实施中发现并处置的两个设计前提偏差（v2：Codex 已拍板）
 

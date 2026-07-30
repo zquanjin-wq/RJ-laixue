@@ -78,19 +78,29 @@ quiz 数据在 localStorage，且提交前只有 draft。R2 的 quizAttempt 映�
 
 - **一个 scene 的一次答题周期 → 一个 `RuntimeSession`**：
   `id = qa:<stageId>:<sceneId>:<attemptId>`。
-  **`attemptId` 的生成与持久化（P0，终审判定）**：每个答题周期开始时生成一个
-  UUID，立即写入 localStorage 键 `quizAttemptId:<sceneId>`；整个周期（含任何
-  重试/刷新/跨标签页恢复）只复用这个持久化值；`clearSubmitted` 之后才允许
-  生成新 id。**确定性建立在持久化字段上，不建立在内存变量上**——内存态的
-  「当前周期 id」在刷新后丢失会导致同周期生成两个会话 id，服务端出现重复
-  周期。`kind = 'quizAttempt'`；提交时 `status: active → completed`。
+  **`attemptId` 的生成与持久化（P0，终审判定；v2.1 验收卡修订为单键 envelope）**：
+  每个答题周期提交时生成一个 UUID，与 answers 一起以**单键提交 envelope**
+  `{v, attemptId, answers}` 一次 setItem 原子写入 `quizAnswers:<sceneId>`
+  （初稿的独立键 `quizAttemptId:<sceneId}` 双键方案已废弃——两次 setItem
+  不具备跨键原子性，第二次失败会留下孤立 attemptId）；整个周期（含任何
+  重试/刷新/跨标签页恢复）只复用这个持久化值；`clearSubmitted` 删除
+  envelope 之后才允许生成新 id。**确定性建立在持久化字段上，不建立在
+  内存变量上**——内存态的「当前周期 id」在刷新后丢失会导致同周期生成两个
+  会话 id，服务端出现重复周期。`kind = 'quizAttempt'`；提交时
+  `status: active → completed`。
 - **相位迁移 → records**（对齐 `QuizAttemptSkeleton { phase, answers }`）：
-  - 提交（`writeSubmittedAnswers`）→ record payload `{ phase: 'answering', answers }`，
+  - 提交（`writeSubmittedAnswers`）→ record payload `{ phase: 'submitted', answers }`
+    （v2.1 勘误：DSL `QuizAttemptPhase` 枚举为 draft/submitted/reviewed，
+    初稿的 'answering' 是本地 SubmittedState 词表，不能发送给服务端），
     `record.id = <sessionId>:submit`，锚点 `sceneId`；
   - 批改完成（`writeSubmittedResults`）→ record payload
-    `{ phase: 'reviewing', answers, results }`（results 是 app-owned 评分细节，
+    `{ phase: 'reviewed', answers, results }`（results 是 app-owned 评分细节，
     骨架只查 phase + answers 形状），`record.id = <sessionId>:grade`；
   - retry（`clearSubmitted`）→ 会话 `archived`，下周期新会话 id。
+  影子路径的 **attemptId 与 answers 只从持久化 envelope 读回**（写失败 /
+  legacy 裸 answers 读不到即跳过）；results 在 R2 影子期取自调用方参数，
+  与 `writeSubmittedResults` 的持久化写同刻发生，漂移风险可接受
+  （Codex 2026-07-30 验收确认：不构成 P0）。
 - **draft 不影子化**：答题中草稿高频多变且无业务价值，只在提交时刻落 record
   （与 localStorage 现有生命周期一致）。
 
