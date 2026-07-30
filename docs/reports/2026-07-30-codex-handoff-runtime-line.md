@@ -30,6 +30,21 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
 - 办公区网络阻断（GFW 交接文档遗留问题）至今无短期/长期方案，是环境约束不是代码问题
 - commit message：英文 subject + 详细 body；报告入库 `docs/reports/`；每个逻辑步骤独立 commit
 
+## 0.5 架构路线决策：接口用上游，后端用 Supabase（2026-07-30 负责人确认）
+
+**上游 v0.3.1 的存储架构 = 两样东西**：`@openmaic/storage` 的抽象接口（RuntimeStore/DocumentStore）+ 上游自己的 Postgres 服务端实现与一键部署脚本。本 fork 的路线是**采用前者、不原样采用后者**。
+
+**为什么不原样搬上游的后端实现**——它绑在上游自己的部署模型上，而我们的地基全长在 Supabase：
+
+| 维度 | 上游做法 | 本 fork 现状 | 直接搬的后果 |
+|---|---|---|---|
+| 认证 | 上游自己的账号体系 | Supabase Auth，`auth.uid()` 即 learnerKey | 学员/老师账号体系推倒重来 |
+| 数据权限 | 上游服务端代码控制 | Supabase RLS（数据库层强制） | 权限模型重写，失去 RLS 兜底 |
+| 已有数据 | — | 课程、课程发布、TTS 语音、access-code 绑定全在 Supabase | 线上数据迁移，save-to-cloud 链路重写 |
+| 部署 | 一键 Docker 自托管 Postgres | Vercel Serverless + Supabase 托管 | 多一套需运维的数据库服务 |
+
+**结论**：Postgres 路线并未偏离（Supabase 底层就是 PostgreSQL，我们用的是托管版 + RLS）；抽象层完全对齐（客户端面对上游同款接口，未来 rebase 不冲突）；不采用的只是上游的自托管后端实现。R1.1 的 `runtime_*` 表 + RPC + RLS 就是这个决策的产物——上游接口、Supabase 后端。
+
 ## 1. 分工（培训部门负责人拍板）
 
 - **Codex（你）**：上游 v0.3.1 对齐主线的工程执行负责人——B2 本地 DocumentStore 迁移验证、RuntimeStore/DocumentStore 服务端 adapter、Supabase/私有化后端接入、测试、CI、报告、独立 commit
@@ -82,20 +97,34 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
 6. **P0-2 quiz**：attemptId = UUID，持久化在 localStorage `quizAttemptId:<sceneId>`，与 answers 同一次写入；`clearSubmitted` 后才允许生成新值；会话 id = `qa:<stageId>:<sceneId>:<attemptId>`
 7. **merge-grant 签发不入 R2**（无可合并的匿名服务端数据，保留为后续匿名 RuntimeStore 的设计前提）
 
-## 4. 迁移前置条件（Codex 终审拍板，仍未满足）
+## 4. 迁移前置条件（Codex 终审拍板）
 
-**当前状态：生产/预览 Supabase 均未执行任何 SQL，`runtime_*` 表不存在。**
+**当前状态（2026-07-30 更新）：硬前提已满足，Preview 项目迁移已执行；生产项目未触碰。**
 
-1. **硬前提：Vercel Preview 必须连接独立的 Supabase Preview/Scratch 项目**。若当前 Vercel Preview 与生产共用同一 Supabase 项目，任何「预览迁移」= 改生产库，应禁止
-2. 顺序：建独立 Supabase Preview/Scratch → 仅在那里执行 SQL 并验证路由/RLS/service role/RPC EXECUTE 收口 → 通过后由负责人**单独授权**生产执行 → 生产执行前确认 runtime_* 表不存在或为空
+1. ~~硬前提：Vercel Preview 必须连接独立的 Supabase Preview/Scratch 项目~~ **已满足**：
+   Vercel 三条 Supabase 变量（URL/ANON/SERVICE_ROLE）已按环境拆分——Production → 原项目
+   `aqmktsagfvkikehynpdw`（线上 bundle 实测验证），Preview → 新独立项目
+   `rj-laixue-preview`（ref `ufwkylcsrppaamzqsvgx`）。
+   **经验教训：Vercel 控制台多行新增表单对同名键是 upsert 语义（曾覆盖生产条目约 24
+   分钟，已用 API 恢复）；后续环境变量操作一律走 API/CLI，不用控制台。**
+2. 顺序：~~建独立 Supabase Preview/Scratch~~ ✅ → ~~仅在那里执行 SQL 并验证~~
+   **Preview 迁移已执行（Codex，2026-07-30）**：`supabase-runtime-store-v1.sql` 成功；
+   `runtime_sessions`/`runtime_records`/`runtime_merge_grants` 已建、为空、启用 RLS；
+   仅 learner 自身策略（`runtime_sessions_self`/`runtime_records_self`），无教师策略；
+   14 个 runtime_* RPC：service_role 14/14 可执行，anon 0/14，authenticated 0/14。
+   **待完成**：Auth redirect URL 加 `https://*.vercel.app`（控制台 Add URL 自动化未响应，
+   由 Kimi/WebBridge 处理）→ 提供实际 Preview 部署 URL + 注册测试账号 → 验证登录态下
+   create/append/status 路由、RLS 与 service-role 调用链 → 通过后由负责人**单独授权**生产执行
+   → 生产执行前确认 runtime_* 表不存在或为空
 3. 回滚语义：R2 影子写上线后如需回退，只关开关/回退代码，保留 runtime 表；**只有在「尚未写入任何业务 runtime 数据」的窗口才允许 DROP runtime_* 物理回滚**，写入后不得靠删表回滚
+4. **`NEXT_PUBLIC_RUNTIME_SHADOW` 保持关闭**：应用路由验证未完成前不得开启（Codex 2026-07-30 重申）
 
 ## 5. 待办（按优先级）
 
 1. ~~验收 R2~~ **已完成（2026-07-30 SIGNED）**——范围 chat + quizAttempt，
    playback 移出 R2。签字记录：`docs/reports/2026-07-30-runtimestore-r2-signed.md`
-2. **【你的第一件事】建立隔离 Supabase Preview/Scratch**（§4 硬前提：先查证
-   Vercel Preview 当前连的是哪个 Supabase 项目——若与生产共用，必须先拆开）
+2. ~~建立隔离 Supabase Preview/Scratch~~ **已完成（2026-07-30，Kimi/WebBridge）**——
+   Vercel Preview/Production 已拆分至不同 Supabase 项目，详见 §4
 3. **生成链路误分类 bug 修复**（你的地盘）：`docs/reports/2026-07-28-agent-text-action-leak.md`
 4. **迁移验证**：仅在隔离环境执行 SQL，验证路由/RLS/service role/RPC EXECUTE 收口；
    通过后由负责人单独授权生产执行
