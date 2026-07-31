@@ -27,6 +27,9 @@ export const MATERIAL_MIME_TYPES: Record<string, string> = {
  */
 export const MATERIAL_MAX_BYTES = 49_000_000;
 
+/** A lesson can be generated from a small, ordered set of source materials. */
+export const MAX_COURSE_MATERIAL_FILES = 5;
+
 /** 面向用户的上限文案(49MB)。 */
 export const MATERIAL_MAX_HUMAN = '49MB';
 

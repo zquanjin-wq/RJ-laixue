@@ -148,6 +148,25 @@ describe('POST /api/extract-document', () => {
     expect(json.error).toContain('self-hosted MinerU base URL or a MinerU Cloud API key');
   });
 
+  it('automatically prefers a server-configured MinerU Cloud extractor', async () => {
+    mocks.isServerConfiguredProvider.mockImplementation(
+      ((_kind: string, providerId: string) =>
+        providerId === 'mineru-cloud') as unknown as () => boolean,
+    );
+    mocks.resolvePDFApiKey.mockReturnValue('server-cloud-key');
+    const res = await postExtractDocument({
+      file: new File(['%PDF-1.4'], 'lesson.pdf', { type: 'application/pdf' }),
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({
+      success: true,
+      data: { metadata: { parser: 'mineru-cloud' } },
+    });
+    expect(mocks.parseWithMinerUCloud).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to unpdf when a stale self-hosted MinerU preference cannot parse a PDF', async () => {
     const res = await postExtractDocument({
       file: new File(['not really a PDF'], 'lesson.pdf', { type: 'application/pdf' }),

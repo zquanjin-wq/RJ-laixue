@@ -248,7 +248,9 @@ function GenerationPreviewContent() {
       let activeSteps = getActiveSteps(currentSession);
 
       // Determine if we need the document analysis step
-      const hasPdfToAnalyze = !!currentSession.pdfStorageKey && !currentSession.pdfText;
+      const hasPdfToAnalyze =
+        (!!currentSession.pdfStorageKey || (currentSession.materialFiles?.length ?? 0) > 0) &&
+        !currentSession.pdfText;
       // If no document to analyze, skip to the next available step
       if (!hasPdfToAnalyze) {
         const firstNonPdfIdx = activeSteps.findIndex((s) => s.id !== 'pdf-analysis');
@@ -261,7 +263,21 @@ function GenerationPreviewContent() {
         // 4.5MB 上传限制修复:文件已在选文件阶段直传到 Supabase Storage,
         // 现在只把 storage path 传给 /api/extract-document,
         // 服务端从 Storage 内网拉取(不受 4.5MB 限制)。
-        const storagePath = currentSession.pdfStorageKey!;
+        const materials =
+          currentSession.materialFiles?.map((file) => ({
+            storageKey: file.storageKey,
+            fileName: file.fileName,
+          })) ??
+          (currentSession.pdfStorageKey
+            ? [
+                {
+                  storageKey: currentSession.pdfStorageKey,
+                  fileName: currentSession.pdfFileName ?? 'document',
+                },
+              ]
+            : []);
+        const storagePath = materials[0]?.storageKey;
+        if (!storagePath) throw new Error('课程材料路径无效，请重新上传');
         // 路径形如:
         //   pending/{userId}/material/{hash}.{ext}  — 老师上传到正式创建前
         //   courses/{courseId}/material/{hash}.{ext} — 已有 course 上下文
@@ -279,9 +295,6 @@ function GenerationPreviewContent() {
           body: JSON.stringify({
             courseId: pathCourseId,
             path: storagePath,
-            providerId: currentSession.pdfProviderId ?? undefined,
-            apiKey: currentSession.pdfProviderConfig?.apiKey?.trim() || undefined,
-            baseUrl: currentSession.pdfProviderConfig?.baseUrl?.trim() || undefined,
           }),
           signal,
         });
@@ -336,6 +349,65 @@ function GenerationPreviewContent() {
               pageNumber: 1,
             }));
 
+        // Parse the remaining materials in order and combine their usable text/images.
+        // The overall prompt budget remains capped even when five materials are selected.
+        let textWasTruncated = (parseResult.data.text as string).length > MAX_PDF_CONTENT_CHARS;
+        for (const [materialIndex, material] of materials.slice(1).entries()) {
+          const extraMatch = material.storageKey.match(
+            /^(?:courses|pending|pbl)\/([^\/]+)\/material\//,
+          );
+          if (!extraMatch) throw new Error('课程材料路径无效，请重新上传');
+          const extraResponse = await fetch('/api/extract-document', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ courseId: extraMatch[1], path: material.storageKey }),
+            signal,
+          });
+          if (!extraResponse.ok) {
+            const errorData = await extraResponse.json().catch(() => null);
+            throw new Error(
+              `${material.fileName}：${errorData?.error || t('generation.courseMaterialParseFailed')}`,
+            );
+          }
+          const extraResult = await extraResponse.json();
+          if (!extraResult.success || !extraResult.data)
+            throw new Error(`${material.fileName}：${t('generation.courseMaterialParseFailed')}`);
+
+          const extraText = String(extraResult.data.text || '');
+          const remaining = MAX_PDF_CONTENT_CHARS - pdfText.length;
+          const heading = `\n\n【${material.fileName}】\n`;
+          const available = remaining - heading.length;
+          if (available <= 0 || extraText.length > available) textWasTruncated = true;
+          if (available > 0) {
+            pdfText += `${heading}${extraText.slice(0, available)}`;
+          }
+          const rawExtraImages = extraResult.data.metadata?.pdfImages;
+          const extraImages = rawExtraImages
+            ? rawExtraImages.map(
+                (img: {
+                  id: string;
+                  src?: string;
+                  pageNumber?: number;
+                  description?: string;
+                  width?: number;
+                  height?: number;
+                }) => ({
+                  id: `${materialIndex + 1}-${img.id}`,
+                  src: img.src || '',
+                  pageNumber: img.pageNumber || 1,
+                  description: img.description,
+                  width: img.width,
+                  height: img.height,
+                }),
+              )
+            : (extraResult.data.images as string[]).map((src: string, i: number) => ({
+                id: `${materialIndex + 1}-img_${i + 1}`,
+                src,
+                pageNumber: 1,
+              }));
+          images.push(...extraImages);
+        }
+
         const imageStorageIds = await storeImages(images);
 
         const pdfImages: PdfImage[] = images.map(
@@ -367,13 +439,14 @@ function GenerationPreviewContent() {
           pdfImages,
           imageStorageIds,
           pdfStorageKey: undefined, // Clear so we don't re-parse
+          materialFiles: undefined,
         };
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
 
         // Truncation warnings
         const warnings: string[] = [];
-        if ((parseResult.data.text as string).length > MAX_PDF_CONTENT_CHARS) {
+        if (textWasTruncated) {
           warnings.push(t('generation.textTruncated', { n: MAX_PDF_CONTENT_CHARS }));
         }
         if (images.length > MAX_VISION_IMAGES) {

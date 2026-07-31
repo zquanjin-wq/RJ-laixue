@@ -76,7 +76,7 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 const PPTX_IMPORT_ENABLED = process.env.NEXT_PUBLIC_ENABLE_PPTX_IMPORT === 'true';
 
 interface FormState {
-  pdfFile: File | null;
+  pdfFiles: File[];
   requirement: string;
   webSearch: boolean;
   interactiveMode: boolean;
@@ -84,7 +84,7 @@ interface FormState {
 }
 
 const initialFormState: FormState = {
-  pdfFile: null,
+  pdfFiles: [],
   requirement: '',
   webSearch: false,
   interactiveMode: false,
@@ -308,40 +308,32 @@ function HomePage() {
         ...(form.vocationalTestMode ? { taskEngineMode: true } : {}),
       };
 
-      let pdfStorageKey: string | undefined;
-      let pdfFileName: string | undefined;
-      let documentMimeType: string | undefined;
-      let pdfProviderId: string | undefined;
-      let pdfProviderConfig: { apiKey?: string; baseUrl?: string } | undefined;
-      let pdfStorageSize: number | undefined;
+      let materialFiles:
+        | Array<{ storageKey: string; fileName: string; documentMimeType: string; size: number }>
+        | undefined;
 
-      if (form.pdfFile) {
+      if (form.pdfFiles.length > 0) {
         // 直传 Supabase Storage,文件不经过 Vercel Serverless Function,
         // 解决 4.5MB 上传硬顶。先临时用一个 nanoid 占位 courseId,
         // 等课程真正创建后路径会自动通过 upsert 关联(courseId 在 sign-upload 路由里只用作目录前缀)。
-        pdfFileName = form.pdfFile.name;
-        documentMimeType = normalizeDocumentMimeType({
-          mimeType: form.pdfFile.type,
-          fileName: form.pdfFile.name,
-        });
-        pdfStorageSize = form.pdfFile.size;
-
-        const settings = useSettingsStore.getState();
-        pdfProviderId = settings.pdfProviderId;
-        const providerCfg = settings.pdfProvidersConfig?.[settings.pdfProviderId];
-        if (providerCfg) {
-          pdfProviderConfig = {
-            apiKey: providerCfg.apiKey,
-            baseUrl: providerCfg.baseUrl,
-          };
-        }
-
         try {
           // 上传需要 courseId,这里用一个临时 nanoid 作为目录前缀,
           // 后续会用真实 courseId 重写路径(extract-document 路由会重新拉取)
           const tempCourseId = `pending-${nanoid(12)}`;
-          const uploaded = await uploadCourseMaterial(tempCourseId, form.pdfFile);
-          pdfStorageKey = uploaded.path;
+          materialFiles = await Promise.all(
+            form.pdfFiles.map(async (file) => {
+              const uploaded = await uploadCourseMaterial(tempCourseId, file);
+              return {
+                storageKey: uploaded.path,
+                fileName: file.name,
+                documentMimeType: normalizeDocumentMimeType({
+                  mimeType: file.type,
+                  fileName: file.name,
+                }),
+                size: file.size,
+              };
+            }),
+          );
         } catch (uploadErr) {
           log.error('Course material direct upload failed:', uploadErr);
           setError(
@@ -359,11 +351,7 @@ function HomePage() {
         pdfText: '',
         pdfImages: [],
         imageStorageIds: [],
-        pdfStorageKey,
-        pdfFileName,
-        documentMimeType,
-        pdfProviderId,
-        pdfProviderConfig,
+        materialFiles,
         sceneOutlines: null,
         currentStep: 'generating' as const,
       };
@@ -590,8 +578,8 @@ function HomePage() {
                     setSettingsSection(section);
                     setSettingsOpen(true);
                   }}
-                  pdfFile={form.pdfFile}
-                  onPdfFileChange={(f) => updateForm('pdfFile', f)}
+                  pdfFiles={form.pdfFiles}
+                  onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
                   onPdfError={setError}
                 />
               </div>

@@ -74,6 +74,26 @@ function requestedTypeLabel(mimeType: string): string {
 }
 
 /**
+ * Course generation is operator-managed: prefer the configured MinerU service
+ * instead of trusting a browser's persisted extractor preference.  unpdf is
+ * retained as the zero-config PDF fallback.
+ */
+function serverDefaultProviderId(mimeType: string): PDFProviderId | undefined {
+  const needsMinerU =
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  const configuredMinerU = serverConfiguredMinerUProviderId();
+  if (configuredMinerU) return configuredMinerU;
+  return needsMinerU ? undefined : 'unpdf';
+}
+
+function serverConfiguredMinerUProviderId(): PDFProviderId | undefined {
+  if (isServerConfiguredProvider('pdf', 'mineru')) return 'mineru';
+  if (isServerConfiguredProvider('pdf', 'mineru-cloud')) return 'mineru-cloud';
+  return undefined;
+}
+
+/**
  * POST /api/extract-document
  *
  * 两种请求模式:
@@ -112,8 +132,6 @@ export async function POST(req: NextRequest) {
       if (!courseId || !path) {
         return apiError('MISSING_REQUIRED_FIELD', 400, '请提供 courseId 和 path');
       }
-      const effectiveProviderId =
-        (providerId as PDFProviderId | undefined) || ('unpdf' as PDFProviderId);
       fileName = path.split('/').pop() || 'document';
 
       let material;
@@ -140,6 +158,11 @@ export async function POST(req: NextRequest) {
       if (!mimeType) {
         return apiError('INVALID_REQUEST', 400, `不支持的课程材料类型:"${material.contentType}"`);
       }
+      const effectiveProviderId =
+        serverConfiguredMinerUProviderId() ||
+        (providerId as PDFProviderId | undefined) ||
+        serverDefaultProviderId(mimeType) ||
+        'unpdf';
       resolvedProviderId = effectiveProviderId;
 
       return await runExtraction({
@@ -187,16 +210,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let provider = preferredProviderId
+    const requestedProvider = preferredProviderId
       ? getDocumentExtractorProvider(preferredProviderId)
       : undefined;
-    if (preferredProviderId && !provider) {
+    if (preferredProviderId && !requestedProvider) {
       return apiError(
         'INVALID_REQUEST',
         400,
         `Unknown document extractor provider: ${preferredProviderId}`,
       );
     }
+    const configuredMinerU = serverConfiguredMinerUProviderId();
+    let provider = configuredMinerU
+      ? getDocumentExtractorProvider(configuredMinerU)
+      : requestedProvider ||
+        (serverDefaultProviderId(mimeType)
+          ? getDocumentExtractorProvider(serverDefaultProviderId(mimeType)!)
+          : undefined);
     if (provider && !supportsMimeType(provider, mimeType)) provider = undefined;
 
     try {
