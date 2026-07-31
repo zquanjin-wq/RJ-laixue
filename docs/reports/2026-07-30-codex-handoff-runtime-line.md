@@ -128,7 +128,8 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
    create/append/status 路由、RLS 与 service-role 调用链 → 通过后由负责人**单独授权**生产执行
    → 生产执行前确认 runtime_* 表不存在或为空
 3. 回滚语义：R2 影子写上线后如需回退，只关开关/回退代码，保留 runtime 表；**只有在「尚未写入任何业务 runtime 数据」的窗口才允许 DROP runtime_* 物理回滚**，写入后不得靠删表回滚
-4. **`NEXT_PUBLIC_RUNTIME_SHADOW` 保持关闭**：应用路由验证未完成前不得开启（Codex 2026-07-30 重申）
+4. ~~**`NEXT_PUBLIC_RUNTIME_SHADOW` 保持关闭**~~ 已于 2026-07-31 在 Preview 受控开启
+   （见 §5 第 5 条）；**生产开关仍保持关闭**，生产 SQL 未获授权
 
 ## 5. 待办（按优先级）
 
@@ -137,10 +138,20 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
 2. ~~建立隔离 Supabase Preview/Scratch~~ **已完成（2026-07-30，Kimi/WebBridge）**——
    Vercel Preview/Production 已拆分至不同 Supabase 项目，详见 §4
 3. **生成链路误分类 bug 修复**（你的地盘）：`docs/reports/2026-07-28-agent-text-action-leak.md`
-4. **迁移验证**：仅在隔离环境执行 SQL，验证路由/RLS/service role/RPC EXECUTE 收口；
-   通过后由负责人单独授权生产执行
-5. **受控开影子写**：`NEXT_PUBLIC_RUNTIME_SHADOW=1`（chat + quizAttempt），
-   观察 `runtime_shadow` 遥测（Vercel logs 搜 `runtime_shadow`），再定 SLO
+4. ~~迁移验证~~ **已完成（2026-07-31，Codex + Kimi）**——Preview 基础 schema 迁移
+   负责人已签字；Codex 已完成登录态 create/append/status、RLS、service-role 调用链验收
+5. ~~受控开影子写~~ **已完成（2026-07-31，Kimi）**——`NEXT_PUBLIC_RUNTIME_SHADOW=1`
+   （encrypted / Preview-only）已在分支别名部署端到端打通：真实课堂 chat 触发
+   `POST /api/runtime/v1/sessions` 201 + `/records` 追加，Vercel logs 出现
+   `runtime_shadow {outcome:ok, shadowVersion:r2.2, op:append_record, kind:chat}`，
+   `GET /api/runtime/v1/sessions?stageId=` 回读到 1 会话 2 记录（learnerKey = auth.uid()）。
+   **关键教训：Vercel `Sensitive` 类型的 NEXT_PUBLIC_ 变量构建期不可见**——Turbopack
+   内联拿到 undefined，`=== '1'` 守卫被折叠成 false，整个 shadow-writer 被 DCE 剥掉
+   （bundle 里连 `/api/runtime/` 字符串都不剩）。此类开关必须用 **encrypted（普通）**
+   类型。排查方法：课堂页已加载 chunk 里搜 `shadowChatSessions` 模块是否存在，
+   比扫 chunk 文件名清单可靠（懒加载 chunk 不一定在反解清单里）。另：初建变量时
+   把值误填进 comment 栏的坑也已遇到一次，API GET 只能看到 comment 看不到值，
+   复查变量时优先看 comment。quizAttempt 影子写尚未做端到端实测，观察期继续
 6. **playback R2.1 前置设计卡**：pending/outbox、刷新及跨标签页恢复语义
    （R3 切读门禁的输入）；**然后**才立 R3 总设计稿（含 chat 完整消息语义、
    匿名写 + merge-grant 签发端用 `ac:<uuid>` 不透明 ID、灰度控制面）
