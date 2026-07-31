@@ -28,7 +28,14 @@ import type { AudioIndicatorState } from '@/components/roundtable/audio-indicato
 import type { Action, DiscussionAction, SpeechAction } from '@/lib/types/action';
 import type { TTSProviderId } from '@/lib/audio/types';
 import { cn } from '@/lib/utils';
-// Playback state persistence removed — refresh always starts from the beginning
+// R2.1 A1: playback 本地持久化接线（节流落盘 + 关键事件 flush + 恢复解析）。
+// 设计卡 docs/reports/2026-07-31-runtimestore-r2.1-playback-design.md（v1.2）
+import {
+  createPlaybackPersistence,
+  resolveRestorablePlayback,
+  type PlaybackPersistence,
+  type RestorablePlayback,
+} from '@/lib/utils/playback-persistence';
 import { ChatArea, type ChatAreaRef } from '@/components/chat/chat-area';
 import { agentsToParticipants, useAgentRegistry } from '@/lib/orchestration/registry/store';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
@@ -270,6 +277,11 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     const sceneEpochRef = useRef(0);
     // When true, the next engine init will auto-start playback (for auto-play scene advance)
     const autoStartRef = useRef(false);
+    // R2.1 A1: playback 本地持久化。per-stage 单例（stage.id 变化时重建）；
+    // pendingRestore 是挂载恢复解析的结果，等待对应场景的引擎创建后应用一次。
+    const persistenceRef = useRef<PlaybackPersistence | null>(null);
+    const pendingRestoreRef = useRef<RestorablePlayback | null>(null);
+    const restoreAttemptedRef = useRef(false);
     // Discussion buffer-level pause state (distinct from soft-pause which aborts SSE)
     const [isDiscussionPaused, setIsDiscussionPaused] = useState(false);
 
@@ -472,6 +484,8 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
 
     // Initialize playback engine when scene changes
     useEffect(() => {
+      // R2.1 A1：切 scene 强制 flush 上一场景的待写进度（关键事件 flush 之一）
+      void persistenceRef.current?.flush();
       // Bump epoch so any stale SSE callbacks from the previous scene are discarded
       sceneEpochRef.current++;
 
@@ -535,6 +549,19 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
       const engine = new PlaybackEngine([currentScene], actionEngine, audioPlayerRef.current, {
         onModeChange: (mode) => {
           setEngineMode(mode);
+          // R2.1 A1：pause 是关键事件之一，强制 flush 待写进度
+          if (mode === 'paused') {
+            void persistenceRef.current?.flush();
+          }
+        },
+        onProgress: (snapshot) => {
+          // R2.1 A1：trailing 节流落盘（默认 5s 窗口，只写最新快照）
+          persistenceRef.current?.schedule({
+            sceneId: currentScene.id,
+            sceneIndex: snapshot.sceneIndex,
+            actionIndex: snapshot.actionIndex,
+            consumedDiscussions: snapshot.consumedDiscussions,
+          });
         },
         onSceneChange: (_sceneId) => {
           // Scene change handled by engine
@@ -633,6 +660,28 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
           // effect handles the reset.
           setPlaybackCompleted(true);
 
+          // R2.1 A1：整课播完 → 写 completed 最终快照（行保留，恢复忽略）；
+          // 非末尾场景只按场景边界 flush（切 scene 时还会再 flush 一次，幂等）
+          {
+            const st = useStageStore.getState();
+            const idx = st.scenes.findIndex((s) => s.id === st.currentSceneId);
+            const isCourseEnd =
+              idx >= 0 &&
+              idx === st.scenes.length - 1 &&
+              st.generatingOutlines.length === 0;
+            const finalSnap = engine.getSnapshot();
+            if (isCourseEnd) {
+              void persistenceRef.current?.complete({
+                sceneId: currentScene.id,
+                sceneIndex: finalSnap.sceneIndex,
+                actionIndex: finalSnap.actionIndex,
+                consumedDiscussions: finalSnap.consumedDiscussions,
+              });
+            } else {
+              void persistenceRef.current?.flush();
+            }
+          }
+
           // End lecture session on playback complete
           if (lectureSessionIdRef.current) {
             chatAreaRef.current?.endSession(lectureSessionIdRef.current);
@@ -678,6 +727,20 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
 
       engineRef.current = engine;
 
+      // R2.1 A1：挂载恢复——若 pendingRestore 对应当前场景，恢复引擎游标。
+      // 恢复的是引擎内部 cursor（restoreFromSnapshot），不是 UI 状态；
+      // 不调用 start()，恢复后绝不自动播放（设计卡 §3.3）。
+      if (pendingRestoreRef.current && pendingRestoreRef.current.sceneId === currentScene.id) {
+        const r = pendingRestoreRef.current;
+        pendingRestoreRef.current = null;
+        engine.restoreFromSnapshot({
+          sceneIndex: 0, // 引擎按单场景构建（[currentScene]），游标落回本场景内
+          actionIndex: r.actionIndex,
+          consumedDiscussions: r.consumedDiscussions,
+          sceneId: currentScene.id,
+        });
+      }
+
       // Auto-start if triggered by auto-play scene advance
       if (autoStartRef.current) {
         autoStartRef.current = false;
@@ -690,7 +753,8 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
           engine.start();
         })();
       } else {
-        // Load saved playback state and restore position (but never auto-play).
+        // R2.1 A1：挂载恢复已在上方 engineRef 赋值后应用（pendingRestoreRef），
+        // 此处保持原语义——恢复位置但绝不自动播放。
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps -- Only re-run when scene changes, functions are stable refs
     }, [currentScene]);
@@ -713,6 +777,63 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only cleanup, clearPresentationIdleTimer is stable
     }, []);
+
+    // R2.1 A1：per-stage 持久化实例生命周期（stage.id 变化时重建）
+    const stageId = stage?.id;
+    useEffect(() => {
+      if (!stageId) return;
+      const p = createPlaybackPersistence({ stageId });
+      persistenceRef.current = p;
+      return () => {
+        persistenceRef.current = null;
+        // stop/卸载前 drain 待写快照（dispose 只排空写入链，flush 负责取消节流并入链）
+        void p.flush().then(() => p.dispose());
+      };
+    }, [stageId]);
+
+    // R2.1 A1：页面隐藏/关闭前强制 flush（不把 beforeunload 异步写当正确性保障，
+    // 只用 visibilitychange→hidden 与 pagehide 两个设计卡批准的关键事件）
+    useEffect(() => {
+      const onVisibility = () => {
+        if (document.visibilityState === 'hidden') {
+          void persistenceRef.current?.flush();
+        }
+      };
+      const onPageHide = () => {
+        void persistenceRef.current?.flush();
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('pagehide', onPageHide);
+      return () => {
+        document.removeEventListener('visibilitychange', onVisibility);
+        window.removeEventListener('pagehide', onPageHide);
+      };
+    }, []);
+
+    // R2.1 A1：挂载恢复解析（一次性）。按 sceneId 定位断点场景：断点在别的场景
+    // 就先切场景（scene-effect 建引擎时应用游标）；断点就在当前场景且引擎已建
+    // 则直接应用——两条路径都不自动播放（设计卡 §3.3）。
+    useEffect(() => {
+      if (restoreAttemptedRef.current || !stageId || scenes.length === 0) return;
+      restoreAttemptedRef.current = true;
+      void (async () => {
+        const r = await resolveRestorablePlayback(stageId, scenes);
+        if (!r) return;
+        const curId = useStageStore.getState().currentSceneId;
+        if (r.sceneId === curId && engineRef.current) {
+          engineRef.current.restoreFromSnapshot({
+            sceneIndex: 0,
+            actionIndex: r.actionIndex,
+            consumedDiscussions: r.consumedDiscussions,
+            sceneId: r.sceneId,
+          });
+        } else if (r.sceneId !== curId) {
+          pendingRestoreRef.current = r;
+          setCurrentSceneId(r.sceneId);
+        }
+      })();
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 一次性恢复，setCurrentSceneId 是稳定引用
+    }, [stageId, scenes]);
 
     // Sync mute state from settings store to audioPlayer
     useEffect(() => {

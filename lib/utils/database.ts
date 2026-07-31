@@ -143,6 +143,10 @@ export interface ChatSessionRecord {
 
 /**
  * PlaybackState table - Playback state snapshot (at most one per stage)
+ *
+ * R2.1 A1（2026-07-31）：新增可选字段 sceneId / capturedAt / completed。
+ * 非索引字段，Dexie 无需 version bump；旧行读出为 undefined，按语义降级。
+ * A2 字段（runtimeShadowEventId / shadowPending）待 A1 验收后再加。
  */
 export interface PlaybackStateRecord {
   stageId: string; // PK
@@ -150,6 +154,12 @@ export interface PlaybackStateRecord {
   actionIndex: number;
   consumedDiscussions: string[];
   updatedAt: number;
+  /** 稳定场景标识——恢复定位主键（sceneIndex 只作辅助校验） */
+  sceneId?: string;
+  /** ISO 时间戳，快照捕获时刻（A2 起作为「最新」的唯一判据） */
+  capturedAt?: string;
+  /** 播完标记：不参与本地续播；A2 影子写成功后才物理删除（R2.1 §3.4） */
+  completed?: boolean;
 }
 
 /**
