@@ -1,8 +1,10 @@
-# R2.1 playback 影子写前置设计卡（草案 v1，待评审）
+# R2.1 playback 影子写前置设计卡（v1.1，待签字）
 
 > 来源：R2 验收时 playback 被移出 R2（cbfd3b91），Codex 拍板另立本卡；
-> 本卡结论是 **R3 切读门禁的输入**（R3 总设计稿必须等本卡评审通过）。
-> 状态：草案。未获批准前不改任何代码、不动 Preview/生产开关。
+> 本卡结论是 **R3 切读门禁的输入**。
+> v1.1：按 Codex 2026-07-31 评审结论修订——范围拆 A1/A2 双门禁、pending
+> 结构化、complete 语义修正、跨标签页「最新」定义、恢复流程落到稳定标识。
+> 状态：待签字。签字前不改任何代码、不动 Preview/生产开关。
 
 ## 0. 本卡要回答的三件事（Codex 指定）
 
@@ -10,138 +12,188 @@
 2. **刷新恢复**：刷新后本地与服务端各自怎么恢复、重试如何复用持久化 ID；
 3. **跨标签页**：两个标签页同时播同一 stage 时的写入语义。
 
-## 1. 现状盘点（2026-07-31 代码核实）
+## 1. 现状盘点（2026-07-31 代码核实，Codex 已确认成立）
 
 | 层 | 现状 |
 |---|---|
-| 引擎事件 | `PlaybackChromeRoot.tsx` 持有 `PlaybackEngine`，进度通过引擎回调推进 |
-| 本地持久化 | **链路未接线（休眠代码）**：`savePlaybackState`/`loadPlaybackState` 无任何调用方；只有 `clearPlaybackState` 在删 stage 时（stage-storage.ts:254）被调用；`PlaybackChromeRoot.tsx:693` 的「恢复位置」是注释 TODO |
-| Dexie 表 | `playbackState`：每 stage 一行（PK=stageId，put 覆盖），字段 `{sceneIndex, actionIndex, consumedDiscussions, updatedAt}`，**无 `runtimeShadowEventId`** |
-| 影子写 | R2 验收修订时已**完全撤回**（含测试 `playback-shadow.test.ts` 一并删除），当前 shadow-writer 无任何 playback 代码 |
-| 服务端 | `kind='playback'` 为 RJ app-owned，payload-validators 不做骨架校验（R2 设计稿 §1.3 已定） |
+| 引擎事件 | `PlaybackEngine` 每个 action 推进前触发 `onProgress(snapshot)`（engine.ts:447，高频） |
+| 本地持久化 | **链路未接线（休眠代码）**：`savePlaybackState`/`loadPlaybackState` 零调用方；只有 `clearPlaybackState` 在删 stage 时（stage-storage.ts:254）被调用；`PlaybackChromeRoot.tsx:693` 恢复位置是注释 TODO |
+| Dexie 表 | `playbackState`：每 stage 一行（PK=stageId，put 覆盖），字段 `{sceneIndex, actionIndex, consumedDiscussions, updatedAt}`，无 eventId/pending 字段 |
+| 影子写 | R2 验收修订时已完全撤回，当前 shadow-writer 无任何 playback 代码 |
+| 服务端 | `kind='playback'` 为 RJ app-owned，payload-validators 不做骨架校验 |
 
-**关键含义**：R2.1 不是单纯"补影子写"——本地持久化链路本身先要接线并定义语义，
-否则影子写没有可挂的持久化数据源（P0 要求 eventId 随快照落 Dexie，影子路径
-**禁止**从调用方内存取数——沿用 R2 quiz 的同一条门禁）。
+## 2. 范围（Codex 拍板：选 A，拆两个门禁阶段）
 
-## 2. 范围拍板（请评审确认）
+**A1（先做）**：接通本地落盘 + 刷新恢复 + 测试。
+**A2（A1 验收通过后做）**：影子写 + 最小 pending。
 
-**建议 A（推荐）**：R2.1 = 本地持久化接线 + 影子写 + 最小 pending 重试，一次做完。
-理由：三块互相依赖——影子写数据源是 Dexie 行（依赖本地接线），重试复用
-eventId（依赖 pending 语义）。拆开做会产生中间态（影子写挂在内存数据上），
-正是 R2 被拦下的原因。
+两阶段同属本 R2.1 卡，但**禁止两条链路同时一次性上线**，以隔离故障。
+A1 阶段影子写代码不得启用（开关保持非 '1' 时零请求的门禁不变）。
 
-**建议 B**：本地持久化接线（含恢复消费）先做，影子写另行。
-理由：本地恢复本身有独立业务价值（刷新续播目前不工作）。
+## 3. A1：本地持久化接线设计
 
-**本卡按 A 展开**；若评审选 B，§3–§5 中影子写部分顺延即可，本地部分不变。
+### 3.1 落盘时机（Codex 已批准，含约束）
 
-## 3. 本地持久化接线设计
-
-### 3.1 写入时机（拍板项）
-
-引擎 `onProgress` 是高频回调（每个 action 推进都触发）。**不建议逐事件落盘**。
-
-| 候选 | 说明 | 建议 |
-|---|---|---|
-| 节流落盘 | 每 5s 最多一次 + 关键事件（pause / stop / scene 切换 / complete / 页面隐藏 visibilitychange）强制落盘 | ✅ 推荐 |
-| 仅关键事件 | 只在 pause/stop/切场景/完成时写 | 备选（崩溃丢进度最多一个场景） |
-| 逐事件 | 每个 action 写一次 | 否决：IndexedDB 写放大，且影子写频率随之爆炸 |
-
-complete 时调用现有 `clearPlaybackState(stageId)`（语义：播完不留断点）。
+- **5 秒节流 + 关键事件强制 flush**：
+  - 节流必须是 **trailing/latest snapshot**——持续播放不能导致最后状态永远不写；
+  - 强制 flush 事件：`pause`、`stop`、切 scene、`complete`、
+    `visibilitychange → hidden`、`pagehide`；
+  - **不把 `beforeunload` 异步写入当作正确性保障**；
+  - 否决逐 action 落盘（写放大）；否决"仅关键事件"（异常刷新丢失窗口过大）。
+- **IndexedDB 写入串行化**：落盘请求排队执行，避免旧快照晚完成覆盖新快照。
 
 ### 3.2 Dexie schema 变更
 
-`PlaybackStateRecord` 增加可选字段 `runtimeShadowEventId?: string`。
-Dexie 对新增非索引字段**无需 version bump**（现有表结构不变），旧行读出来
-该字段为 undefined，影子路径按"无持久化 ID → 跳过影子写"处理（与 R2 quiz
-envelope 读不到即跳过的门禁一致）。
+`PlaybackStateRecord` 增加可选字段（非索引字段，**无需 version bump**，Codex 已同意）：
 
-### 3.3 恢复消费（接通 TODO）
+```ts
+interface PlaybackStateRecord {
+  stageId: string;            // PK
+  sceneId?: string;           // 稳定场景标识（恢复定位主键）
+  sceneIndex: number;
+  actionIndex: number;
+  consumedDiscussions: string[];
+  updatedAt: number;
+  capturedAt?: string;        // ISO 时间戳，快照捕获时刻（A2 影子写同用）
+  completed?: boolean;        // §3.4：播完标记，不参与本地续播
+  // ── A2 新增（影子写）──
+  runtimeShadowEventId?: string;
+  shadowPending?: { eventId: string; capturedAt: string };
+}
+```
 
-`PlaybackChromeRoot.tsx:693` 的 TODO 接线：挂载时 `loadPlaybackState(stageId)`，
-行存在且 `sceneId` 匹配当前场景 → 恢复 `sceneIndex/actionIndex/consumedDiscussions`，
-**不自动播放**（现有注释语义保留）。sceneId 不匹配 → 丢弃该行。
+旧行读出新增字段为 undefined，按各字段语义分别降级处理。
 
-## 4. 影子写设计
+### 3.3 恢复流程（阻断点 ④：落到稳定标识和引擎游标）
 
-### 4.1 会话与记录形状（沿用 R2 设计稿 §1.3，不变）
+`PlaybackChromeRoot.tsx:693` TODO 接线，恢复顺序：
+
+1. **先加载课程场景列表**，再按 **`sceneId` 验证和定位**快照所属场景；
+   `sceneIndex` 只作辅助校验，不作定位依据（场景可能增删改序）；
+2. 校验 `actionIndex` 在该场景 action 序列范围内，越界则钳制/丢弃；
+3. `consumedDiscussions` 过滤已失效的 discussion ID（课程编辑后可能不存在）；
+4. **恢复的是播放引擎内部 cursor**（`engine.restore(...)` 或等价 API），
+   不只是 React UI 状态；
+5. `completed: true` 的行**忽略**，不参与续播；
+6. 恢复后**不得自动播放**（现状语义保留）。
+
+### 3.4 complete 语义（阻断点 ①：不能直接清行）
+
+播完**不再直接 `delete`**：
+
+1. complete 时先保存一份 `completed: true` 的最终快照（同样含 eventId/pending，
+   同一次 put）；
+2. **A2 影子写成功后才物理删除该行**；A1 阶段（无影子写）complete 行保留，
+   恢复逻辑按 §3.3-5 忽略；
+3. 恢复、导出、比对路径遇到 `completed` 行一律按"已播完"处理，不作断点。
+
+## 4. A2：影子写设计
+
+### 4.1 会话与记录形状（沿用 R2 设计稿 §1.3，Codex 已同意）
 
 - 一个 stage → 一个 `RuntimeSession`：`id = pb:<stageId>`，kind=`playback`，status 常 `active`；
-- 每次落盘 → 一条 record：payload = 整份快照 `{sceneIndex, actionIndex, consumedDiscussions}`；
-- **record id（P0，R2 终审已拍板）**：`pb:<stageId>:<runtimeShadowEventId>`，
-  eventId 为每次保存**之前**生成的新 UUID，**随快照同一 `db.playbackState.put`
-  落 Dexie**；重试只能复用已持久化的 id；下次保存必须生成新 id。
-  内存单调计数器 `pb:<stageId>:<monotonic-n>` 已否决（刷新/跨标签页复用序号
-  撞幂等键）。
+- 每次落盘 → 一条 record，payload：
 
-### 4.2 影子写频率
+```ts
+{
+  v: 1,                          // payload 版本（阻断点 ③）
+  sceneId: string,               // 稳定场景标识
+  sceneIndex: number,
+  actionIndex: number,
+  consumedDiscussions: string[],
+  capturedAt: string,            // 快照捕获时刻，「最新」的唯一判据
+}
+```
 
-与 §3.1 落盘时机 1:1 对齐——**影子写只挂在"落盘"这个动作之后**（读 Dexie 刚写入
-的行），不挂引擎事件本身。这样天然继承节流，且满足"影子数据只从持久化读回"。
+- record id：`pb:<stageId>:<runtimeShadowEventId>`（UUID 随快照同一次 Dexie put
+  持久化；内存单调计数器已在 R2 终审否决）。
 
-### 4.3 pending / outbox（必答问题 ①）
+### 4.2 影子写挂点
 
-R2 期拍板"不做 outbox"；R3 切读前 outbox 是门禁。本卡为 playback 定义
-**最小 pending 机制**，刻意做成 R3 总 outbox 的子集：
+只挂在「落盘」动作之后——读 Dexie 刚写入的行发起影子写，天然继承节流，
+且满足"影子数据只从持久化读回，禁止调用方内存数据"（沿用 R2 quiz 门禁）。
 
-| 决策 | 方案 |
-|---|---|
-| 队列载体 | **不建新表**：pending 状态就是 `playbackState` 行本身 + 新字段 `shadowPending: true`（影子写成功后清除）。每 stage 只有一行，天然去重 |
-| 重试时机 | ① 落盘后立即尝试一次；② 失败标 `shadowPending`，下一次落盘时顺带重试上一笔；③ 挂载恢复时若发现 `shadowPending` 行，补一次 |
-| 重试 ID | 始终复用行内 `runtimeShadowEventId`，**重试不生成新 ID**（同一快照同一 ID）；只有新业务落盘才换新 UUID |
-| 覆盖语义 | 若上一笔未送出而进度又推进：新落盘生成新 UUID 并覆盖行（旧快照的影子写**被放弃**）——快照语义下只保留最新状态，历史断点无业务价值；遥测计 `superseded` |
-| 离线 | fire-and-forget 继承 R2：失败静默丢弃 + 遥测；pending 行等下次上线后的首次落盘/挂载自然带出 |
-| 不做的事 | 不建通用 outbox 表、不做指数退避、不做跨 kind 队列——那是 R3 的事，本卡只保证 playback 单 stage 单行的最小正确性 |
+### 4.3 pending（阻断点 ②：结构化 + 条件清除）
 
-### 4.4 刷新恢复（必答问题 ②）
+复用 `playbackState` 行，**不建新表**，但不是松散布尔：
 
-- **本地**：§3.3 已定义（Dexie 行恢复位置，不自动播放）；
-- **影子写**：刷新后挂载时发现 `shadowPending` 行 → 用行内 eventId 补写一次；
-  无 pending 行 → 不补（上次成功写出的快照服务端已有）；
-- **读源不动**：R2.1 期服务端数据**不参与恢复**，恢复永远读本地 Dexie；
-  服务端 records 只供 R3 比对门禁使用。
+```ts
+shadowPending?: { eventId: string; capturedAt: string }
+```
 
-### 4.5 跨标签页（必答问题 ③）
+**不变量**：
+- 快照、`runtimeShadowEventId`、`shadowPending` 必须**同一次 Dexie put** 持久化；
+- 发送成功后**只能条件清除**：仅当数据库当前行的 `runtimeShadowEventId ===`
+  已发送的 eventId 时才清除 pending——否则旧请求晚成功会误删已覆盖进去的
+  新 pending（跨标签页/本标签页重试共用此约束）；
+- 重试**复用行内 eventId，不生成新 ID**；只有新业务落盘才换新 UUID；
+- **superseded**（Codex 已批准）：新快照覆盖未发送的旧快照时放弃旧 pending
+  并计数——这是**本地丢弃指标**，不得伪装成一次服务端 shadow 请求结果上报；
+- 重试时机：① 落盘后立即一次；② 失败标 pending，下次落盘顺带重试；
+  ③ 挂载恢复发现 pending 行补一次；
+- 离线：fire-and-forget 继承 R2，失败静默 + 遥测；pending 等上线后首次
+  落盘/挂载自然带出；
+- 不做：通用 outbox 表、指数退避、跨 kind 队列（R3 的事）。
 
-两个标签页播同一 stage 的现实场景（学员误开两个窗口）：
+### 4.4 刷新恢复（A2 部分）
 
-| 层 | 语义 | 依据 |
-|---|---|---|
-| 本地 Dexie | put 覆盖，后写赢——**接受互踩**（现状语义，本卡不改） | 每 stage 一行是既有设计 |
-| 影子写 | **不产生幂等冲突**：各标签页各自生成 UUID，record id 不同，append 都成功 | UUID 方案天然免疫（这正是否决单调计数器的原因） |
-| 服务端 records | 两标签页的快照**交错追加**；读时按 updatedAt 取最新即现状 | 快照语义下可接受；R3 切读门禁按"最新一条"比对即可 |
-| 结论 | 跨标签页**不加锁、不加 lease** | 加锁的收益（records 不交错）不抵复杂度；若 R3 评审认为必须串行化，再议 |
+- 本地：§3.3；
+- 影子写：挂载发现 `shadowPending` 行 → 用行内 eventId 补写一次；无 pending 不补；
+- 读源不动：服务端数据**不参与恢复**；服务端 records 仅供 R3 比对门禁。
+
+### 4.5 跨标签页（有条件批准不加锁，阻断点 ③）
+
+「UUID 不冲突」只解决 record ID 幂等，不能独自解决竞争。必须同时具备：
+
+1. **eventId 条件确认**（§4.3）：防止标签页 A 的旧请求成功后清掉标签页 B
+   的新 pending；
+2. **payload 含 `capturedAt`**：不同网络延迟导致服务端 append 顺序 ≠ 快照
+   新旧顺序，「最新状态」**明确按 capturedAt 判断，不按 append 到达顺序，
+   不靠服务端 seq**；
+3. **稳定 tie-break**：`capturedAt` 相同时按 `runtimeShadowEventId` 字典序
+   取大者（确定性、全端一致）；
+4. 两个标签页覆盖同一 Dexie 行：接受后写赢（现状语义），配合条件清除保证
+   pending 不被误删；
+5. **门禁测试**（新增）：「旧请求晚成功不清新 pending」+「双标签页交错写入
+   后按 capturedAt 取最新」。
 
 ## 5. 遥测
 
-沿用 `runtime_shadow` 事件，op 新增 `append_record, kind=playback`；
-outcome 在现有 ok / failure 之外，新增计数维度 `superseded`（被新快照覆盖
-而放弃的 pending 笔数）——这是观察跨标签页/高频推进行为的关键指标。
+沿用 `runtime_shadow`，op 新增 `append_record, kind=playback`；
+`superseded` 只作本地计数维度上报（`source: local_drop`），不混入服务端
+请求结果 outcome。
 
-## 6. 测试门禁（验收时必须全绿）
+## 6. 测试门禁
 
-1. **eventId 持久化**：保存进度后刷新页面 → 触发重试 → 复用同一 eventId
-   （注入第一次 5xx，断言第二次请求的 record id 相同）；
-2. **覆盖语义**：连续两次落盘（第一次注入失败）→ 第二次生成新 UUID，
-   旧 pending 被放弃，遥测计 superseded；
-3. **挂载补写**：构造 `shadowPending` 行 → 重新挂载 → 自动补写一次且 id 不变；
-4. **本地恢复**：保存 → 刷新 → 位置恢复且 sceneId 不匹配时丢弃；
-5. **开关关闭零副作用**：`NEXT_PUBLIC_RUNTIME_SHADOW` 非 '1' 时不产生任何
-   `/api/runtime/` 请求（含挂载补写路径）；
-6. **complete 清理**：播完 → `playbackState` 行删除 → 无影子写、无残留 pending。
+**A1 验收门禁**：
+1. 节流 trailing：持续播放 12s 不停 → 最终状态落盘；
+2. 强制 flush：pause / 切 scene / `visibilitychange→hidden` / `pagehide` 各触发落盘；
+3. 写入串行化：慢写 + 快写并发 → 最终行是新快照；
+4. 恢复：落盘 → 刷新 → 按 sceneId 定位、actionIndex 校验、失效 discussion 过滤、
+   引擎 cursor 恢复、不自动播放；`completed` 行被忽略；
+5. complete（A1）：播完 → 行保留且 `completed: true`，恢复忽略。
 
-## 7. 与 R3 的接口（本卡的输出物）
+**A2 验收门禁**（在 A1 全绿后执行）：
+6. eventId 持久化：注入第一次 5xx → 刷新 → 重试复用同一 eventId；
+7. 条件清除：旧请求晚成功 → 新 pending 不被误删（§4.3）；
+8. superseded：连续两次落盘（第一次注入失败）→ 新 UUID 覆盖，旧 pending 放弃，
+   遥测为 local_drop 而非服务端结果；
+9. 双标签页交错：两上下文交错写入 → 按 capturedAt（含 tie-break）取最新；
+10. complete（A2）：播完 → completed 快照影子成功 → 行物理删除；
+11. 开关关闭零副作用：非 '1' 时全程无 `/api/runtime/` 请求（含挂载补写）。
 
-R3 切读门禁评审时，本卡提供三个已验证结论：
-1. playback 服务端 records 与本地 Dexie 行的一致性比对方法（取最新一条快照）；
-2. `superseded` 率的观测数据（决定 R3 是否需要折叠/压缩策略）；
+## 7. 与 R3 的接口（本卡输出物）
+
+1. playback 服务端 records 与本地行的一致性比对方法：**按 capturedAt 取最新**
+   （含 tie-break），不看 append 顺序；
+2. `superseded` 率观测数据（决定 R3 是否需折叠/压缩策略）；
 3. pending 机制作为 R3 总 outbox 设计的最小参照实现。
 
 ## 8. 明确不做
 
 - 不改 R2 已签字的 chat / quizAttempt 任何代码；
-- 不建通用 outbox 表、不做退避策略（R3）；
-- 跨标签页不加锁；
-- 不动 Preview/生产开关之外的任何控制面；不执行任何 SQL；
-- 服务端恢复读源（读源切换是 R3）。
+- 不建通用 outbox 表、不做退避（R3）；
+- 跨标签页不加锁（以 §4.5 五条为前提）；
+- A1/A2 不一次性同时上线；
+- 不引入服务端读取、不改变本地读源；
+- 不动 Preview/生产开关之外的控制面；不执行任何 SQL；生产红线不变。
