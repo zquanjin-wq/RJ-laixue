@@ -33,6 +33,16 @@ function isSelfHostedMinerUProvider(
   return providerId === 'mineru';
 }
 
+function isMinerUCloudProvider(
+  providerId: string,
+): providerId is Extract<PDFProviderId, 'mineru-cloud'> {
+  return providerId === 'mineru-cloud';
+}
+
+function isPdfMimeType(mimeType: string): boolean {
+  return mimeType === 'application/pdf';
+}
+
 function requestedTypeLabel(mimeType: string): string {
   if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     return 'DOCX';
@@ -122,6 +132,29 @@ export async function POST(req: NextRequest) {
         provider = cloudProvider;
         managed = cloudManaged;
         clientBaseUrl = managed ? undefined : baseUrl || undefined;
+        resolvedProviderId = provider.id;
+      }
+    }
+    // A persisted browser setting can still point to MinerU after its local
+    // endpoint/key was removed. PDF has a built-in, zero-config fallback
+    // (`unpdf`), so do not turn that stale preference into a hard failure.
+    // DOCX/PPTX deliberately do not fall back: MinerU is their only extractor.
+    const mineruCloudKey = isMinerUCloudProvider(provider.id)
+      ? resolvePDFApiKey(provider.id, managed ? undefined : apiKey || undefined)
+      : undefined;
+    const needsUnconfiguredMinerUFallback =
+      isPdfMimeType(mimeType) &&
+      ((isSelfHostedMinerUProvider(provider.id) && !managed && !clientBaseUrl) ||
+        (isMinerUCloudProvider(provider.id) && !mineruCloudKey));
+    if (needsUnconfiguredMinerUFallback) {
+      const fallback = getDocumentExtractorProvider('unpdf');
+      if (fallback) {
+        log.warn(
+          `Falling back from unconfigured ${provider.id} to unpdf for PDF extraction`,
+        );
+        provider = fallback;
+        managed = false;
+        clientBaseUrl = undefined;
         resolvedProviderId = provider.id;
       }
     }

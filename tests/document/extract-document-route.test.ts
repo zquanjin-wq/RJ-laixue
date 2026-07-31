@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   isServerConfiguredProvider: vi.fn(() => false),
   resolvePDFApiKey: vi.fn((_providerId: string, clientKey?: string) => clientKey || ''),
   resolvePDFBaseUrl: vi.fn((_providerId: string, clientBaseUrl?: string) => clientBaseUrl),
+  parsePDF: vi.fn(),
   parseWithMinerUCloud: vi.fn(),
 }));
 
@@ -25,6 +26,11 @@ vi.mock('@/lib/server/provider-config', () => ({
 
 vi.mock('@/lib/pdf/mineru-cloud', () => ({
   parseWithMinerUCloud: mocks.parseWithMinerUCloud,
+}));
+
+vi.mock('@/lib/pdf/pdf-providers', () => ({
+  parsePDF: mocks.parsePDF,
+  parseWithMinerUDocument: vi.fn(),
 }));
 
 async function postExtractDocument(input: {
@@ -58,6 +64,12 @@ describe('POST /api/extract-document', () => {
     mocks.resolvePDFBaseUrl.mockImplementation(
       (_providerId: string, clientBaseUrl?: string) => clientBaseUrl,
     );
+    mocks.parsePDF.mockReset();
+    mocks.parsePDF.mockResolvedValue({
+      text: 'unpdf parsed text',
+      images: [],
+      metadata: { pageCount: 1, parser: 'unpdf' },
+    });
     mocks.parseWithMinerUCloud.mockReset();
     mocks.parseWithMinerUCloud.mockResolvedValue({
       text: 'cloud parsed text',
@@ -134,6 +146,37 @@ describe('POST /api/extract-document', () => {
     });
     expect(json.error).toContain('DOCX extraction requires a configured MinerU document extractor');
     expect(json.error).toContain('self-hosted MinerU base URL or a MinerU Cloud API key');
+  });
+
+  it('falls back to unpdf when a stale self-hosted MinerU preference cannot parse a PDF', async () => {
+    const res = await postExtractDocument({
+      file: new File(['not really a PDF'], 'lesson.pdf', { type: 'application/pdf' }),
+      providerId: 'mineru',
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({
+      success: true,
+      data: { metadata: { parser: 'unpdf' } },
+    });
+    expect(mocks.parsePDF).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to unpdf when a stale MinerU Cloud preference has no API key', async () => {
+    const res = await postExtractDocument({
+      file: new File(['not really a PDF'], 'lesson.pdf', { type: 'application/pdf' }),
+      providerId: 'mineru-cloud',
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({
+      success: true,
+      data: { metadata: { parser: 'unpdf' } },
+    });
+    expect(mocks.parseWithMinerUCloud).not.toHaveBeenCalled();
+    expect(mocks.parsePDF).toHaveBeenCalledTimes(1);
   });
 
   it('allows MinerU Cloud PDF extraction with an API key and no base URL', async () => {
