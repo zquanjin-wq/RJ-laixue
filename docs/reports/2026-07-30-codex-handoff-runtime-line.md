@@ -155,7 +155,10 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
    真实 quiz 提交产生 `qa:<stageId>:<sceneId>:<attemptId-uuid>` 会话
    （status: completed），2 条记录 phase=submitted{phase,answers} →
    reviewed{phase,answers,results}，裁剪字段与确定性幂等 ID 均符合 R2 设计。
-   观察期继续，再定 SLO
+   **Codex 正式签字（2026-07-31 19:12）**：R2 Preview 受控开启整体验收通过，
+   观察期开始。影子范围保持 chat + quizAttempt，playback 仍不属于 R2；
+   观察期内不扩 scope，异常时只关 Preview 开关，保留 runtime 表与观测数据；
+   生产开关及 SQL 均未动。观察期继续，再定 SLO
 6. **playback R2.1 前置设计卡**：pending/outbox、刷新及跨标签页恢复语义
    （R3 切读门禁的输入）；**然后**才立 R3 总设计稿（含 chat 完整消息语义、
    匿名写 + merge-grant 签发端用 `ac:<uuid>` 不透明 ID、灰度控制面）
