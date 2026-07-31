@@ -151,7 +151,11 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
    类型。排查方法：课堂页已加载 chunk 里搜 `shadowChatSessions` 模块是否存在，
    比扫 chunk 文件名清单可靠（懒加载 chunk 不一定在反解清单里）。另：初建变量时
    把值误填进 comment 栏的坑也已遇到一次，API GET 只能看到 comment 看不到值，
-   复查变量时优先看 comment。quizAttempt 影子写尚未做端到端实测，观察期继续
+   复查变量时优先看 comment。**quizAttempt 也已端到端实测（2026-07-31 19:07）**：
+   真实 quiz 提交产生 `qa:<stageId>:<sceneId>:<attemptId-uuid>` 会话
+   （status: completed），2 条记录 phase=submitted{phase,answers} →
+   reviewed{phase,answers,results}，裁剪字段与确定性幂等 ID 均符合 R2 设计。
+   观察期继续，再定 SLO
 6. **playback R2.1 前置设计卡**：pending/outbox、刷新及跨标签页恢复语义
    （R3 切读门禁的输入）；**然后**才立 R3 总设计稿（含 chat 完整消息语义、
    匿名写 + merge-grant 签发端用 `ac:<uuid>` 不透明 ID、灰度控制面）
