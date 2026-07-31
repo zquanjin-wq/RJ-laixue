@@ -65,7 +65,7 @@ export function GenerationProgress({ onRetry }: GenerationProgressProps) {
 
   return (
     <div
-      className="w-full max-w-lg mx-auto px-6 py-8"
+      className="w-full max-w-lg mx-auto px-6 py-8 max-h-full overflow-y-auto scrollbar-thin"
       data-testid="generation-progress"
     >
       {/* Title */}

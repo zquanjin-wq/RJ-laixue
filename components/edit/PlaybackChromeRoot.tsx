@@ -179,6 +179,25 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
       }
     }, [readOnlyShare, ttsEnabled, setTTSEnabled]);
 
+    // ─── Auto-expand sidebar during course creation ─────────────────────────
+    // The generation progress panel lives inside the sidebar (so failed pages
+    // are always visible and retry-able without scrolling the canvas). If the
+    // user opens a course that hasn't finished generating and the sidebar
+    // happens to be collapsed, force-expand it ONCE so they can see progress
+    // without having to discover the toggle. After this single auto-expand,
+    // respect the user's choice — manually collapsing again won't be undone.
+    const sidebarAutoExpandedRef = useRef(false);
+    useEffect(() => {
+      if (
+        !generationComplete &&
+        sidebarCollapsed &&
+        !sidebarAutoExpandedRef.current
+      ) {
+        sidebarAutoExpandedRef.current = true;
+        setSidebarCollapsed(false);
+      }
+    }, [generationComplete, sidebarCollapsed, setSidebarCollapsed]);
+
     // Generate participants from selected agents
     const participants = useMemo(
       () => agentsToParticipants(selectedAgentIds, t),
