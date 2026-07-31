@@ -20,6 +20,7 @@ import { useStageStore, useCanvasStore } from '@/lib/store';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { SceneType, SlideContent, InteractiveContent } from '@/lib/types/stage';
 import { PENDING_SCENE_ID } from '@/lib/store/stage';
+import { GenerationProgressSidebar } from '@/components/generation/GenerationProgressSidebar';
 
 interface SceneSidebarProps {
   readonly collapsed: boolean;
@@ -61,6 +62,7 @@ export function SceneSidebar({
   const { scenes, currentSceneId, setCurrentSceneId, generatingOutlines, generationStatus } =
     useStageStore();
   const failedOutlines = useStageStore.use.failedOutlines();
+  const generationComplete = useStageStore.use.generationComplete();
   const viewportSize = useCanvasStore.use.viewportSize();
   const viewportRatio = useCanvasStore.use.viewportRatio();
 
@@ -155,6 +157,14 @@ export function SceneSidebar({
             <PanelLeftClose className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Generation progress — only while not done or has failed outlines.
+            Sits above the scenes list so failed pages and aggregate progress
+            are always reachable without scrolling the canvas (which used to be
+            clipped by the 16:9 + overflow-hidden container). */}
+        {(!generationComplete || failedOutlines.length > 0) && (
+          <GenerationProgressSidebar onRetry={onRetryOutline} />
+        )}
 
         {/* Scenes List */}
         <div
