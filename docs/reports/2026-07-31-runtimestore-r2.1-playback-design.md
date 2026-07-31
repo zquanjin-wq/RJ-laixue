@@ -1,10 +1,16 @@
-# R2.1 playback 影子写前置设计卡（v1.1，待签字）
+# R2.1 playback 影子写前置设计卡（v1.2，A1 已签字开工）
 
 > 来源：R2 验收时 playback 被移出 R2（cbfd3b91），Codex 拍板另立本卡；
 > 本卡结论是 **R3 切读门禁的输入**。
 > v1.1：按 Codex 2026-07-31 评审结论修订——范围拆 A1/A2 双门禁、pending
 > 结构化、complete 语义修正、跨标签页「最新」定义、恢复流程落到稳定标识。
-> 状态：待签字。签字前不改任何代码、不动 Preview/生产开关。
+> v1.2：A1 签字（Codex 2026-07-31）后的两处非阻断勘误——§3.4 complete 的
+> A1/A2 表述拆开（含 A1 遗留 completed 行的升级补写约定）、§4.3 重试时机
+> 与 superseded 的冲突消解。
+> 状态：**A1 已签字开工**（仅限：Dexie 本地落盘与内存测试、5s trailing 节流
+> 及关键事件 flush、串行写入、引擎 cursor 恢复、completed 本地语义；
+> 禁止 shadow writer / runtime API / eventId / pending / 遥测白名单 / 环境开关）；
+> A2 架构已批准，A1 验收全绿后方可进入。
 
 ## 0. 本卡要回答的三件事（Codex 指定）
 
@@ -79,13 +85,17 @@ interface PlaybackStateRecord {
 
 ### 3.4 complete 语义（阻断点 ①：不能直接清行）
 
-播完**不再直接 `delete`**：
+播完**不再直接 `delete`**（v1.2 勘误：A1/A2 表述拆开）：
 
-1. complete 时先保存一份 `completed: true` 的最终快照（同样含 eventId/pending，
-   同一次 put）；
+1. complete 时先保存一份 `completed: true` 的最终快照：
+   - **A1**：只保存 `completed: true` 最终本地快照——A1 没有 eventId/pending；
+   - **A2**：complete 时才将 eventId、pending 与最终快照**同一次 put**；
 2. **A2 影子写成功后才物理删除该行**；A1 阶段（无影子写）complete 行保留，
    恢复逻辑按 §3.3-5 忽略；
-3. 恢复、导出、比对路径遇到 `completed` 行一律按"已播完"处理，不作断点。
+3. **A2 遇到 A1 遗留的 completed 行**：上线后首次挂载/落盘时**升级补写**——
+   为该最终快照生成 eventId 并发起一次影子写，成功后物理删除；
+   不得永久残留；
+4. 恢复、导出、比对路径遇到 `completed` 行一律按"已播完"处理，不作断点。
 
 ## 4. A2：影子写设计
 
@@ -129,8 +139,10 @@ shadowPending?: { eventId: string; capturedAt: string }
 - 重试**复用行内 eventId，不生成新 ID**；只有新业务落盘才换新 UUID；
 - **superseded**（Codex 已批准）：新快照覆盖未发送的旧快照时放弃旧 pending
   并计数——这是**本地丢弃指标**，不得伪装成一次服务端 shadow 请求结果上报；
-- 重试时机：① 落盘后立即一次；② 失败标 pending，下次落盘顺带重试；
-  ③ 挂载恢复发现 pending 行补一次；
+- 重试时机（v1.2 勘误，消除与 superseded 的冲突）：① 落盘后立即一次；
+  ② 失败标 pending，**挂载/恢复时重试当前 pending**；
+  ③ **新业务快照到来时：旧 pending 直接计 superseded，保存并发送新快照——
+  不为了旧快照阻塞新进度落盘**，不再称为"重试旧笔"；
 - 离线：fire-and-forget 继承 R2，失败静默 + 遥测；pending 等上线后首次
   落盘/挂载自然带出；
 - 不做：通用 outbox 表、指数退避、跨 kind 队列（R3 的事）。
