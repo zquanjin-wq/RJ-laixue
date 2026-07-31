@@ -99,21 +99,32 @@ RUNTIME_LIVE_PG_EMBED=1 "/c/Users/ruijie/AppData/Roaming/npm/pnpm.cmd" vitest ru
 
 ## 4. 迁移前置条件（Codex 终审拍板）
 
-**当前状态（2026-07-30 更新）：硬前提已满足，Preview 项目迁移已执行；生产项目未触碰。**
+**当前状态（2026-07-31 更新）：硬前提已满足，Preview 项目迁移已执行，Preview 环境变量
+值已修正并复验通过，测试账号就绪；生产项目未触碰。**
 
 1. ~~硬前提：Vercel Preview 必须连接独立的 Supabase Preview/Scratch 项目~~ **已满足**：
    Vercel 三条 Supabase 变量（URL/ANON/SERVICE_ROLE）已按环境拆分——Production → 原项目
    `aqmktsagfvkikehynpdw`（线上 bundle 实测验证），Preview → 新独立项目
    `rj-laixue-preview`（ref `ufwkylcsrppaamzqsvgx`）。
-   **经验教训：Vercel 控制台多行新增表单对同名键是 upsert 语义（曾覆盖生产条目约 24
-   分钟，已用 API 恢复）；后续环境变量操作一律走 API/CLI，不用控制台。**
+   **经验教训（两条）：**
+   1. Vercel 控制台多行新增表单对同名键是 upsert 语义（曾覆盖生产条目约 24
+      分钟，已用 API 恢复）；后续环境变量操作一律走 API/CLI，不用控制台。
+   2. NEXT_PUBLIC_* 变量在构建期内联进 bundle；改环境变量后必须 **Redeploy 时
+      取消勾选 "Use existing Build Cache"**（2026-07-31 两次踩坑：push 触发的构建与
+      普通 Redeploy 都复用了带旧值的 .next 缓存）。更严重的是 upsert 事故残留的
+      Preview 变量**值**本身是错的（指向生产项目），2026-07-31 已通过 API PATCH
+      修正三条 Preview 值（临时令牌 env-fix-tmp 用完即删），无缓存重部署后
+      Preview bundle 实测指向 `ufwkylcsrppaamzqsvgx` ✅（chunk 内嵌地址验证）。
 2. 顺序：~~建独立 Supabase Preview/Scratch~~ ✅ → ~~仅在那里执行 SQL 并验证~~
    **Preview 迁移已执行（Codex，2026-07-30）**：`supabase-runtime-store-v1.sql` 成功；
    `runtime_sessions`/`runtime_records`/`runtime_merge_grants` 已建、为空、启用 RLS；
    仅 learner 自身策略（`runtime_sessions_self`/`runtime_records_self`），无教师策略；
    14 个 runtime_* RPC：service_role 14/14 可执行，anon 0/14，authenticated 0/14。
-   **待完成**：Auth redirect URL 加 `https://*.vercel.app`（控制台 Add URL 自动化未响应，
-   由 Kimi/WebBridge 处理）→ 提供实际 Preview 部署 URL + 注册测试账号 → 验证登录态下
+   **已完成（2026-07-31，Kimi/WebBridge）**：Auth redirect URL 已加 `https://*.vercel.app`；
+   Preview 部署地址 `https://rj-laixue-git-test-documentstore-parity-rj-laixue.vercel.app`
+   （构建 CgveErY7，bundle 已验证指向 Preview 项目）；测试账号已在 Preview 项目注册
+   （email+password，Auto confirm，凭据由负责人保管转发）。
+   **待完成**：验证登录态下
    create/append/status 路由、RLS 与 service-role 调用链 → 通过后由负责人**单独授权**生产执行
    → 生产执行前确认 runtime_* 表不存在或为空
 3. 回滚语义：R2 影子写上线后如需回退，只关开关/回退代码，保留 runtime 表；**只有在「尚未写入任何业务 runtime 数据」的窗口才允许 DROP runtime_* 物理回滚**，写入后不得靠删表回滚
