@@ -97,6 +97,8 @@ function HomePage() {
   const router = useRouter();
   const showVocationalTestUi = shouldShowVocationalTestUi();
   const [form, setForm] = useState<FormState>(initialFormState);
+  const [isPreparingGeneration, setIsPreparingGeneration] = useState(false);
+  const isPreparingGenerationRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
     import('@/lib/types/settings').SettingsSection | undefined
@@ -286,6 +288,9 @@ function HomePage() {
   };
 
   const handleGenerate = async () => {
+    // A material upload happens before navigation. Guard synchronously as well
+    // as visually: React state alone leaves a small window for double-clicks.
+    if (isPreparingGenerationRef.current) return;
     // No model/provider guard here: generation is gated by `canGenerate`
     // (requires a usable provider), and under the #580 invariant a usable
     // provider always has a concrete model. State A (no usable provider)
@@ -295,6 +300,8 @@ function HomePage() {
       return;
     }
 
+    isPreparingGenerationRef.current = true;
+    setIsPreparingGeneration(true);
     setError(null);
 
     try {
@@ -361,6 +368,9 @@ function HomePage() {
     } catch (err) {
       log.error('Error preparing generation:', err);
       setError(err instanceof Error ? err.message : t('upload.generateFailed'));
+    } finally {
+      isPreparingGenerationRef.current = false;
+      setIsPreparingGeneration(false);
     }
   };
 
@@ -376,7 +386,7 @@ function HomePage() {
     return date.toLocaleDateString();
   };
 
-  const canGenerate = !!form.requirement.trim() && hasUsableProvider;
+  const canGenerate = !!form.requirement.trim() && hasUsableProvider && !isPreparingGeneration;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -632,13 +642,19 @@ function HomePage() {
                 onClick={handleGenerate}
                 disabled={!canGenerate}
                 className={cn(
-                  'shrink-0 h-8 rounded-lg flex items-center justify-center gap-1.5 transition-all px-3',
+                  'shrink-0 min-h-11 rounded-lg flex items-center justify-center gap-1.5 transition-all px-4',
                   canGenerate
                     ? 'bg-primary text-primary-foreground hover:opacity-90 shadow-sm cursor-pointer'
                     : 'bg-muted text-muted-foreground/40 cursor-not-allowed',
                 )}
               >
-                <span className="text-xs font-medium">{t('toolbar.enterClassroom')}</span>
+                <span className="text-xs font-medium">
+                  {isPreparingGeneration
+                    ? form.pdfFiles.length > 0
+                      ? '正在上传素材…'
+                      : '正在进入课堂…'
+                    : t('toolbar.enterClassroom')}
+                </span>
                 <ArrowUp className="size-3.5" />
               </button>
             </div>
