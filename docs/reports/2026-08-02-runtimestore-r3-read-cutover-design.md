@@ -255,12 +255,11 @@ interface SucceededEntry {
 }
 ```
 
-- 条目成功发送并从 outbox 删除时，在同一事务中写入 `succeeded_entries`；
-- 保留 7 天（与 dead 清理周期一致）；
+- 条目成功发送并从 outbox 删除时，**在同一 Dexie rw 事务中**写入 `succeeded_entries`；
+- **最短保留 7 天**，但不是无条件 TTL：仅当不存在任何非终态（pending/sending）outbox 条目的 `dependsOnEntryId` 指向该 `entryId` 时才允许清理（详见 dead 清理约束）；
 - 依赖检查时**不得单凭"前置条目不在 outbox"推断成功**——必须查询 `succeeded_entries` 确认真实成功凭据。
-```
 
-**索引**：`kind`, `status`, `createdAt`, `semanticKey`, `[kind+status]`, `[sessionId+sequence]`。
+**索引**：`[kind+status]`, `[sessionId+sequence]`, `semanticKey`, `dependsOnEntryId`。
 
 **字段说明**：
 
@@ -296,7 +295,7 @@ interface SucceededEntry {
 | `append_record` → 下一条 `append_record` | 同 session 的 append 形成严格序列链：每条 append 的 `dependsOnEntryId` 指向前一条 append 的 `id` |
 | 最后一条 `append_record` → `set_status` | status 的 `dependsOnEntryId` 指向最后一条 append 的 `id`；全部 append 成功（在 `succeeded_entries` 中有凭据）后才能发送 status |
 | quiz `submitted` → `reviewed` | reviewed 的 `dependsOnEntryId` 指向 submitted 的 `id` |
-| 服务端返回 404（session missing） | 重新入队 `create_session`（生成**新 UUID**），新 create 的 `id` 与旧 create 不同，旧依赖链不会串线；被 404 的那条 append 标记 dead，其 `dependsOnEntryId` 指向的仍是旧 create 的 id（旧 create 在 `succeeded_entries` 中已有凭据），级联逻辑自行处理 |
+| 服务端返回 404（session missing） | 同一 Dexie rw 事务内：(1) 重新入队 `create_session`（生成**新 UUID**，写入 `succeeded_entries` 中旧 create 的凭据标记为 `superseded_by` 新 UUID）；(2) 被 404 的 append **回退 `status=pending`** 而非 dead——**原子修改**其 `dependsOnEntryId` 指向新 create 的 UUID；(3) 后续条目链（dependsOnEntryId 指向该 append 的）不受影响——它们仍依赖该 append，该 append 只是换了一个新的前置 create。只有新 create 最终 dead 时，才递归 dead 该 append 及整条链 |
 | 前置条目 dead | **递归级联**（见下方 dead 级联规则） |
 
 **dead 级联规则（递归，不是仅直接依赖者）**：
@@ -307,7 +306,12 @@ interface SucceededEntry {
 3. 所有级联完成后才提交事务；
 4. 上报遥测 `outbox_dependency_dead { rootEntryId, cascadedCount }`。
 
-**dead 清理约束**：dead 条目 7 天后清理时，必须先确认**不存在任何 `dependsOnEntryId` 指向该条目的 pending/sending 条目**（级联 dead 已保证这一点），且对应的 `succeeded_entries` 凭据已超过 7 天保留期。
+**dead 清理约束**：dead 条目 7 天后清理时，必须先确认**不存在任何 `dependsOnEntryId` 指向该条目的 pending/sending 条目**（级联 dead 已保证这一点）。
+
+**succeeded_entries 清理约束**：凭据**不得无条件按 TTL 清理**。仅当同时满足以下条件时才允许删除：
+1. 凭据已存在 ≥7 天（最短保留期）；
+2. **不存在任何非终态**（`status='pending'` 或 `status='sending'`）的 outbox 条目的 `dependsOnEntryId` 指向该凭据的 `entryId`。
+7 天不是硬 TTL——如果依赖者因长期离线或退避超过 7 天未恢复，凭据必须保留至依赖者被 dead 级联或成功发送后方可清理。
 
 **per-session 并发约束**：同一 session 的所有条目共享同一个依赖链（严格 `sequence` 排序）。**多个标签页不能同时 claim 同一 session 的不同 sequence**——出队时每条条目单独即时 claim，claim 成功后该 session 的所有后续条目自然阻塞在 claim 步骤（lease 已被持有），直到当前条目发送完成并删除（dependency fulfilled）。这确保同一 session 在任何时刻最多只有一条条目在发送中。
 
@@ -326,7 +330,7 @@ interface SucceededEntry {
      若找不到 → 异常（前置不明消失），标记 dead + 上报遥测 `outbox_dependency_lost`；
 4. **即时 claim 一条**：对第一个符合条件（且 lease 可用）的条目，校验 `leaseOwner IS NULL OR leaseUntil < now`，通过后写入 `leaseOwner = tabId, leaseUntil = now + 30s, status = 'sending'`。**每次只 claim 一条**，其余候选条目下次出队循环再处理；
 5. 提交事务 → **发送**：发送 HTTP 请求（单条目超时 8s）；
-6. **发送成功**：新开 Dexie rw 事务，按 `entry.id + leaseOwner` 条件确认 → 删除条目；
+6. **发送成功**：新开 Dexie rw 事务，按 `entry.id + leaseOwner` 条件确认 → **同一事务内：删除 outbox 条目 + 写入 `succeeded_entries` 凭据**；
 7. **发送失败**：新开 Dexie rw 事务，释放 lease（`leaseOwner = NULL, leaseUntil = NULL`），更新 `attempts += 1`, `lastError`，按退避策略设置 `nextAttemptAt`，回退 `status='pending'`；
 8. 返回步骤 1，继续出队循环（直到无可发送条目或所有候选条目均被其他标签页 claim）。
 
@@ -383,7 +387,7 @@ interface SucceededEntry {
 
 ### 3.6 验收矩阵
 
-- [ ] O1：outbox 表创建（含 claim/lease/semanticKey/sequence/dependsOn 字段），与现有 Dexie 表共存，不影响现有读写
+- [ ] O1：outbox 表创建（含 `semanticKey`/`nextAttemptAt`/`leaseOwner`/`leaseUntil`/`sequence`/`dependsOnEntryId` 字段）+ `succeeded_entries` 辅助表创建，与现有 Dexie 表共存，不影响现有读写
 - [ ] O2：playback outbox 入队（semanticKey 压缩）→ claim 租约 → 发送 → 条件确认删除，端到端通过
 - [ ] O3：quizAttempt outbox 入队 → claim → 发送 → 删除，端到端通过；dependsOn 保证 submit → grade 顺序
 - [ ] O4：离线入队 10 条 → 恢复网络 → 全部成功发送，无丢失无重复
@@ -394,11 +398,12 @@ interface SucceededEntry {
 - [ ] O9：死信 7 天后客户端自行清理，清理前确认无 pending/sending 依赖者
 - [ ] O10：三段依赖链死信级联：A→B→C，A dead ⇒ 同一事务内递归标记 B dead ⇒ C dead，遥测 cascadedCount=2
 - [ ] O11：dead 清理后后继不得误发：死信清理后，依赖者查询 `succeeded_entries` 无凭据 + outbox 无前置 → `outbox_dependency_lost` → 标记 dead，不误发
-- [ ] O12：create 404 重建不与旧 semanticKey 串线：新 create 生成新 UUID，旧依赖链（`dependsOnEntryId` 指向旧 UUID）不会误触发新 create
+- [ ] O12：create 404 恢复：append 收到 404 → 回退 pending（非 dead）→ dependsOnEntryId **原子切换**指向新 create UUID → 后续链继续依赖该 append；新 create 成功后 append 正常重发。仅新 create dead 时才递归 dead 整条链
 - [ ] O13：刷新恢复：已过期 lease 的 sending 条目回退 pending，未过期 lease 保持 sending
 - [ ] O14：依赖凭据：append 发送前查询 `succeeded_entries` 确认前置已成功，不单凭"条目不在 outbox"推断
 - [ ] O15：playbackState.shadowPending → outbox 原子迁移，无丢失、无双发
 - [ ] O16：同一 semanticKey 去重：出队前同 key 只取 latest
+- [ ] O17：succeeded_entries 延迟清理：依赖者因离线/退避超过 7 天未恢复 → 凭据保留不删；凭据仅当不存在任何非终态 outbox 条目的 `dependsOnEntryId` 指向该 entryId 时才允许清理
 
 ---
 
