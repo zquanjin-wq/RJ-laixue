@@ -36,6 +36,13 @@ import {
   type PlaybackPersistence,
   type RestorablePlayback,
 } from '@/lib/utils/playback-persistence';
+import {
+  flushOnEngineMode,
+  flushOnTeardown,
+  flushOnSceneSwitch,
+  flushOnVisibilityChange,
+  flushOnPageHide,
+} from '@/lib/utils/playback-flush-wiring';
 import { ChatArea, type ChatAreaRef } from '@/components/chat/chat-area';
 import { agentsToParticipants, useAgentRegistry } from '@/lib/orchestration/registry/store';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
@@ -379,6 +386,10 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
             discussionAbortRef.current = null;
           }
           engineRef.current?.stop();
+          // R2.1 A1：明确的用户 stop/teardown 是独立关键事件，立即 flush
+          // （不走 onModeChange——engine.stop() 切 idle，而 complete 也会先进
+          // idle，不能把所有 idle 当 stop；Codex 2026-08-02 复审）
+          flushOnTeardown(persistenceRef.current);
           discussionTTS.cleanup();
           resetSceneState();
         },
@@ -485,7 +496,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     // Initialize playback engine when scene changes
     useEffect(() => {
       // R2.1 A1：切 scene 强制 flush 上一场景的待写进度（关键事件 flush 之一）
-      void persistenceRef.current?.flush();
+      flushOnSceneSwitch(persistenceRef.current);
       // Bump epoch so any stale SSE callbacks from the previous scene are discarded
       sceneEpochRef.current++;
 
@@ -550,9 +561,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         onModeChange: (mode) => {
           setEngineMode(mode);
           // R2.1 A1：pause 是关键事件之一，强制 flush 待写进度
-          if (mode === 'paused') {
-            void persistenceRef.current?.flush();
-          }
+          flushOnEngineMode(mode, persistenceRef.current);
         },
         onProgress: (snapshot) => {
           // R2.1 A1：trailing 节流落盘（默认 5s 窗口，只写最新快照）
@@ -795,12 +804,12 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     // 只用 visibilitychange→hidden 与 pagehide 两个设计卡批准的关键事件）
     useEffect(() => {
       const onVisibility = () => {
-        if (document.visibilityState === 'hidden') {
-          void persistenceRef.current?.flush();
-        }
+        // R2.1 A1：visibilitychange→hidden 强制 flush（visible 不触发）
+        flushOnVisibilityChange(document.visibilityState, persistenceRef.current);
       };
       const onPageHide = () => {
-        void persistenceRef.current?.flush();
+        // R2.1 A1：pagehide 强制 flush
+        flushOnPageHide(persistenceRef.current);
       };
       document.addEventListener('visibilitychange', onVisibility);
       window.addEventListener('pagehide', onPageHide);
