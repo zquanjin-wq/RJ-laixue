@@ -123,6 +123,13 @@ interface PlaybackStateRecord {
 只挂在「落盘」动作之后——读 Dexie 刚写入的行发起影子写，天然继承节流，
 且满足"影子数据只从持久化读回，禁止调用方内存数据"（沿用 R2 quiz 门禁）。
 
+**控制面（v1.3，Codex 2026-08-02 A1 签字时确立）**：playback 用**独立的默认
+关闭子开关** `NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK === '1'`；总开关
+`NEXT_PUBLIC_RUNTIME_SHADOW` 与子开关**同时为真才发送**。原因：Preview 总开关
+已为 '1'，若复用总开关，A2 代码推送触发自动部署会未经验收直接生效。
+A2 开发/部署期间子开关保持关闭，chat/quiz 观察不受影响；A2 验收通过后
+**单独申请** Preview 开启子开关；生产继续禁止。
+
 ### 4.3 pending（阻断点 ②：结构化 + 条件清除）
 
 复用 `playbackState` 行，**不建新表**，但不是松散布尔：

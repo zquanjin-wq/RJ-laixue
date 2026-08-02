@@ -1,4 +1,10 @@
-# R2.1 A1 实施报告：playback 本地持久化接线（待验收）
+# R2.1 A1 实施报告：playback 本地持久化接线（A1 SIGNED）
+
+> **签字记录（Codex 2026-08-02 独立验证）**：6 个测试文件 44/44 通过；
+> tsc 仅 4 个既有 pg/pg-mem 环境错误；idle 不触发 flush（不误伤 complete）；
+> 未发现 A2 内容提前进入；工作树干净。**A1 正式签字**。
+> 复审修复卡：f3223568（stop/teardown flush + 五类关键事件接线真实断言）。
+> 另确立 A2 控制面约束（见 §5）。
 
 > 设计卡：`2026-07-31-runtimestore-r2.1-playback-design.md`（v1.2，A1 已签字）
 > 签字边界（Codex 2026-07-31）：仅限 Dexie 本地落盘与内存测试、5s trailing
@@ -64,3 +70,13 @@
   唯一定位主键，与设计卡 §3.3 一致；
 - `resolveRestorablePlayback` 对旧行（无 sceneId）一律丢弃，不做 sceneIndex
   猜测性恢复（设计卡：sceneIndex 只作辅助）。
+
+## 5. A2 控制面约束（Codex 2026-08-02 确立，A2 实施必须遵守）
+
+- **playback 必须增加独立的默认关闭子开关** `NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK === '1'`；
+  **总开关 `NEXT_PUBLIC_RUNTIME_SHADOW` 与子开关必须同时为真才发送**——
+  原因：Preview 总开关已为 '1'，若 A2 只复用总开关，playback 代码一旦推送
+  触发自动部署，会未经 A2 验收直接在 Preview 生效；
+- A2 开发和部署期间子开关保持未设置/关闭，chat、quiz 观察不受影响；
+- A2 本地门禁及代码验收通过后，再**单独申请** Preview 开启 playback 子开关；
+- 生产开关、生产 SQL、生产部署继续禁止。
