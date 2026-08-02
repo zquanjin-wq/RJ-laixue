@@ -51,15 +51,27 @@ export type RuntimeShadowOutcome =
   | 'timeout'
   | 'http_4xx'
   | 'http_5xx'
-  | 'network';
+  | 'network'
+  // R2.1 A2：本地丢弃指标——旧 pending 被新快照覆盖时上报，绝不伪装成一次
+  // 服务端请求结果（设计卡 §4.3/§5：分母只含真实请求尝试）
+  | 'superseded';
 
 export type RuntimeShadowOp = 'create_session' | 'append_record' | 'set_status';
-// Codex 验收卡（2026-07-30）：playback 移出 R2，另立 R2.1/R3 前置卡
-export type RuntimeShadowKind = 'chat' | 'quizAttempt';
+// R2.1 A2（2026-08-02 授权）：playback 回归影子范围，独立子开关门禁
+export type RuntimeShadowKind = 'chat' | 'quizAttempt' | 'playback';
 
-/** 开关：默认关闭，显式 '1' 才启用；SSR/测试环境无 window 一律关闭。 */
+/** 总开关：默认关闭，显式 '1' 才启用；SSR/测试环境无 window 一律关闭。 */
 export function isRuntimeShadowEnabled(): boolean {
   return typeof window !== 'undefined' && process.env.NEXT_PUBLIC_RUNTIME_SHADOW === '1';
+}
+
+/**
+ * playback 子开关（Codex A2 授权边界，2026-08-02）：Preview 总开关已开，
+ * 若只复用总开关，A2 代码推送后 playback 影子会未经验收直接生效。
+ * 必须总开关 + 子开关同时为真才发送；A2 开发/部署期间子开关保持未设置。
+ */
+export function isPlaybackShadowEnabled(): boolean {
+  return isRuntimeShadowEnabled() && process.env.NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK === '1';
 }
 
 // ─── 遥测 ────────────────────────────────────────────────────────────────────
@@ -504,4 +516,103 @@ export async function shadowQuizRetry(
   } catch {
     // fire-and-forget
   }
+}
+
+// ─── playback（R2.1 A2）───────────────────────────────────────────────────────
+
+/**
+ * playback 影子写（设计卡 v1.3 §4.2-4.5）。
+ *
+ * 幂等锚点：只从 Dexie playbackState 行读回 eventId/pending/快照——
+ * 禁止使用调用方内存数据（与 quizAttempt envelope 同款纪律）。
+ * 每次业务落盘生成新 UUID 并与快照同一次 put（persistence buildRow），
+ * 重试/刷新/跨标签页恢复都取回同一个 id，直到被新快照覆盖。
+ *
+ * A1 遗留行升级（§3.4-3）：A1 期间的 completed/普通行没有 eventId——
+ * 首次影子时生成 eventId+pending 补写回库再发送。
+ *
+ * 会话模型：pb:<stageId> 单会话；record id = pb:<stageId>:<eventId>；
+ * 「最新」由 capturedAt 判定（payload 携带），绝不按 append 到达顺序。
+ */
+export async function shadowPlaybackProgress(stageId: string): Promise<void> {
+  if (!isPlaybackShadowEnabled() || !stageId) return;
+  try {
+    const { db } = await import('@/lib/utils/database');
+    const { clearPlaybackPending } = await import('@/lib/utils/playback-persistence');
+
+    const fetched = await db.playbackState.get(stageId);
+    if (!fetched) return;
+
+    // capturedAt 类型可选（legacy 行可能缺失）：回退 updatedAt，保证确定性
+    const baseCapturedAt = fetched.capturedAt ?? new Date(fetched.updatedAt).toISOString();
+
+    // A1 遗留行升级：无 eventId 的行补写 eventId+pending（同一次 put）
+    let row = fetched;
+    if (!row.runtimeShadowEventId || !row.shadowPending) {
+      const newEventId = crypto.randomUUID();
+      const pending = { eventId: newEventId, capturedAt: baseCapturedAt };
+      await db.playbackState.put({
+        ...row,
+        runtimeShadowEventId: newEventId,
+        shadowPending: pending,
+      });
+      row = { ...row, runtimeShadowEventId: newEventId, shadowPending: pending };
+    }
+
+    const eventId = row.runtimeShadowEventId as string;
+    const capturedAt = row.shadowPending?.capturedAt ?? baseCapturedAt;
+    const sessionId = `pb:${stageId}`;
+    const created = await ensureSession(
+      sessionId,
+      'playback',
+      stageId,
+      row.completed ? 'completed' : 'active',
+      capturedAt,
+      capturedAt,
+    );
+    if (!created) return;
+
+    const r = await appendRecord(
+      sessionId,
+      {
+        id: `pb:${stageId}:${eventId}`,
+        createdAt: capturedAt,
+        sceneId: row.sceneId,
+        payload: {
+          v: 1,
+          sceneId: row.sceneId,
+          sceneIndex: row.sceneIndex,
+          actionIndex: row.actionIndex,
+          consumedDiscussions: row.consumedDiscussions ?? [],
+          capturedAt,
+        },
+      },
+      'playback',
+    );
+    if (!r.ok) return;
+
+    if (row.completed) {
+      await setSessionStatusShadow(sessionId, 'completed', capturedAt, 'playback');
+    }
+    // 条件清除：旧请求晚成功不得误删已被新快照覆盖的新 pending；
+    // completed 行影子成功后物理删除（§3.4）
+    await clearPlaybackPending(stageId, eventId);
+  } catch {
+    // fire-and-forget：任何意外都不得影响 playback 本地保存
+  }
+}
+
+/**
+ * superseded 本地丢弃指标（设计卡 §4.3）：新快照覆盖尚未发送的旧 pending 时
+ * 由 persistence onSuperseded 回调上报。不是服务端请求结果，op/kind 仅为
+ * 归属标记；durationBucket 恒 lt_1s。
+ */
+export function reportPlaybackSuperseded(): void {
+  if (!isPlaybackShadowEnabled()) return;
+  reportRuntimeShadowDiagnostic({
+    outcome: 'superseded',
+    op: 'append_record',
+    kind: 'playback',
+    durationMs: 0,
+  });
 }

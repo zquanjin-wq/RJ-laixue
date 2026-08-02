@@ -38,6 +38,14 @@ export interface PlaybackPersistenceOptions {
   now?: () => number;
   /** 写入函数，默认 db.playbackState.put；测试可注入慢写/失败写 */
   write?: (row: PlaybackStateRecord) => Promise<unknown>;
+  /** 读取函数（superseded 检测用），默认 db.playbackState.get；测试可注入 */
+  read?: () => Promise<PlaybackStateRecord | undefined>;
+  /** A2：每次成功落盘后回调（组件在此挂影子写；开关关闭时回调内部立即返回） */
+  onPersisted?: (row: PlaybackStateRecord) => void;
+  /** A2：检测到上一笔 persisted pending 被新快照覆盖（superseded）时回调 */
+  onSuperseded?: (pending: { eventId: string; capturedAt: string }) => void;
+  /** A2：UUID 生成器，测试可注入 */
+  uuid?: () => string;
 }
 
 export interface PlaybackPersistence {
@@ -61,6 +69,17 @@ export function createPlaybackPersistence(
     (async (row: PlaybackStateRecord) => {
       await db.playbackState.put(row);
     });
+  const read =
+    opts.read ??
+    (async () => {
+      return db.playbackState.get(opts.stageId);
+    });
+  const uuid =
+    opts.uuid ??
+    (() =>
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `uuid-${now()}-${Math.random().toString(36).slice(2)}`);
 
   let pendingRow: PlaybackStateRecord | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -70,23 +89,47 @@ export function createPlaybackPersistence(
   const buildRow = (
     snapshot: PlaybackPersistSnapshot,
     completed?: boolean,
-  ): PlaybackStateRecord => ({
-    stageId: opts.stageId,
-    sceneId: snapshot.sceneId,
-    sceneIndex: snapshot.sceneIndex,
-    actionIndex: snapshot.actionIndex,
-    consumedDiscussions: [...snapshot.consumedDiscussions],
-    capturedAt: new Date(now()).toISOString(),
-    ...(completed ? { completed: true } : {}),
-    updatedAt: now(),
-  });
+  ): PlaybackStateRecord => {
+    // A2：每次业务落盘生成新 UUID，eventId 与 shadowPending 随快照同一次 put
+    // （R2.1 §4.3 不变量）；重试只能复用已持久化的 id，下次保存必须换新
+    const capturedAt = new Date(now()).toISOString();
+    const eventId = uuid();
+    return {
+      stageId: opts.stageId,
+      sceneId: snapshot.sceneId,
+      sceneIndex: snapshot.sceneIndex,
+      actionIndex: snapshot.actionIndex,
+      consumedDiscussions: [...snapshot.consumedDiscussions],
+      capturedAt,
+      ...(completed ? { completed: true } : {}),
+      runtimeShadowEventId: eventId,
+      shadowPending: { eventId, capturedAt },
+      updatedAt: now(),
+    };
+  };
 
   const enqueue = (row: PlaybackStateRecord): void => {
-    chain = chain.then(() => write(row)).then(
-      () => undefined,
-      // 落盘失败不阻断后续写入链（本地持久化失败对业务静默）
-      () => undefined,
-    );
+    chain = chain
+      .then(async () => {
+        // A2 superseded 检测（仅在注册了 onSuperseded 消费者时启用——A1 用例
+        // 无消费者，行为与签字版完全一致零偏移）：新快照落盘前，若库中当前行
+        // 仍带 shadowPending（上一笔已持久化但影子未送出），旧 pending 被本
+        // 快照覆盖放弃——本地丢弃指标（local_drop），不得伪装成服务端请求
+        // 结果（R2.1 §4.3）
+        if (opts.onSuperseded) {
+          const prev = await read().catch(() => undefined);
+          if (prev?.shadowPending) {
+            opts.onSuperseded(prev.shadowPending);
+          }
+        }
+        await write(row);
+        opts.onPersisted?.(row);
+      })
+      .then(
+        () => undefined,
+        // 落盘失败不阻断后续写入链（本地持久化失败对业务静默）
+        () => undefined,
+      );
   };
 
   const cancelTimer = (): void => {
@@ -193,4 +236,54 @@ export async function resolveRestorablePlayback(
     actionIndex,
     consumedDiscussions,
   };
+}
+
+// ── R2.1 A2：影子 pending 管理 ─────────────────────────────────────────────
+
+/**
+ * 条件清除影子 pending（设计卡 §4.3）：只有数据库当前行的
+ * runtimeShadowEventId 与已发送成功的 eventId 相同才允许清除——
+ * 防止旧请求晚成功误删已被新快照覆盖的新 pending。
+ * completed 行在影子成功后物理删除（设计卡 §3.4：complete 先行快照+pending，
+ * 影子成功才删行，失败留 pending 供挂载重试）。
+ */
+export async function clearPlaybackPending(
+  stageId: string,
+  eventId: string,
+): Promise<'cleared' | 'deleted-complete' | 'skipped'> {
+  const row = await db.playbackState.get(stageId);
+  if (!row || row.runtimeShadowEventId !== eventId) return 'skipped';
+  if (row.completed) {
+    await db.playbackState.delete(stageId);
+    return 'deleted-complete';
+  }
+  await db.playbackState.put({ ...row, shadowPending: undefined });
+  return 'cleared';
+}
+
+/** 挂载补写检查（设计卡 §4.3）：返回当前行是否有待发送的影子 pending */
+export async function getPlaybackPendingInfo(
+  stageId: string,
+): Promise<{ hasPending: boolean; eventId?: string; capturedAt?: string }> {
+  const row = await db.playbackState.get(stageId);
+  if (!row?.shadowPending) return { hasPending: false };
+  return {
+    hasPending: true,
+    eventId: row.shadowPending.eventId,
+    capturedAt: row.shadowPending.capturedAt,
+  };
+}
+
+/**
+ * 快照新旧比较（设计卡 §4.5）：按 capturedAt 判断新旧，绝不按服务端
+ * append 到达顺序；capturedAt 相同时按 eventId 字典序取大（稳定 tie-break）。
+ * 返回 >0 表示 a 较新，<0 表示 b 较新，0 表示完全同一笔。
+ */
+export function comparePlaybackSnapshotOrder(
+  a: { capturedAt: string; eventId: string },
+  b: { capturedAt: string; eventId: string },
+): number {
+  if (a.capturedAt !== b.capturedAt) return a.capturedAt < b.capturedAt ? -1 : 1;
+  if (a.eventId === b.eventId) return 0;
+  return a.eventId < b.eventId ? -1 : 1;
 }

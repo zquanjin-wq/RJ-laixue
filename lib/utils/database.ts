@@ -160,6 +160,11 @@ export interface PlaybackStateRecord {
   capturedAt?: string;
   /** 播完标记：不参与本地续播；A2 影子写成功后才物理删除（R2.1 §3.4） */
   completed?: boolean;
+  /** A2：影子写幂等锚点——每次业务落盘生成的新 UUID，随快照同一次 put 持久化 */
+  runtimeShadowEventId?: string;
+  /** A2：结构化 pending（非松散布尔）。发送成功后只能条件清除：
+   *  仅当数据库当前 eventId === 已发送 eventId 时清除（R2.1 §4.3） */
+  shadowPending?: { eventId: string; capturedAt: string };
 }
 
 /**

@@ -36,10 +36,12 @@ const SHADOW_OUTCOMES = new Set([
   'http_4xx',
   'http_5xx',
   'network',
+  // R2.1 A2：本地丢弃指标（旧 pending 被新快照覆盖），非服务端请求结果
+  'superseded',
 ]);
 const SHADOW_OPS = new Set(['create_session', 'append_record', 'set_status']);
-// playback 已按 Codex 验收卡（2026-07-30）移出 R2，另立 R2.1/R3 前置卡
-const SHADOW_KINDS = new Set(['chat', 'quizAttempt']);
+// R2.1 A2（2026-08-02 授权）：playback 回归影子范围（独立子开关门禁）
+const SHADOW_KINDS = new Set(['chat', 'quizAttempt', 'playback']);
 const PARITY_ERROR_NAMES = new Set([
   'AbortError',
   'DataError',

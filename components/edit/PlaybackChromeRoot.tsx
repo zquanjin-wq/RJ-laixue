@@ -32,10 +32,16 @@ import { cn } from '@/lib/utils';
 // 设计卡 docs/reports/2026-07-31-runtimestore-r2.1-playback-design.md（v1.2）
 import {
   createPlaybackPersistence,
+  getPlaybackPendingInfo,
   resolveRestorablePlayback,
   type PlaybackPersistence,
   type RestorablePlayback,
 } from '@/lib/utils/playback-persistence';
+// R2.1 A2：影子写接线（双开关自门禁——子开关关闭时调用为零副作用）
+import {
+  reportPlaybackSuperseded,
+  shadowPlaybackProgress,
+} from '@/lib/runtime/shadow-writer';
 import {
   flushOnEngineMode,
   flushOnTeardown,
@@ -791,7 +797,13 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     const stageId = stage?.id;
     useEffect(() => {
       if (!stageId) return;
-      const p = createPlaybackPersistence({ stageId });
+      const p = createPlaybackPersistence({
+        stageId,
+        // R2.1 A2：落盘成功后影子写（shadow 内部双开关自门禁，关时零副作用）；
+        // 旧 pending 被新快照覆盖时报 superseded 本地丢弃指标。
+        onPersisted: () => void shadowPlaybackProgress(stageId),
+        onSuperseded: () => reportPlaybackSuperseded(),
+      });
       persistenceRef.current = p;
       return () => {
         persistenceRef.current = null;
@@ -826,6 +838,12 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
       if (restoreAttemptedRef.current || !stageId || scenes.length === 0) return;
       restoreAttemptedRef.current = true;
       void (async () => {
+        // R2.1 A2 挂载补写（设计卡 §4.3）：上次会话遗留的 pending（影子失败/
+        // 刷新中断）在挂载时重试当前 pending——只重试库中当前这笔，不重放
+        // 已被覆盖的旧快照（旧笔已计 superseded）。
+        const pending = await getPlaybackPendingInfo(stageId);
+        if (pending.hasPending) void shadowPlaybackProgress(stageId);
+
         const r = await resolveRestorablePlayback(stageId, scenes);
         if (!r) return;
         const curId = useStageStore.getState().currentSceneId;
