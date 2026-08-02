@@ -246,19 +246,25 @@ export async function resolveRestorablePlayback(
  * 防止旧请求晚成功误删已被新快照覆盖的新 pending。
  * completed 行在影子成功后物理删除（设计卡 §3.4：complete 先行快照+pending，
  * 影子成功才删行，失败留 pending 供挂载重试）。
+ *
+ * Codex A2 复审卡（2026-08-02）：读取、比较、清除/删除必须在同一 rw 事务内
+ * 完成——get→比较→写 之间存在跨标签页竞态窗口，另一标签页可能在此期间
+ * 保存新快照，非原子的旧清除会误删/覆盖新行。
  */
 export async function clearPlaybackPending(
   stageId: string,
   eventId: string,
 ): Promise<'cleared' | 'deleted-complete' | 'skipped'> {
-  const row = await db.playbackState.get(stageId);
-  if (!row || row.runtimeShadowEventId !== eventId) return 'skipped';
-  if (row.completed) {
-    await db.playbackState.delete(stageId);
-    return 'deleted-complete';
-  }
-  await db.playbackState.put({ ...row, shadowPending: undefined });
-  return 'cleared';
+  return db.transaction('rw', db.playbackState, async () => {
+    const row = await db.playbackState.get(stageId);
+    if (!row || row.runtimeShadowEventId !== eventId) return 'skipped';
+    if (row.completed) {
+      await db.playbackState.delete(stageId);
+      return 'deleted-complete';
+    }
+    await db.playbackState.put({ ...row, shadowPending: undefined });
+    return 'cleared';
+  });
 }
 
 /** 挂载补写检查（设计卡 §4.3）：返回当前行是否有待发送的影子 pending */

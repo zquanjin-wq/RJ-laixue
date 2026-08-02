@@ -42,6 +42,8 @@ const SHADOW_OUTCOMES = new Set([
 const SHADOW_OPS = new Set(['create_session', 'append_record', 'set_status']);
 // R2.1 A2（2026-08-02 授权）：playback 回归影子范围（独立子开关门禁）
 const SHADOW_KINDS = new Set(['chat', 'quizAttempt', 'playback']);
+// R2.1 A2 复审卡：superseded 本地丢弃指标的来源标记（设计卡 §5 source: local_drop）
+const SHADOW_SOURCES = new Set(['local_drop']);
 const PARITY_ERROR_NAMES = new Set([
   'AbortError',
   'DataError',
@@ -126,6 +128,20 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+      // R2.1 A2 复审卡：source 白名单校验——superseded 必须显式携带
+      // source: local_drop（本地丢弃指标）；普通请求结果不得伪造 source
+      if (body.source !== undefined && !SHADOW_SOURCES.has(body.source)) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid runtime shadow source' },
+          { status: 400 },
+        );
+      }
+      if (body.outcome === 'superseded' && body.source !== 'local_drop') {
+        return NextResponse.json(
+          { success: false, error: 'Superseded outcome requires source local_drop' },
+          { status: 400 },
+        );
+      }
       log.info('runtime_shadow', {
         userId: guard.user.id,
         outcome: body.outcome,
@@ -133,6 +149,7 @@ export async function POST(request: NextRequest) {
         shadowVersion: body.shadowVersion,
         op: body.op,
         kind: body.kind,
+        ...(body.source ? { source: body.source } : {}),
       });
       return NextResponse.json({ success: true });
     }

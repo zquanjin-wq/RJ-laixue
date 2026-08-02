@@ -81,6 +81,8 @@ function reportRuntimeShadowDiagnostic(payload: {
   op: RuntimeShadowOp;
   kind: RuntimeShadowKind;
   durationMs: number;
+  /** 本地丢弃指标来源标记（设计卡 §5：source: local_drop），普通请求结果不带 */
+  source?: 'local_drop';
 }): void {
   if (typeof window === 'undefined') return;
   void fetch('/api/client-diagnostics', {
@@ -93,6 +95,7 @@ function reportRuntimeShadowDiagnostic(payload: {
       shadowVersion: RUNTIME_SHADOW_VERSION,
       op: payload.op,
       kind: payload.kind,
+      ...(payload.source ? { source: payload.source } : {}),
     }),
     keepalive: true,
   }).catch(() => {
@@ -546,17 +549,30 @@ export async function shadowPlaybackProgress(stageId: string): Promise<void> {
     // capturedAt 类型可选（legacy 行可能缺失）：回退 updatedAt，保证确定性
     const baseCapturedAt = fetched.capturedAt ?? new Date(fetched.updatedAt).toISOString();
 
-    // A1 遗留行升级：无 eventId 的行补写 eventId+pending（同一次 put）
+    // A1 遗留行升级：无 eventId 的行补写 eventId+pending。
+    // Codex A2 复审卡（2026-08-02）：升级必须是事务内 CAS——get legacy →
+    // 生成 UUID → put 旧副本 之间存在跨标签页竞态，另一标签页的新快照会被
+    // 旧副本整体覆盖回旧状态。事务内重新读取：仅当当前行仍无 eventId/pending
+    // 时才升级；已被新快照替换则直接使用新行，禁止写回旧副本。
     let row = fetched;
     if (!row.runtimeShadowEventId || !row.shadowPending) {
       const newEventId = crypto.randomUUID();
       const pending = { eventId: newEventId, capturedAt: baseCapturedAt };
-      await db.playbackState.put({
-        ...row,
-        runtimeShadowEventId: newEventId,
-        shadowPending: pending,
+      const resolved = await db.transaction('rw', db.playbackState, async () => {
+        const cur = await db.playbackState.get(stageId);
+        if (!cur) return null; // 行已被删除：放弃本次影子
+        if (cur.runtimeShadowEventId && cur.shadowPending) return cur; // 新快照已替换
+        const upgraded = {
+          ...cur,
+          runtimeShadowEventId: cur.runtimeShadowEventId ?? newEventId,
+          shadowPending: cur.shadowPending ?? pending,
+          capturedAt: cur.capturedAt ?? baseCapturedAt,
+        };
+        await db.playbackState.put(upgraded);
+        return upgraded;
       });
-      row = { ...row, runtimeShadowEventId: newEventId, shadowPending: pending };
+      if (!resolved) return;
+      row = resolved;
     }
 
     const eventId = row.runtimeShadowEventId as string;
@@ -592,7 +608,11 @@ export async function shadowPlaybackProgress(stageId: string): Promise<void> {
     if (!r.ok) return;
 
     if (row.completed) {
-      await setSessionStatusShadow(sessionId, 'completed', capturedAt, 'playback');
+      // Codex A2 复审卡（2026-08-02）：PATCH 失败必须保留 completed pending——
+      // 否则 append 成功但状态流转失败时行被删除，会话状态永远无法补偿。
+      // 仅 PATCH 成功/幂等成功后才允许条件删除。
+      const s = await setSessionStatusShadow(sessionId, 'completed', capturedAt, 'playback');
+      if (!s.ok) return;
     }
     // 条件清除：旧请求晚成功不得误删已被新快照覆盖的新 pending；
     // completed 行影子成功后物理删除（§3.4）
@@ -614,5 +634,8 @@ export function reportPlaybackSuperseded(): void {
     op: 'append_record',
     kind: 'playback',
     durationMs: 0,
+    // 设计卡 §5 + Codex A2 复审卡：本地丢弃指标必须显式标记 source，
+    // 避免后续统计把它当普通请求结果
+    source: 'local_drop',
   });
 }

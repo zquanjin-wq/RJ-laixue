@@ -40,10 +40,11 @@ interface FetchCall {
 }
 
 /** fetch 桩：runtime 端点行为可按用例配置；client-diagnostics 只记录。 */
-function installFetchStub(opts: { recordsStatus?: number } = {}) {
+function installFetchStub(opts: { recordsStatus?: number; statusStatus?: number } = {}) {
   const apiCalls: FetchCall[] = [];
   const diagnostics: FetchCall[] = [];
   let recordsStatus = opts.recordsStatus ?? 201;
+  let statusStatus = opts.statusStatus ?? 200;
 
   const fetchMock = vi.fn(async (input: unknown, init?: { method?: string; body?: string }) => {
     const url = String(input);
@@ -61,7 +62,7 @@ function installFetchStub(opts: { recordsStatus?: number } = {}) {
     }
     if (url.includes('/api/runtime/v1/sessions') && url.includes('/status')) {
       apiCalls.push(call);
-      return new Response('{}', { status: 200 });
+      return new Response('{}', { status: statusStatus });
     }
     if (url.endsWith('/api/runtime/v1/sessions')) {
       apiCalls.push(call);
@@ -76,6 +77,9 @@ function installFetchStub(opts: { recordsStatus?: number } = {}) {
     diagnostics,
     setRecordsStatus(s: number) {
       recordsStatus = s;
+    },
+    setStatusStatus(s: number) {
+      statusStatus = s;
     },
   };
 }
@@ -207,6 +211,9 @@ describe('门禁 8：superseded 本地丢弃指标', () => {
     );
     expect(superseded).toHaveLength(1);
     expect((superseded[0].body as { kind?: string }).kind).toBe('playback');
+    // Codex A2 复审卡（2026-08-02）：设计卡 §5 要求显式 source: local_drop，
+    // 避免后续统计把本地丢弃指标当普通请求结果
+    expect((superseded[0].body as { source?: string }).source).toBe('local_drop');
 
     // 本地丢弃指标绝不出现在 runtime API 调用里（不是服务端请求结果）
     expect(stub.apiCalls).toHaveLength(0);
@@ -313,4 +320,99 @@ describe('门禁 11：子开关门禁（A2 开发/部署期保持未设置）', 
     // completed 行影子成功 → 物理删除
     expect(await db.playbackState.get(STAGE)).toBeUndefined();
   }, 15000);
+});
+
+// ── Codex A2 复审卡（2026-08-02）：三个核心失败窗口 ──────────────────────────
+
+describe('复审卡 1：条件清除事务原子性（跨标签页竞态）', () => {
+  it('旧清除事务与新快照写入竞争 → 最终新 pending 必须存在', async () => {
+    const { db, createPlaybackPersistence, clearPlaybackPending } = await freshModules();
+    installFetchStub();
+    const ids = ['evt-old', 'evt-new'];
+    let ix = 0;
+    const p = createPlaybackPersistence({
+      stageId: STAGE,
+      throttleMs: 20,
+      uuid: () => ids[ix++ % ids.length],
+    });
+
+    p.schedule(snap(1));
+    await p.flush();
+    expect((await db.playbackState.get(STAGE))?.shadowPending?.eventId).toBe('evt-old');
+
+    // 受控竞态：旧 eventId 的清除与新快照落盘并发——两种交错顺序下
+    // 最终行都必须是新快照且带 evt-new pending
+    const clearPromise = clearPlaybackPending(STAGE, 'evt-old');
+    p.schedule(snap(2));
+    const flushPromise = p.flush();
+    const [clearResult] = await Promise.all([clearPromise, flushPromise]);
+
+    const row = await db.playbackState.get(STAGE);
+    expect(row?.actionIndex).toBe(2);
+    expect(row?.runtimeShadowEventId).toBe('evt-new');
+    expect(row?.shadowPending?.eventId).toBe('evt-new');
+    // 清除若发生在新快照之后必须 skipped；若在新快照之前 cleared 也可接受
+    // （新快照随后覆盖写入自己的 pending）——不变量是最终状态，非中间结果
+    expect(['cleared', 'skipped']).toContain(clearResult);
+  }, 15000);
+});
+
+describe('复审卡 2：legacy 升级与新快照交错（事务 CAS）', () => {
+  it('影子升级 legacy 行与新快照落盘并发 → 新快照不得被旧副本覆盖', async () => {
+    const { db, createPlaybackPersistence, shadow } = await freshModules();
+    installFetchStub();
+    // A1 legacy 行：无 eventId/pending
+    await db.playbackState.put({
+      stageId: STAGE,
+      sceneId: 'scene-1',
+      sceneIndex: 0,
+      actionIndex: 4,
+      consumedDiscussions: [],
+      capturedAt: '2026-08-02T09:00:00.000Z',
+      updatedAt: Date.now(),
+    });
+
+    const p = createPlaybackPersistence({
+      stageId: STAGE,
+      throttleMs: 10,
+      uuid: () => 'evt-new',
+    });
+
+    // 受控竞态：影子读取 legacy 行准备升级的同时，另一标签页写入新快照
+    const shadowPromise = shadow.shadowPlaybackProgress(STAGE);
+    p.schedule(snap(7));
+    await p.flush();
+    await shadowPromise;
+
+    // 无论交错顺序如何：最终行是新快照，绝不回退到 legacy 的 actionIndex=4
+    const row = await db.playbackState.get(STAGE);
+    expect(row?.actionIndex).toBe(7);
+    expect(row?.runtimeShadowEventId).toBe('evt-new');
+  }, 15000);
+});
+
+describe('复审卡 3：completed PATCH 失败保留 pending', () => {
+  it('append 成功 + status PATCH 失败 → completed 行保留；PATCH 恢复后可补偿删除', async () => {
+    const { db, createPlaybackPersistence, shadow } = await freshModules();
+    const stub = installFetchStub({ statusStatus: 500 });
+    const p = createPlaybackPersistence({ stageId: STAGE, throttleMs: 20, uuid: () => 'evt-c' });
+
+    await p.complete(snap(9));
+    await shadow.shadowPlaybackProgress(STAGE);
+
+    // append 已发生，但 PATCH 失败 → 行必须保留 completed pending（可补偿）
+    const retained = await db.playbackState.get(STAGE);
+    expect(retained?.completed).toBe(true);
+    expect(retained?.shadowPending?.eventId).toBe('evt-c');
+    expect(stub.apiCalls.some((c) => c.url.includes('/records'))).toBe(true);
+
+    // PATCH 恢复：挂载补写重试 → 状态流转成功 → 行物理删除
+    stub.setStatusStatus(200);
+    await shadow.shadowPlaybackProgress(STAGE);
+    expect(await db.playbackState.get(STAGE)).toBeUndefined();
+    const statusCalls = stub.apiCalls.filter((c) => c.url.includes('/status'));
+    expect(statusCalls.some((c) => (c.body as { status?: string }).status === 'completed')).toBe(
+      true,
+    );
+  }, 30000);
 });
