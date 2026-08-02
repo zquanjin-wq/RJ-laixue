@@ -1,9 +1,12 @@
-# R3 RuntimeStore 读源切换总设计稿 v1.1
+# R3 RuntimeStore 读源切换总设计稿 v1.1 SIGNED
 
-- 日期：2026-08-02（v1）；2026-08-02（v1.1 修订）；2026-08-02（v1.1 第二轮修订）
-- 起草人：架构师（rj-laixue-architect）→ 第二轮修订：团长（Kimi）
-- 状态：v1.1（第二轮修订版，关闭 6 项实施级阻断点；待 Codex/负责人复审签字）
-- v1.1 变更摘要：8 项开放决策已拍板（D1-D8）；8 个阻断点已关闭；3 处额外修正；6 项实施级阻断点已关闭
+- 日期：2026-08-02（v1 → v1.1 三轮修订 → SIGNED）
+- 起草人：架构师（rj-laixue-architect）；修订：团长（Kimi）
+- 签字人：Codex/负责人
+- 状态：**SIGNED**（通过评审）
+- 签字日期：2026-08-02
+- 授权范围：playback/quizAttempt 推进至 dual-read；chat 停留在 shadow；server-preferred/server-primary 需独立子设计卡
+- v1.1 变更摘要：8 项开放决策已拍板（D1-D8）；8 个设计阻断点 + 6 个实施级阻断点 + 2 个 P0 状态机缺口已关闭；3 处额外修正
 - 前置：R1.1 SIGNED、R2 SIGNED、R2.1 A2 SIGNED、chat idempotency_conflict 调查报告（含勘误 B）
 - 施工目录：`D:\WorkBuddy 地界\RJ-laixue-storage-b2`
 - 分支：`test/r3-line`
@@ -295,7 +298,7 @@ interface SucceededEntry {
 | `append_record` → 下一条 `append_record` | 同 session 的 append 形成严格序列链：每条 append 的 `dependsOnEntryId` 指向前一条 append 的 `id` |
 | 最后一条 `append_record` → `set_status` | status 的 `dependsOnEntryId` 指向最后一条 append 的 `id`；全部 append 成功（在 `succeeded_entries` 中有凭据）后才能发送 status |
 | quiz `submitted` → `reviewed` | reviewed 的 `dependsOnEntryId` 指向 submitted 的 `id` |
-| 服务端返回 404（session missing） | 同一 Dexie rw 事务内：(1) 重新入队 `create_session`（生成**新 UUID**，写入 `succeeded_entries` 中旧 create 的凭据标记为 `superseded_by` 新 UUID）；(2) 被 404 的 append **回退 `status=pending`** 而非 dead——**原子修改**其 `dependsOnEntryId` 指向新 create 的 UUID；(3) 后续条目链（dependsOnEntryId 指向该 append 的）不受影响——它们仍依赖该 append，该 append 只是换了一个新的前置 create。只有新 create 最终 dead 时，才递归 dead 该 append 及整条链 |
+| 服务端返回 404（session missing） | 同一 Dexie rw 事务内：(1) 重新入队 `create_session`（生成**新 UUID**）；(2) 被 404 的 append **回退 `status=pending`** 而非 dead——**原子修改**其 `dependsOnEntryId` 指向新 create 的 UUID；(3) 后续条目链（dependsOnEntryId 指向该 append 的）不受影响——它们仍依赖该 append，该 append 只是换了一个新的前置 create。只有新 create 最终 dead 时，才递归 dead 该 append 及整条链 |
 | 前置条目 dead | **递归级联**（见下方 dead 级联规则） |
 
 **dead 级联规则（递归，不是仅直接依赖者）**：
@@ -1132,6 +1135,26 @@ R3 必须为 R4 准备好：
 
 ---
 
+## 第十五章：实施顺序
+
+> 本章由签字人附录。签字不授权执行 SQL、修改环境变量、Preview 开关或 Production 操作；这些仍需逐项单独授权。每阶段应提交实施报告并过对应门禁后再进入下一阶段。
+
+| 阶段 | 内容 | 前置 | 关键门禁 |
+|------|------|------|---------|
+| **R3.0** | Dexie outbox 表（含 claim/lease/sequence/dependsOnEntryId/semanticKey）+ `succeeded_entries` 辅助表创建；出队状态机（逐条 claim、依赖凭据校验、dead 递归级联、404 恢复、压缩）；影子写开关保留 | 本设计稿签字 | O1-O17 全部通过；unit tests 覆盖 claim/lease/依赖/404 恢复/dead 级联 |
+| **R3.1** | playback 切换为 outbox 模式：`shadowPlaybackProgress` → outbox 入队 + 后台发送；playbackState→outbox 原子迁移；旧 shadow-writer 路径由开关保护 | R3.0 完成 | O15 迁移通过；Preview E2E playback 影子写 ok 率 ≥95%；pending age P95 <60s |
+| **R3.2** | quizAttempt 切换为 outbox 模式：`shadowQuizSubmitted/Reviewed` → outbox 入队 + 后台发送 | R3.1 完成 | Preview E2E quizAttempt 影子写 ok 率 ≥95% |
+| **R3.x** | 服务端 `/api/runtime/v1/config` 控制面实现；playback/quizAttempt 开启 dual-read（业务始终用本地，服务端异步比对） | R3.2 完成 | GC1-GC10 全部通过；dual-read match 率 ≥99%（样本 ≥500 playback + 200 quiz）；missing 率 <1% |
+| **chat** | **不分配阶段序号**——必须等 finalized-message 独立设计卡通过后方可立项。chat 服务端强制停留在 shadow | — | CH1-CH6（独立设计卡定义） |
+| **server-preferred** | **需独立子设计卡签字** | dual-read 稳定运行 + SLO 全部绿灯 | 子设计卡中定义 |
+| **server-primary** | **需独立子设计卡签字（含缓存契约）** | server-preferred 稳定运行 | 子设计卡中定义 |
+
+### 非阻断实施注记
+
+- 404 恢复条款中旧版曾出现的 `superseded_by` 未出现在 `SucceededEntry` 类型中；实现时应**删除该非必要标记**，或明确增加可选诊断字段（如 `supersededBy?: string`），但该字段**不得参与依赖成功判定**。
+
+---
+
 ## 附录 A：术语表
 
 | 术语 | 定义 |
@@ -1193,18 +1216,19 @@ R3 必须为 R4 准备好：
 
 ---
 
-> **本文状态：v1.1 第二轮修订完成，待 Codex/负责人复审签字（review requested，非已批准方案）。**
+> **本文状态：SIGNED（2026-08-02 通过评审）。**
 > 
-> v1→v1.1 变更摘要：
+> **签字人：Codex/负责人。**
+> 
+> **授权范围**：playback/quizAttempt 推进至 dual-read；chat 停留在 shadow。
+> server-preferred/server-primary 需独立子设计卡签字。
+> 
+> **签字不授权**：执行 SQL、修改环境变量、Preview 开关或 Production 操作——这些仍需逐项单独授权。
+> 每阶段应提交实施报告并过对应门禁后再进入下一阶段。
+> 
+> v1→v1.1 SIGNED 变更摘要：
 > - D1-D8 八项开放决策已拍板并融入正文
-> - 阻断点 1-8 已关闭（outbox claim/lease、依赖顺序、playback 压缩键、dual-read 语义、
->   服务端排序、服务端控制面、匿名范围收口、生命周期收口）
-> - 三处额外修正（删除 partial_match、contentHash 降为一致性校验、quiz G2.3 语义修正）
-> - v1.1→v1.1r2 6 项实施级阻断点修正：
->   分支信息修正；逐条即时 claim（不批量预占）；dead 级联标记 + per-session 序列链；
->   quiz semanticKey 按业务相位区分；控制面安全/RBAC/故障语义 + chat 强制 shadow；
->   server-primary 缓存契约推迟 + v1.1 授权上限设为 dual-read
-> 
-> 复审签字前：继续不实施代码、不执行 SQL、不改环境变量。
-> 评审通过后，chat 阻断分支需独立起草 finalized-message outbox 设计卡；
-> playback + quizAttempt 可按本设计稿的阶段状态机推进实施（上限 dual-read）。
+> - 8 个设计阻断点 + 6 个实施级阻断点 + 2 个 P0 状态机缺口已关闭
+> - 3 处额外修正（删除 partial_match、contentHash 降级一致性校验、quiz G2.3 语义修正）
+> - 实施顺序见第十五章
+> - chat 阻断分支需独立起草 finalized-message outbox 设计卡
