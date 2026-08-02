@@ -242,8 +242,22 @@ interface RuntimeOutboxEntry {
   leaseUntil?: string;   // ISO，租约到期时间
   status: 'pending' | 'sending' | 'superseded' | 'dead';
   sequence?: number;     // per-session 自增序号，用于依赖排序
-  dependsOn?: string;    // 前置条目的 semanticKey，发送前必须确认已成功删除
+  dependsOnEntryId?: string;  // 不可变的前置条目 id（UUID），不是 semanticKey。发送前必须确认该 id 对应的条目已成功
 }
+```
+
+**辅助表 `succeeded_entries`**（成功凭据，解决"不存在≠成功"问题）：
+
+```typescript
+interface SucceededEntry {
+  entryId: string;       // 已成功发送并删除的 outbox 条目 id
+  deletedAt: string;     // ISO，删除时间
+}
+```
+
+- 条目成功发送并从 outbox 删除时，在同一事务中写入 `succeeded_entries`；
+- 保留 7 天（与 dead 清理周期一致）；
+- 依赖检查时**不得单凭"前置条目不在 outbox"推断成功**——必须查询 `succeeded_entries` 确认真实成功凭据。
 ```
 
 **索引**：`kind`, `status`, `createdAt`, `semanticKey`, `[kind+status]`, `[sessionId+sequence]`。
@@ -255,7 +269,7 @@ interface RuntimeOutboxEntry {
 | `semanticKey` | 语义去重键。playback 压缩用 `playback:<stageId>:latest-progress`；quizAttempt 按业务相位区分：`qa:<sessionId>:submitted` / `qa:<sessionId>:reviewed` / `qa:<sessionId>:status:archived`（不可共用同一键）；chat 用 `chat:<sessionId>:<messageId>` |
 | `nextAttemptAt` | 退避控制：失败后按指数退避设置下次可发送时间；出队时只取 `<= now` 的条目 |
 | `leaseOwner` / `leaseUntil` | 跨标签页租约：发送前 claim 租约（写入 tabId + 30s），发送完成后条件确认 → 成功删、失败释放；刷新只回收已过期 lease |
-| `sequence` / `dependsOn` | 依赖链：create_session 成功后才能 append_record；append_record 全部完成后才能 set_status |
+| `sequence` / `dependsOnEntryId` | 依赖链：`dependsOnEntryId` 是不可变的前置条目 UUID（非 semanticKey）。create 成功后才能 append；append 全部完成后才能 set_status；依赖成功通过 `succeeded_entries` 凭据验证，不靠"条目不存在"推断 |
 
 ### 3.4 队列语义
 
@@ -264,7 +278,7 @@ interface RuntimeOutboxEntry {
 - 调用方构造 record body 后，生成 UUID，写入 outbox 行（`status: 'pending'`）；
 - **内容必须在入队前冻结**——入队后不得修改 body；
 - 自动分配 `sequence`（per-session 自增）和 `semanticKey`；
-- 若 `dependsOn` 指定了前置条目，写入对应 `semanticKey`。
+- 若 `dependsOnEntryId` 指定了前置条目，写入对应不可变 entry ID。
 
 **压缩（入队时执行）**：
 
@@ -274,15 +288,26 @@ interface RuntimeOutboxEntry {
 - 对于非覆盖型数据（quiz 的 submit/grade，chat）：semanticKey 不重复，不触发压缩；
 - 压缩遥测：`outbox_compaction { superseded: N }`。
 
-**依赖链规则**：
+**依赖链规则**（`dependsOnEntryId` 指向不可变条目 UUID）：
 
 | 依赖 | 规则 |
 |------|------|
-| `create_session` → `append_record` | append 条目的 `dependsOn` 指向 create 的 `semanticKey`；create 成功删除后才能发送 append |
-| `append_record` → `set_status` | status 条目的 `dependsOn` 指向最后一条 append 的 `semanticKey`；所有 append 形成严格序列链（每条 append 的 `dependsOn` 指向前一条 append），全部成功删除后才能发送 status |
-| quiz `submitted` → `reviewed` | reviewed 条目的 `dependsOn` 指向 submitted 的 `semanticKey` |
-| 服务端返回 404（session missing） | 重新入队 `create_session` 到 outbox 头部，后续条目保持 `dependsOn` 链不变 |
-| 前置条目 dead | **立即、原子地级联**：在标记 dead 的同一 Dexie rw 事务内，将所有 `dependsOn` 指向该条目 `semanticKey` 的 pending/sending 条目也标记为 `dead`，上报遥测 `outbox_dependency_dead` |
+| `create_session` → `append_record` | append 的 `dependsOnEntryId` 指向 create 的 `id`（UUID）；create 成功并写入 `succeeded_entries` 后，append 的依赖才满足 |
+| `append_record` → 下一条 `append_record` | 同 session 的 append 形成严格序列链：每条 append 的 `dependsOnEntryId` 指向前一条 append 的 `id` |
+| 最后一条 `append_record` → `set_status` | status 的 `dependsOnEntryId` 指向最后一条 append 的 `id`；全部 append 成功（在 `succeeded_entries` 中有凭据）后才能发送 status |
+| quiz `submitted` → `reviewed` | reviewed 的 `dependsOnEntryId` 指向 submitted 的 `id` |
+| 服务端返回 404（session missing） | 重新入队 `create_session`（生成**新 UUID**），新 create 的 `id` 与旧 create 不同，旧依赖链不会串线；被 404 的那条 append 标记 dead，其 `dependsOnEntryId` 指向的仍是旧 create 的 id（旧 create 在 `succeeded_entries` 中已有凭据），级联逻辑自行处理 |
+| 前置条目 dead | **递归级联**（见下方 dead 级联规则） |
+
+**dead 级联规则（递归，不是仅直接依赖者）**：
+
+标记条目 X 为 `dead` 时，在同一 Dexie rw 事务内执行：
+1. 找到所有 `dependsOnEntryId = X.id` 的条目 → 标记 `dead`；
+2. 对每个新标记 dead 的条目，**递归**执行步骤 1（即处理 A→B→C 全链，不止一层）；
+3. 所有级联完成后才提交事务；
+4. 上报遥测 `outbox_dependency_dead { rootEntryId, cascadedCount }`。
+
+**dead 清理约束**：dead 条目 7 天后清理时，必须先确认**不存在任何 `dependsOnEntryId` 指向该条目的 pending/sending 条目**（级联 dead 已保证这一点），且对应的 `succeeded_entries` 凭据已超过 7 天保留期。
 
 **per-session 并发约束**：同一 session 的所有条目共享同一个依赖链（严格 `sequence` 排序）。**多个标签页不能同时 claim 同一 session 的不同 sequence**——出队时每条条目单独即时 claim，claim 成功后该 session 的所有后续条目自然阻塞在 claim 步骤（lease 已被持有），直到当前条目发送完成并删除（dependency fulfilled）。这确保同一 session 在任何时刻最多只有一条条目在发送中。
 
@@ -294,7 +319,11 @@ interface RuntimeOutboxEntry {
 
 1. **筛选可发送条目**：`status='pending'` AND `nextAttemptAt <= now()`；
 2. **按 semanticKey 去重**：同 `semanticKey` 只保留 `createdAt` 最新的一条；
-3. **依赖检查**：若条目有 `dependsOn`，确认指向的 `semanticKey` 对应条目**已被成功删除**（不在 outbox 中且未被级联标记 dead——仅凭"不存在"不能推断成功，必须配合级联 dead 逻辑确保 dead 清理不留下依赖者）；
+3. **依赖检查（使用成功凭据，不靠"不存在"推断）**：若条目有 `dependsOnEntryId`：
+   - 在 outbox 中查找 `id` = `dependsOnEntryId` 的条目——若存在且 `status=dead` → 级联标记本条目 dead（递归），跳过；
+     若存在且非 dead → 跳过（前置尚未完成）；
+   - 若不在 outbox 中 → 查询 `succeeded_entries` 表——若找到凭据 → 依赖满足，继续发送；
+     若找不到 → 异常（前置不明消失），标记 dead + 上报遥测 `outbox_dependency_lost`；
 4. **即时 claim 一条**：对第一个符合条件（且 lease 可用）的条目，校验 `leaseOwner IS NULL OR leaseUntil < now`，通过后写入 `leaseOwner = tabId, leaseUntil = now + 30s, status = 'sending'`。**每次只 claim 一条**，其余候选条目下次出队循环再处理；
 5. 提交事务 → **发送**：发送 HTTP 请求（单条目超时 8s）；
 6. **发送成功**：新开 Dexie rw 事务，按 `entry.id + leaseOwner` 条件确认 → 删除条目；
@@ -362,12 +391,14 @@ interface RuntimeOutboxEntry {
 - [ ] O6：超时 → 指数退避重试（nextAttemptAt 控制），最多 7 次 → dead
 - [ ] O7：入队时压缩：3 条同 semanticKey pending → 旧条目标记 superseded，仅最新一条发送
 - [ ] O8：跨标签页 claim/lease：标签页 A claim 条目后，标签页 B 扫描时检测到未过期 lease → 跳过；标签页 A 崩溃后 lease 过期 → 标签页 B 可回收并 claim
-- [ ] O9：死信 7 天后客户端自行清理
-- [ ] O10：刷新恢复：已过期 lease 的 sending 条目回退 pending，未过期 lease 保持 sending
-- [ ] O11：依赖链：create_session 成功后 append_record 才发送；404 → 重新入队 create_session
-- [ ] O12：前置 dead → 后续依赖条目标记 dead
-- [ ] O13：playbackState.shadowPending → outbox 原子迁移，无丢失、无双发
-- [ ] O14：同一 semanticKey 去重：出队前同 key 只取 latest
+- [ ] O9：死信 7 天后客户端自行清理，清理前确认无 pending/sending 依赖者
+- [ ] O10：三段依赖链死信级联：A→B→C，A dead ⇒ 同一事务内递归标记 B dead ⇒ C dead，遥测 cascadedCount=2
+- [ ] O11：dead 清理后后继不得误发：死信清理后，依赖者查询 `succeeded_entries` 无凭据 + outbox 无前置 → `outbox_dependency_lost` → 标记 dead，不误发
+- [ ] O12：create 404 重建不与旧 semanticKey 串线：新 create 生成新 UUID，旧依赖链（`dependsOnEntryId` 指向旧 UUID）不会误触发新 create
+- [ ] O13：刷新恢复：已过期 lease 的 sending 条目回退 pending，未过期 lease 保持 sending
+- [ ] O14：依赖凭据：append 发送前查询 `succeeded_entries` 确认前置已成功，不单凭"条目不在 outbox"推断
+- [ ] O15：playbackState.shadowPending → outbox 原子迁移，无丢失、无双发
+- [ ] O16：同一 semanticKey 去重：出队前同 key 只取 latest
 
 ---
 
@@ -698,71 +729,80 @@ interface ChatRecordPayload {
 
 #### 控制面配置模型
 
-服务端提供 `GET /api/runtime/v1/config` 端点，返回 per-kind 阶段配置：
+**内部配置**（服务端存储，不暴露给客户端）：
 
 ```typescript
-interface RuntimeConfig {
-  version: number;          // 配置版本号（单调递增）
-  updatedAt: string;        // ISO，最后更新时间
-  updatedBy: string;        // 审计人标识
+// 内部 RuntimeConfig 存储在服务端数据库，不是 GET 响应类型
+interface InternalRuntimeConfig {
+  version: number;
+  updatedAt: string;
+  updatedBy: string;
   kinds: {
-    playback?: KindPhaseConfig;
-    quizAttempt?: KindPhaseConfig;
-    chat?: KindPhaseConfig;   // 始终为 'shadow'
+    playback?: InternalKindConfig;
+    quizAttempt?: InternalKindConfig;
+    chat?: InternalKindConfig;  // phase 始终被覆写为 'shadow'
   };
 }
 
-interface KindPhaseConfig {
+interface InternalKindConfig {
   phase: 'local-only' | 'shadow' | 'dual-read-compare' | 'server-preferred' | 'server-primary';
-  rollout: {
-    percentage: number;       // 0-100，灰度百分比
-    allowlist: string[];      // 服务端内部存储的白名单 auth.uid()，**不得返回给客户端**——客户端只收到服务端基于当前用户计算后的 effective assignment
-    hashInputs: string[];     // hash 分配输入字段，至少包含 ['auth.uid()', 'kind', 'configVersion']
-  };
-  killSwitch: boolean;        // 紧急关闭：true → 立即回退到 shadow
+  rolloutPercentage: number;   // 灰度百分比
+  allowlist: string[];         // auth.uid[] 白名单（内部使用，不返回客户端）
+  killSwitch: boolean;
 }
 ```
 
-**安全约束**：`/api/runtime/v1/config` 的响应体不得包含完整 `allowlist`、其他用户的 assignment 或配置历史。服务端根据当前登录用户的 `auth.uid()` 计算 effective assignment（该用户应进入的阶段），客户端只收到单用户的 `effectivePhase` 和 `configVersion`。不要返回 `KindPhaseConfig` 全量。
+**GET 响应**（客户端唯一收到的内容）：
 
-**chat 强制约束**：服务端 `/api/runtime/v1/config` 对 chat 的 `effectivePhase` **必须硬编码为 `'shadow'`**，不能由配置人员修改。即使配置中 chat 被设为更高级阶段，服务端也必须覆盖为 `'shadow'`。不能只靠客户端遵守。
+```typescript
+interface RuntimeConfigResponse {
+  configVersion: number;
+  expiresAt: string;      // ISO，客户端缓存过期时间
+  kinds: {
+    playback?: { effectivePhase: Phase };
+    quizAttempt?: { effectivePhase: Phase };
+    chat?: { effectivePhase: 'shadow' };  // 永远为 shadow
+  };
+}
+```
 
-#### 配置存储与 RBAC
+**服务端判定逻辑**（percentage、allowlist、killSwitch、hash 全部在服务端计算）：
+- 服务端根据 `auth.uid()` + `InternalKindConfig` 计算出该用户每个 kind 的 `effectivePhase`；
+- `allowlist` 中的用户直接进入目标阶段；
+- 非白名单用户按 `hash(auth.uid, kind, configVersion) % 100 < rolloutPercentage` 判定；
+- `killSwitch=true` → `effectivePhase='shadow'`；
+- chat 的 `effectivePhase` 服务端**强制覆写为 `'shadow'`**，不依赖客户端遵守；
+- 客户端**不执行任何 hash/allowlist/percentage 计算**——它只接收 `effectivePhase` 并执行。
+
+#### 客户端行为
+
+- 客户端启动/唤醒时 `GET /api/runtime/v1/config`，获得 `{configVersion, kinds: {playback: {effectivePhase}, quizAttempt: {effectivePhase}, chat: {effectivePhase}}}`；
+- 本地缓存在 `localStorage`（`r3:config`），过期时间 ≤60s，过期后重新拉取；
+- **客户端不得自行判定阶段**——不执行 hash、不持有 percentage/allowlist、不做 isInExperiment()；
+- **紧急回退**：服务端修改 `killSwitch: true` → `effectivePhase` 变为 `shadow` → 客户端下次拉取生效；
+- **白名单**：由服务端判定，客户端只知自己的 `effectivePhase`，不知道是否在 allowlist 中。
+
+#### 配置存储、RBAC 与写权限
 
 | 项目 | 决策 |
 |------|------|
-| 存储位置 | 服务端数据库（runtime_config 单行表）或环境变量注入，不在客户端 |
-| 谁可以修改 | 仅负责人/运维通过受控端点修改；修改端点需要 service role 鉴权 + 审计日志 |
-| 写端点 | `PATCH /api/runtime/v1/config`（service role only），记录 `updatedBy` + `updatedAt` |
-| 读端点 | `GET /api/runtime/v1/config`（authenticated），返回单用户 effective assignment |
+| 存储位置 | **唯一选择：`runtime_config` 数据库表**（单行 JSON）。对应 SQL 仍需负责人另行授权。不使用 Vercel 环境变量（`PATCH` API 不能即时修改构建期变量） |
+| 谁可以修改 | 仅负责人/管理员通过 `/admin/runtime-control` 控制台调用 `PATCH` |
+| 控制台鉴权 | `/admin/runtime-control` 页面由登录管理员访问；前端调用 `PATCH /api/runtime/v1/config` 时携带管理员的 Supabase auth session |
+| API 服务端鉴权 | `PATCH` 端点校验：auth.uid() 在 admin 列表中（RBAC）→ 通过后，API 在**服务端内部**使用 service role client 写入 `runtime_config` 表。**禁止把 service-role JWT 交给浏览器页面** |
+| 读端点 | `GET /api/runtime/v1/config`（authenticated），返回单用户 `effectivePhase` |
 | 未配置时 | 默认阶段 = `'shadow'`（所有 kind），不进入 dual-read |
-| 版本保护 | `configVersion` 单调递增；客户端提交 `configVersion`，服务端拒绝回退到更低版本 |
+| 版本保护 | `configVersion` 单调递增；`PATCH` 服务端校验只能递增，拒绝回退 |
 
 #### 配置故障与降级语义
 
 | 场景 | 行为 |
 |------|------|
 | GET `/api/runtime/v1/config` 成功 | 客户端缓存 ≤60s，按 `effectivePhase` 执行 |
-| GET 失败（网络/5xx/超时） | 使用本地缓存配置（只要尚未过期）；缓存过期后**降级到 `shadow` 阶段**——最安全假定 |
-| 本地缓存过期 + 服务端不可达 | 降级到 `shadow`，上报遥测 `config_fallback` |
-| 客户端离线 | 使用上次已知配置（不计过期）；所有写入进入 outbox，不尝试双读 |
-| 配置字段缺失/损坏 | 客户端拒绝解析，降级到 `shadow`，上报遥测 `config_parse_error` |
-```
-
-#### 客户端行为
-
-- 客户端启动/唤醒时拉取 `/api/runtime/v1/config`；
-- 本地缓存在 `localStorage`（`r3:config`），过期时间 ≤60s，过期后重新拉取；
-- 使用 stable hash 分配判断当前用户是否在 rollout 范围内：
-  ```typescript
-  function isInExperiment(authUid: string, kind: string, configVersion: number, pct: number): boolean {
-    const hash = simpleHash(`${authUid}:${kind}:${configVersion}`);
-    return (hash % 100) < pct;
-  }
-  ```
-- **客户端不得自行决定阶段**——阶段和百分比由服务端权威配置下发；
-- **紧急回退**：服务端修改 `killSwitch: true` 或 `phase` → 客户端下次拉取（≤60s）生效，无需无缓存 Redeploy；
-- **白名单**：allowlist 中的用户始终进入配置的阶段，忽略百分比。
+| GET 失败（网络/5xx/超时） | 使用本地缓存（未过期时）；缓存过期后降级 `shadow` |
+| 本地缓存过期 + 服务端不可达 | 降级 `shadow`，上报遥测 `config_fallback` |
+| 客户端离线 | 使用上次已知配置（不计过期）；所有写进入 outbox，不尝试双读 |
+| 配置字段缺失/损坏 | 拒绝解析，降级 `shadow`，上报遥测 `config_parse_error` |
 
 #### 编译期 kill switch（仅作紧急总保险）
 
@@ -813,12 +853,15 @@ NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK=1  # 现有，playback shadow kill switch
 ### 9.6 验收矩阵
 
 - [ ] GC1：服务端 `/api/runtime/v1/config` 返回 per-kind 阶段配置
-- [ ] GC2：客户端按配置版本 + auth.uid() + kind hash 分配，同一用户多次计算一致
+- [ ] GC2：服务端根据 auth.uid() + hash 判定返回 effectivePhase，同一用户多次请求结果一致
 - [ ] GC3：服务端 kill switch 开启 → 客户端 ≤60s 内回退 shadow
-- [ ] GC4：allowlist 用户始终进入目标阶段，忽略百分比
-- [ ] GC5：match 率跌破 95% 或 read_fallback_rate 超过阈值时，遥测 `phase_rollback_recommended` 事件，由负责人依据遥测手动回退（通过控制面 UI 或配置端点）；**当前不实施 SLO 自动回退**（需要服务端聚合与执行器，Cron 已移出 R3，自动化另立卡）
-- [ ] GC6：pending_age_p95 计算正确，superseded 不计入成功率分母
-- [ ] GC7：构建期 `NEXT_PUBLIC_RUNTIME_SHADOW*` 仅保留为 kill switch，无新增
+- [ ] GC4：服务端 allowlist 判定正确，白名单用户收到目标 phase，非白名单按 percentage hash 判定
+- [ ] GC5：`PATCH /api/runtime/v1/config` 拒绝非 admin 用户（403），拒绝 teacher 用户（403），拒绝匿名用户（401）
+- [ ] GC6：`PATCH` 成功后 `runtime_config_audit_log` 记录 updatedBy + updatedAt + 变更前后 diff
+- [ ] GC7：service-role JWT 不出现在任何浏览器可见的响应/HTML/JS bundle 中
+- [ ] GC8：match 率跌破 95% 或 read_fallback_rate 超过阈值时，遥测 `phase_rollback_recommended` 事件，由负责人依据遥测手动回退（通过控制面 UI 或配置端点）；**当前不实施 SLO 自动回退**（需要服务端聚合与执行器，Cron 已移出 R3，自动化另立卡）
+- [ ] GC9：pending_age_p95 计算正确，superseded 不计入成功率分母
+- [ ] GC10：构建期 `NEXT_PUBLIC_RUNTIME_SHADOW*` 仅保留为 kill switch，无新增
 
 ---
 
@@ -886,7 +929,7 @@ R1.1 已建立"无教师直通 RLS"原则——教师不能直接查询 learner 
 3. **无缓存 Redeploy**：仅当新增/修改了 `NEXT_PUBLIC_*` kill switch 变量时需要；
 4. **冒烟测试**：登录态 E2E（playback + quizAttempt + chat 影子写）；
 5. **遥测观察**：至少 24h 影子写 ok 率达标；
-6. **阶段推进**：通过服务端配置逐步推进（shadow → dual-read → server-preferred → server-primary），无需重新部署。
+6. **阶段推进**：通过服务端配置逐步推进（shadow → dual-read）。本次授权上限为 dual-read，server-preferred/server-primary 在各自子设计卡签字前不得在 Preview 推进。
 
 ### 11.3 Production 发布流程
 
@@ -898,7 +941,7 @@ R1.1 已建立"无教师直通 RLS"原则——教师不能直接查询 learner 
 4. **Production 开关开启**：先确认 `NEXT_PUBLIC_RUNTIME_SHADOW=1`（kill switch 放开），阶段推进通过服务端 `/api/runtime/v1/config` 逐步配置；
 5. **Production 部署**：无缓存 Redeploy；
 6. **Production 观察**：至少 7 天，SLO 全部绿灯；
-7. **逐阶段推进**：shadow → dual-read → server-preferred → server-primary（每阶段观察 ≥7 天）。
+7. **逐阶段推进**：shadow → dual-read（本次授权上限；每阶段观察 ≥7 天）。server-preferred/server-primary 需各自子设计卡签字后方可推进。
 
 ### 11.4 环境变量安全
 
