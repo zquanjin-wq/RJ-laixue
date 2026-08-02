@@ -416,3 +416,115 @@ describe('复审卡 3：completed PATCH 失败保留 pending', () => {
     );
   }, 30000);
 });
+
+
+// ── Codex A2 复审卡第二轮（2026-08-02）：幂等状态机四态分类 ──────────────────
+
+describe('复审卡（第二轮）：幂等状态机分类', () => {
+  it('状态 B：影子成功、pending 清除后再调用 → runtime API 零新增、pending 不复活', async () => {
+    const { db, createPlaybackPersistence, shadow } = await freshModules();
+    const stub = installFetchStub();
+    const p = createPlaybackPersistence({ stageId: STAGE, throttleMs: 20, uuid: () => 'evt-ok' });
+
+    p.schedule(snap(3));
+    await p.flush();
+    await shadow.shadowPlaybackProgress(STAGE);
+
+    // 已成功：pending 清除，eventId 保留
+    const cleared = await db.playbackState.get(STAGE);
+    expect(cleared?.shadowPending).toBeUndefined();
+    expect(cleared?.runtimeShadowEventId).toBe('evt-ok');
+    const callsBefore = stub.apiCalls.length;
+
+    // 再次调用（挂载补写/重复触发）——状态 B：幂等空转
+    await shadow.shadowPlaybackProgress(STAGE);
+
+    expect(stub.apiCalls.length).toBe(callsBefore); // runtime API 零新增
+    const row = await db.playbackState.get(STAGE);
+    expect(row?.shadowPending).toBeUndefined(); // pending 不复活
+    expect(row?.runtimeShadowEventId).toBe('evt-ok');
+  }, 15000);
+
+  it('状态 D：eventId/pending 不一致的部分状态 → 修复为一整套全新相同 ID 再发送', async () => {
+    const { db, shadow } = await freshModules();
+    const stub = installFetchStub();
+    // 构造异常部分状态：runtimeShadowEventId 与 shadowPending.eventId 不同
+    await db.playbackState.put({
+      stageId: STAGE,
+      sceneId: 'scene-1',
+      sceneIndex: 0,
+      actionIndex: 5,
+      consumedDiscussions: [],
+      capturedAt: '2026-08-02T09:30:00.000Z',
+      updatedAt: Date.now(),
+      runtimeShadowEventId: 'old-stale-id',
+      shadowPending: { eventId: 'different-pending-id', capturedAt: '2026-08-02T09:30:00.000Z' },
+    });
+
+    await shadow.shadowPlaybackProgress(STAGE);
+
+    // 修复后发送成功、pending 已条件清除；留下的 runtimeShadowEventId
+    // 必须是一整套全新 ID（禁止拼接旧新 ID）
+    const row = await db.playbackState.get(STAGE);
+    expect(row?.runtimeShadowEventId).toBeTruthy();
+    expect(row?.runtimeShadowEventId).not.toBe('old-stale-id');
+    expect(row?.runtimeShadowEventId).not.toBe('different-pending-id');
+
+    // 发送的 record ID 使用同一个新 ID（且成功 → pending 清除）
+    const appends = stub.apiCalls.filter((c) => c.url.includes('/records'));
+    expect(appends).toHaveLength(1);
+    expect((appends[0].body as { id: string }).id).toBe(
+      `pb:${STAGE}:${row?.runtimeShadowEventId}`,
+    );
+    expect(row?.shadowPending).toBeUndefined();
+  }, 15000);
+
+  it('legacy 升级的 capturedAt 从事务内当前行计算，不继承事务外旧 fetched 时间', async () => {
+    const { db, shadow } = await freshModules();
+    installFetchStub();
+    // 另一标签页刚写入的较新 legacy 快照
+    await db.playbackState.put({
+      stageId: STAGE,
+      sceneId: 'scene-1',
+      sceneIndex: 0,
+      actionIndex: 8,
+      consumedDiscussions: [],
+      capturedAt: '2026-08-02T11:00:00.000Z',
+      updatedAt: Date.now(),
+    });
+
+    // 强制事务外 fetched 读到的是旧版快照（模拟读后被并发更新）
+    const staleRow = {
+      stageId: STAGE,
+      sceneId: 'scene-1',
+      sceneIndex: 0,
+      actionIndex: 2,
+      consumedDiscussions: [] as string[],
+      capturedAt: '2026-08-02T08:00:00.000Z',
+      updatedAt: Date.now() - 3 * 3600_000,
+    };
+    const origGet = db.playbackState.get.bind(db.playbackState);
+    let firstCall = true;
+    db.playbackState.get = (async (...args: [string]) => {
+      if (firstCall) {
+        firstCall = false;
+        return staleRow;
+      }
+      return origGet(...args);
+    }) as typeof db.playbackState.get;
+
+    try {
+      await shadow.shadowPlaybackProgress(STAGE);
+    } finally {
+      db.playbackState.get = origGet;
+    }
+
+    // 事务内重读到的是较新行：升级采用新行的快照与 capturedAt，
+    // 不得继承事务外旧 fetched 的 08:00 / actionIndex=2
+    // （发送成功 → pending 已条件清除，capturedAt 以行字段与 append payload 为准）
+    const row = await db.playbackState.get(STAGE);
+    expect(row?.actionIndex).toBe(8);
+    expect(row?.capturedAt).toBe('2026-08-02T11:00:00.000Z');
+    expect(row?.shadowPending).toBeUndefined();
+  }, 15000);
+});

@@ -74,3 +74,29 @@
 - 回归：55/55 通过；合计 85/85
 - `tsc --noEmit`：仍仅 4 个既有 pg/pg-mem 环境错误，本次变更文件 0 错误
 - 子开关 `NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK` 继续保持在所有环境未设置
+
+## 7. 复审卡第二轮修复（Codex 2026-08-02：幂等状态机漏洞，最后一项局部问题）
+
+问题：初版 CAS 条件 `!eventId || !pending` 把「真 legacy 行」与「已影子成功、pending 已清除」两种状态混为一谈——后者会被重新生成 pending 并重复影子化，且可能拼出 `runtimeShadowEventId !== shadowPending.eventId` 的破碎锚点。
+
+修复（shadow-writer.ts `shadowPlaybackProgress` 状态机四态明确分类）：
+
+| 状态 | 判定 | 行为 |
+|---|---|---|
+| A 真 legacy | eventId、pending 均不存在 | 事务内升级 |
+| B 已成功 | eventId 存在、pending 不存在 | **直接返回**，不补写、不重发（幂等空转） |
+| C 正常 pending | 两者存在且 ID 相同 | 发送 |
+| D 异常部分状态 | 只有一个存在 / 两者 ID 不同 | 事务内为当前快照生成一整套全新的相同 eventId + pending，禁止拼接旧新 ID |
+
+事务内重分类：竞态窗口内状态可能已变化，事务内按 cur 重新判定（变 B 则放弃，变 C 直接用当前行）。
+capturedAt 在事务内从 `cur.capturedAt ?? new Date(cur.updatedAt)` 计算，不沿用事务外 fetched 的旧时间。
+
+新增门禁（3 例）：
+1. 状态 B：影子成功、pending 清除后再调用 → runtime API 零新增、pending 不复活；
+2. 状态 D：构造 eventId/pending 不一致的部分状态 → 发送 record ID 使用一整套全新相同 ID（成功后 pending 清除，留下的 eventId 非任一旧 ID）；
+3. legacy 升级 capturedAt 事务内取值：强制事务外 fetched 读到旧快照 → 升级采用事务内当前行的快照与 capturedAt。
+
+第二轮后门禁：
+- `tests/playback`：33/33；回归：55/55；合计 88/88
+- `tsc --noEmit`：仍仅 4 个既有 pg/pg-mem 环境错误
+- 主体架构未动；子开关继续保持在所有环境未设置

@@ -546,37 +546,67 @@ export async function shadowPlaybackProgress(stageId: string): Promise<void> {
     const fetched = await db.playbackState.get(stageId);
     if (!fetched) return;
 
-    // capturedAt 类型可选（legacy 行可能缺失）：回退 updatedAt，保证确定性
-    const baseCapturedAt = fetched.capturedAt ?? new Date(fetched.updatedAt).toISOString();
+    // 幂等状态机（Codex A2 复审卡 2026-08-02 #2，最后一项）：四种状态明确分类——
+    //   A. eventId、pending 均不存在     → 真 legacy 行，事务内升级；
+    //   B. eventId 存在、pending 不存在  → 已影子成功并清除 pending，直接返回，
+    //      不补写、不重发（否则会把新 UUID 塞进 pending 而发送用旧 eventId，
+    //      破坏同一快照幂等锚点并重复影子化）；
+    //   C. 两者存在且 ID 相同            → 正常 pending，发送；
+    //   D. 只有一个存在 / 两者 ID 不同   → 异常部分状态，事务内为当前快照
+    //      生成一整套全新的相同 eventId + pending，禁止拼接旧新 ID。
+    const hasEventId = (r: typeof fetched) => Boolean(r.runtimeShadowEventId);
+    const hasPending = (r: typeof fetched) => Boolean(r.shadowPending);
 
-    // A1 遗留行升级：无 eventId 的行补写 eventId+pending。
-    // Codex A2 复审卡（2026-08-02）：升级必须是事务内 CAS——get legacy →
-    // 生成 UUID → put 旧副本 之间存在跨标签页竞态，另一标签页的新快照会被
-    // 旧副本整体覆盖回旧状态。事务内重新读取：仅当当前行仍无 eventId/pending
-    // 时才升级；已被新快照替换则直接使用新行，禁止写回旧副本。
+    // 状态 B：已成功、pending 已清除——幂等空转
+    if (hasEventId(fetched) && !hasPending(fetched)) return;
+
     let row = fetched;
-    if (!row.runtimeShadowEventId || !row.shadowPending) {
-      const newEventId = crypto.randomUUID();
-      const pending = { eventId: newEventId, capturedAt: baseCapturedAt };
+    const needsTx =
+      (!hasEventId(fetched) && !hasPending(fetched)) || // A：legacy
+      (hasEventId(fetched) !== hasPending(fetched)) || // D：部分状态
+      (hasEventId(fetched) &&
+        hasPending(fetched) &&
+        fetched.runtimeShadowEventId !== fetched.shadowPending!.eventId); // D：ID 不一致
+
+    if (needsTx) {
       const resolved = await db.transaction('rw', db.playbackState, async () => {
         const cur = await db.playbackState.get(stageId);
         if (!cur) return null; // 行已被删除：放弃本次影子
-        if (cur.runtimeShadowEventId && cur.shadowPending) return cur; // 新快照已替换
+
+        // 事务内当前行时间（复审卡：旧版本标签页刚写入较新 legacy 快照时
+        // 不得继承事务外 fetched 的旧时间）
+        const curCapturedAt = cur.capturedAt ?? new Date(cur.updatedAt).toISOString();
+
+        // 事务内重分类（竞态窗口内状态可能已变化）：
+        if (cur.runtimeShadowEventId && !cur.shadowPending) return 'already-sent' as const;
+        if (
+          cur.runtimeShadowEventId &&
+          cur.shadowPending &&
+          cur.runtimeShadowEventId === cur.shadowPending.eventId
+        ) {
+          return cur; // C：正常 pending（可能被新快照替换），直接使用当前行
+        }
+        // A 或 D：为当前快照生成一整套全新的相同 eventId + pending
+        const freshEventId = crypto.randomUUID();
         const upgraded = {
           ...cur,
-          runtimeShadowEventId: cur.runtimeShadowEventId ?? newEventId,
-          shadowPending: cur.shadowPending ?? pending,
-          capturedAt: cur.capturedAt ?? baseCapturedAt,
+          runtimeShadowEventId: freshEventId,
+          shadowPending: { eventId: freshEventId, capturedAt: curCapturedAt },
+          capturedAt: curCapturedAt,
         };
         await db.playbackState.put(upgraded);
         return upgraded;
       });
       if (!resolved) return;
+      if (resolved === 'already-sent') return; // 竞态后变成状态 B
       row = resolved;
     }
 
     const eventId = row.runtimeShadowEventId as string;
-    const capturedAt = row.shadowPending?.capturedAt ?? baseCapturedAt;
+    const capturedAt =
+      row.shadowPending?.capturedAt ??
+      row.capturedAt ??
+      new Date(row.updatedAt).toISOString();
     const sessionId = `pb:${stageId}`;
     const created = await ensureSession(
       sessionId,
