@@ -1,12 +1,12 @@
 # R3 RuntimeStore 读源切换总设计稿 v1.1
 
-- 日期：2026-08-02（v1）；2026-08-02（v1.1 修订）
-- 起草人：架构师（rj-laixue-architect）
-- 状态：v1.1（修订版，关闭 v1 评审阻断点；待 Codex/负责人复审签字）
-- v1.1 变更摘要：8 项开放决策已拍板（D1-D8）；8 个阻断点已关闭；3 处额外修正
+- 日期：2026-08-02（v1）；2026-08-02（v1.1 修订）；2026-08-02（v1.1 第二轮修订）
+- 起草人：架构师（rj-laixue-architect）→ 第二轮修订：团长（Kimi）
+- 状态：v1.1（第二轮修订版，关闭 6 项实施级阻断点；待 Codex/负责人复审签字）
+- v1.1 变更摘要：8 项开放决策已拍板（D1-D8）；8 个阻断点已关闭；3 处额外修正；6 项实施级阻断点已关闭
 - 前置：R1.1 SIGNED、R2 SIGNED、R2.1 A2 SIGNED、chat idempotency_conflict 调查报告（含勘误 B）
 - 施工目录：`D:\WorkBuddy 地界\RJ-laixue-storage-b2`
-- 分支：`test/documentstore-parity`
+- 分支：`test/r3-line`
 
 ---
 
@@ -24,8 +24,8 @@ R3 的目标是**把服务端 RuntimeStore 从"只写不看"的镜像升级为�
 
 | kind | R3 可进入阶段 | 阻断项 | 推进策略 |
 |------|:----------:|--------|---------|
-| **playback** | shadow → dual-read → server-preferred → server-primary | 无阻断 | 完整推进，按阶段门禁逐级通过 |
-| **quizAttempt** | shadow → dual-read → server-preferred → server-primary | 无阻断 | 完整推进，按阶段门禁逐级通过 |
+| **playback** | shadow → dual-read（v1.1 授权上限；server-preferred/server-primary 推迟） | 无阻断 | 按阶段门禁逐级通过 |
+| **quizAttempt** | shadow → dual-read（v1.1 授权上限；server-preferred/server-primary 推迟） | 无阻断 | 按阶段门禁逐级通过 |
 | **chat** | **仅 shadow（不得进入 dual-read 及之后）** | finalized-message 信号 / 持久化 outbox 缺失 | **独立阻断分支**，另立 outbox 子设计 |
 
 **chat 阻断说明（详见第十三章专章）**：
@@ -129,7 +129,14 @@ local-only ──→ shadow ──→ dual-read-compare ──→ server-preferr
 | **shadow** | IndexedDB/localStorage | 本地 + 服务端（fire-and-forget） | R2/R2.1 已就位 | 遥测 ok 率达标 + 门禁通过 → dual-read |
 | **dual-read-compare** | **双读**：本地主读 + 服务端比对读 | 本地 + 服务端 | shadow ok 率高 + 数据完整性门禁 | match 率达标 + SLO 达标 → server-preferred |
 | **server-preferred** | 服务端主读，本地兜底 | 本地 + 服务端 | dual-read match 率 ≥99% + 离线恢复验证 | 连续 N 天 server-preferred 无降级 → server-primary |
-| **server-primary** | 服务端唯一读源 | 服务端主写 + 本地缓存兜底 | server-preferred 稳定运行 + SLO 全部绿灯 | —（最终态） |
+| **server-primary** | 服务端唯一读源 | 服务端主写 + 本地缓存兜底 | ⏸ **推迟**（总设计稿定义方向，详细缓存契约在独立子设计卡中定义） | — |
+
+**v1.1 授权范围**：当前总设计稿**只授权推进到 dual-read**。server-preferred 和 server-primary 在各自的子设计卡和缓存门禁签字前不得实施。server-primary 的以下缓存契约需在子设计卡中定义（不在本文档内）：
+- 缓存 TTL 和过期策略；
+- 最后成功同步版本号；
+- 离线缓存过期后的 UI 行为（是否显示过期数据、如何提示用户）；
+- 本地数据比服务端更新时是否允许显示（stale-while-revalidate）；
+- 恢复联网后如何重新对账（diff/merge 策略）。
 
 ### 2.2 每阶段进出条件详解
 
@@ -168,7 +175,7 @@ NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK=1  # 现有，playback 子开关（保留，
 
 **退出条件**：进入 server-preferred 即视为从 dual-read 退出。
 
-**回退条件**：match 率跌破 95% 或 missing 率 >5% → 自动回退 dual-read（详见第九章）。
+**回退条件**：match 率跌破 95% 或 missing 率 >5% → 遥测上报警告，负责人手动回退到 dual-read（详见第九章）；当前不实施自动回退。
 
 #### server-preferred → server-primary
 
@@ -176,8 +183,8 @@ NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK=1  # 现有，playback 子开关（保留，
 
 | kind | 条件 |
 |------|------|
-| playback | server-preferred 连续运行 ≥7 天；无自动降级事件；SLO 全部绿灯 |
-| quizAttempt | server-preferred 连续运行 ≥7 天；无自动降级事件 |
+| playback | server-preferred 连续运行 ≥7 天；无负责人手动降级事件；SLO 全部绿灯 |
+| quizAttempt | server-preferred 连续运行 ≥7 天；无负责人手动降级事件 |
 | chat | **不进入** |
 
 **退出条件（回退）**：服务端连续不可达 >30s 或读错误率 >10% → 降级到 server-preferred，再持续 >5min → 降级到 dual-read。
@@ -245,7 +252,7 @@ interface RuntimeOutboxEntry {
 
 | 字段 | 用途 |
 |------|------|
-| `semanticKey` | 语义去重键。playback 压缩用 `playback:<stageId>:latest-progress`；quizAttempt 用 `qa:<sessionId>:<op>`；chat 用 `chat:<sessionId>:<messageId>` |
+| `semanticKey` | 语义去重键。playback 压缩用 `playback:<stageId>:latest-progress`；quizAttempt 按业务相位区分：`qa:<sessionId>:submitted` / `qa:<sessionId>:reviewed` / `qa:<sessionId>:status:archived`（不可共用同一键）；chat 用 `chat:<sessionId>:<messageId>` |
 | `nextAttemptAt` | 退避控制：失败后按指数退避设置下次可发送时间；出队时只取 `<= now` 的条目 |
 | `leaseOwner` / `leaseUntil` | 跨标签页租约：发送前 claim 租约（写入 tabId + 30s），发送完成后条件确认 → 成功删、失败释放；刷新只回收已过期 lease |
 | `sequence` / `dependsOn` | 依赖链：create_session 成功后才能 append_record；append_record 全部完成后才能 set_status |
@@ -272,24 +279,29 @@ interface RuntimeOutboxEntry {
 | 依赖 | 规则 |
 |------|------|
 | `create_session` → `append_record` | append 条目的 `dependsOn` 指向 create 的 `semanticKey`；create 成功删除后才能发送 append |
-| `append_record` → `set_status` | status 条目的 `dependsOn` 指向最后一条 append 的 `semanticKey`；所有 append 成功删除后才能发送 status |
+| `append_record` → `set_status` | status 条目的 `dependsOn` 指向最后一条 append 的 `semanticKey`；所有 append 形成严格序列链（每条 append 的 `dependsOn` 指向前一条 append），全部成功删除后才能发送 status |
 | quiz `submitted` → `reviewed` | reviewed 条目的 `dependsOn` 指向 submitted 的 `semanticKey` |
 | 服务端返回 404（session missing） | 重新入队 `create_session` 到 outbox 头部，后续条目保持 `dependsOn` 链不变 |
-| 前置条目 dead | 后续依赖条目标记 `dead`，上报遥测 `outbox_dependency_dead`，不自动重试 |
+| 前置条目 dead | **立即、原子地级联**：在标记 dead 的同一 Dexie rw 事务内，将所有 `dependsOn` 指向该条目 `semanticKey` 的 pending/sending 条目也标记为 `dead`，上报遥测 `outbox_dependency_dead` |
+
+**per-session 并发约束**：同一 session 的所有条目共享同一个依赖链（严格 `sequence` 排序）。**多个标签页不能同时 claim 同一 session 的不同 sequence**——出队时每条条目单独即时 claim，claim 成功后该 session 的所有后续条目自然阻塞在 claim 步骤（lease 已被持有），直到当前条目发送完成并删除（dependency fulfilled）。这确保同一 session 在任何时刻最多只有一条条目在发送中。
 
 #### 出队发送（dequeue & send）
 
-**出队必须在一个 Dexie rw 事务内完成以下步骤**：
+**出队采用逐条即时 claim 模式，不批量预占**：
+
+出队循环（每次迭代在一个 Dexie rw 事务内完成）：
 
 1. **筛选可发送条目**：`status='pending'` AND `nextAttemptAt <= now()`；
 2. **按 semanticKey 去重**：同 `semanticKey` 只保留 `createdAt` 最新的一条；
-3. **依赖检查**：若条目有 `dependsOn`，确认指向的 `semanticKey` 对应条目已不存在于 outbox 中（已被成功删除），否则跳过本条；
-4. **claim 租约**：对每个候选条目，校验 `leaseOwner IS NULL OR leaseUntil < now`（租约过期），通过后写入 `leaseOwner = tabId, leaseUntil = now + 30s, status = 'sending'`；
-5. 每次最多 claim 5 条；
-6. **发送**：逐条发送 HTTP 请求；
-7. **发送成功**：按 `entry.id + leaseOwner` 条件确认 → 删除条目；
-8. **发送失败**：释放 lease（`leaseOwner = NULL, leaseUntil = NULL`），更新 `attempts += 1`, `lastError`，按退避策略设置 `nextAttemptAt`，回退 `status='pending'`；
-9. 单条目发送超时 8s，同 shadow 阶段参数。
+3. **依赖检查**：若条目有 `dependsOn`，确认指向的 `semanticKey` 对应条目**已被成功删除**（不在 outbox 中且未被级联标记 dead——仅凭"不存在"不能推断成功，必须配合级联 dead 逻辑确保 dead 清理不留下依赖者）；
+4. **即时 claim 一条**：对第一个符合条件（且 lease 可用）的条目，校验 `leaseOwner IS NULL OR leaseUntil < now`，通过后写入 `leaseOwner = tabId, leaseUntil = now + 30s, status = 'sending'`。**每次只 claim 一条**，其余候选条目下次出队循环再处理；
+5. 提交事务 → **发送**：发送 HTTP 请求（单条目超时 8s）；
+6. **发送成功**：新开 Dexie rw 事务，按 `entry.id + leaseOwner` 条件确认 → 删除条目；
+7. **发送失败**：新开 Dexie rw 事务，释放 lease（`leaseOwner = NULL, leaseUntil = NULL`），更新 `attempts += 1`, `lastError`，按退避策略设置 `nextAttemptAt`，回退 `status='pending'`；
+8. 返回步骤 1，继续出队循环（直到无可发送条目或所有候选条目均被其他标签页 claim）。
+
+**为什么每次只 claim 一条**：若一次 claim 5 条、lease 固定 30s、逐条发送每条 8s，最坏情况下第 4-5 条尚未开始发送 lease 已过期，另一标签页可重新 claim 导致双发。每次只 claim 一条 + 发送前即时 claim，lease 仅在发送期间占用，消除过期重 claim 窗口。
 
 **刷新/启动恢复**：
 
@@ -310,8 +322,9 @@ interface RuntimeOutboxEntry {
 #### 死信（dead letter）
 
 - `status='dead'` 的条目不自动重试；
+- 标记 dead 时级联标记所有依赖条目 dead（见依赖链规则）；
 - 保留 7 天供人工排查；
-- 7 天后由**客户端自行清理**（定时扫描，删除 `createdAt > 7天` 的 dead 条目）；
+- 7 天后由**客户端自行清理**（定时扫描，删除 `createdAt > 7天` 的 dead 条目），**清理前必须确认该 dead 条目的所有依赖条目已全部 dead 且超过保留期**——不得留下孤儿 pending/sending 依赖者；
 - 提供诊断 API（`/api/client-diagnostics` 扩展）供查询死信统计。
 
 ### 3.5 与现有 shadow-writer 的关系与迁移
@@ -331,7 +344,7 @@ interface RuntimeOutboxEntry {
 
 1. **迁移时机**：outbox 模式开关首次开启时执行一次性迁移；
 2. **迁移步骤**（在 Dexie rw 事务内）：
-   - 读取 `playbackState` 中 `shadowPending = true` 的行；
+   - 读取 `playbackState` 中存在 `shadowPending` 字段的行（实际字段是结构化对象，非布尔值）；
    - 对每行生成 outbox 条目（冻结内容，`semanticKey = "playback:<stageId>:latest-progress"`）；
    - 清除 `playbackState.shadowPending` 标记；
    - 提交事务；
@@ -513,7 +526,7 @@ Level 1: 服务端超时（>5s）→ 降级本地读，上报遥测
 Level 2: 服务端 5xx / network error → 降级本地读，上报遥测
 Level 3: 服务端返回部分记录（与预期数量不符）→ 合并本地 + 服务端数据
 Level 4: 服务端返回 FUTURE_VERSION → 降级本地读，上报遥测（版本不兼容）
-Level 5: 服务端连续不可达 >30s → 自动回退阶段（server-preferred → dual-read）
+Level 5: 服务端连续不可达 >30s → 客户端仍用本地降级读，遥测上报 `config_fallback` 事件，由负责人决策是否手动回退阶段（详见第九章）
 ```
 
 ### 6.2 每 kind 降级策略
@@ -567,7 +580,7 @@ Level 5: 服务端连续不可达 >30s → 自动回退阶段（server-preferred
 - [ ] D2：服务端 500 → 自动降级本地，遥测记录
 - [ ] D3：服务端返回空 records（session 存在但无 record）→ 使用本地数据
 - [ ] D4：FUTURE_VERSION → 降级本地 + UI 提示
-- [ ] D5：连续 30s 不可达 → 自动回退阶段（server-preferred → dual-read）
+- [ ] D5：连续 30s 不可达 → 客户端降级本地读，`config_fallback` 遥测触发，负责人收到告警
 - [ ] D6：网络恢复 → 自动探测并恢复阶段（dual-read → server-preferred）
 
 ---
@@ -703,11 +716,37 @@ interface KindPhaseConfig {
   phase: 'local-only' | 'shadow' | 'dual-read-compare' | 'server-preferred' | 'server-primary';
   rollout: {
     percentage: number;       // 0-100，灰度百分比
-    allowlist: string[];      // 白名单 auth.uid()，始终进入该阶段
+    allowlist: string[];      // 服务端内部存储的白名单 auth.uid()，**不得返回给客户端**——客户端只收到服务端基于当前用户计算后的 effective assignment
     hashInputs: string[];     // hash 分配输入字段，至少包含 ['auth.uid()', 'kind', 'configVersion']
   };
   killSwitch: boolean;        // 紧急关闭：true → 立即回退到 shadow
 }
+```
+
+**安全约束**：`/api/runtime/v1/config` 的响应体不得包含完整 `allowlist`、其他用户的 assignment 或配置历史。服务端根据当前登录用户的 `auth.uid()` 计算 effective assignment（该用户应进入的阶段），客户端只收到单用户的 `effectivePhase` 和 `configVersion`。不要返回 `KindPhaseConfig` 全量。
+
+**chat 强制约束**：服务端 `/api/runtime/v1/config` 对 chat 的 `effectivePhase` **必须硬编码为 `'shadow'`**，不能由配置人员修改。即使配置中 chat 被设为更高级阶段，服务端也必须覆盖为 `'shadow'`。不能只靠客户端遵守。
+
+#### 配置存储与 RBAC
+
+| 项目 | 决策 |
+|------|------|
+| 存储位置 | 服务端数据库（runtime_config 单行表）或环境变量注入，不在客户端 |
+| 谁可以修改 | 仅负责人/运维通过受控端点修改；修改端点需要 service role 鉴权 + 审计日志 |
+| 写端点 | `PATCH /api/runtime/v1/config`（service role only），记录 `updatedBy` + `updatedAt` |
+| 读端点 | `GET /api/runtime/v1/config`（authenticated），返回单用户 effective assignment |
+| 未配置时 | 默认阶段 = `'shadow'`（所有 kind），不进入 dual-read |
+| 版本保护 | `configVersion` 单调递增；客户端提交 `configVersion`，服务端拒绝回退到更低版本 |
+
+#### 配置故障与降级语义
+
+| 场景 | 行为 |
+|------|------|
+| GET `/api/runtime/v1/config` 成功 | 客户端缓存 ≤60s，按 `effectivePhase` 执行 |
+| GET 失败（网络/5xx/超时） | 使用本地缓存配置（只要尚未过期）；缓存过期后**降级到 `shadow` 阶段**——最安全假定 |
+| 本地缓存过期 + 服务端不可达 | 降级到 `shadow`，上报遥测 `config_fallback` |
+| 客户端离线 | 使用上次已知配置（不计过期）；所有写入进入 outbox，不尝试双读 |
+| 配置字段缺失/损坏 | 客户端拒绝解析，降级到 `shadow`，上报遥测 `config_parse_error` |
 ```
 
 #### 客户端行为
@@ -749,17 +788,17 @@ NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK=1  # 现有，playback shadow kill switch
 | **read_fallback_rate** | 服务端读降级到本地读的比率 | <1% | <5% | ≥5% |
 | **p99_read_latency** | 服务端读 P99 延迟 | <2s | <5s | ≥5s |
 
-### 9.4 回切阈值
+### 9.4 回切阈值（手动，负责人依据遥测决策）
 
-任何 kind 满足以下任一条件，**自动回退**到上一阶段：
+任何 kind 满足以下任一条件，**遥测上报 `phase_rollback_recommended` 事件**，由负责人依据遥测手动执行回退（通过控制面 UI 或 `PATCH /api/runtime/v1/config` 修改阶段）：
 
-| 当前阶段 | 回退条件 | 回退到 |
+| 当前阶段 | 建议回退条件 | 建议回退到 |
 |----------|---------|--------|
 | dual-read | match 率 <95% 持续 >1h | shadow（停止双读比对，仅影子写） |
 | server-preferred | read_fallback_rate >5% 持续 >30min | dual-read |
 | server-primary | read_fallback_rate >10% 持续 >5min | server-preferred |
 
-回切触发时上报 `phase_rollback` 遥测事件，包含触发指标和阈值。**自动回退由服务端配置下发执行**，客户端拉取新配置后切换。
+回切完成后更新配置 `phase` 字段，客户端下次拉取（≤60s）生效。**当前不实施 SLO 自动回退**——需要服务端聚合与执行器，Cron/生命周期执行器已移出 R3，自动化另立卡。
 
 ### 9.5 控制面 UI
 
@@ -777,7 +816,7 @@ NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK=1  # 现有，playback shadow kill switch
 - [ ] GC2：客户端按配置版本 + auth.uid() + kind hash 分配，同一用户多次计算一致
 - [ ] GC3：服务端 kill switch 开启 → 客户端 ≤60s 内回退 shadow
 - [ ] GC4：allowlist 用户始终进入目标阶段，忽略百分比
-- [ ] GC5：match 率跌破 95% → 1h 后自动回退，`phase_rollback` 遥测含触发原因
+- [ ] GC5：match 率跌破 95% 或 read_fallback_rate 超过阈值时，遥测 `phase_rollback_recommended` 事件，由负责人依据遥测手动回退（通过控制面 UI 或配置端点）；**当前不实施 SLO 自动回退**（需要服务端聚合与执行器，Cron 已移出 R3，自动化另立卡）
 - [ ] GC6：pending_age_p95 计算正确，superseded 不计入成功率分母
 - [ ] GC7：构建期 `NEXT_PUBLIC_RUNTIME_SHADOW*` 仅保留为 kill switch，无新增
 
@@ -1106,12 +1145,18 @@ R3 必须为 R4 准备好：
 
 ---
 
-> **本文状态：v1.1 修订完成，待 Codex/负责人复审签字。**
+> **本文状态：v1.1 第二轮修订完成，待 Codex/负责人复审签字（review requested，非已批准方案）。**
 > 
 > v1→v1.1 变更摘要：
 > - D1-D8 八项开放决策已拍板并融入正文
 > - 阻断点 1-8 已关闭（outbox claim/lease、依赖顺序、playback 压缩键、dual-read 语义、
 >   服务端排序、服务端控制面、匿名范围收口、生命周期收口）
 > - 三处额外修正（删除 partial_match、contentHash 降为一致性校验、quiz G2.3 语义修正）
-> - 评审通过后，chat 阻断分支需独立起草 finalized-message outbox 设计卡；
->   playback + quizAttempt 可按本设计稿的阶段状态机推进实施。
+> - v1.1→v1.1r2 6 项实施级阻断点修正：
+>   分支信息修正；逐条即时 claim（不批量预占）；dead 级联标记 + per-session 序列链；
+>   quiz semanticKey 按业务相位区分；控制面安全/RBAC/故障语义 + chat 强制 shadow；
+>   server-primary 缓存契约推迟 + v1.1 授权上限设为 dual-read
+> 
+> 复审签字前：继续不实施代码、不执行 SQL、不改环境变量。
+> 评审通过后，chat 阻断分支需独立起草 finalized-message outbox 设计卡；
+> playback + quizAttempt 可按本设计稿的阶段状态机推进实施（上限 dual-read）。
