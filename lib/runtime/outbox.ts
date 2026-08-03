@@ -98,6 +98,14 @@ async function cascadeMarkDeadInTx(entryId: string): Promise<number> {
   return cascaded;
 }
 
+/** 从 409/404 响应中提取 errorCode，失败返回空字符串 */
+async function extractErrorCode(resp: Response): Promise<string> {
+  try {
+    const body = await resp.json().catch(() => ({}));
+    return (typeof body?.error === 'string' ? body.error : body?.errorCode) ?? '';
+  } catch { return ''; }
+}
+
 // ─── 公开 API ────────────────────────────────────────────────────────────────
 
 export async function enqueue(params: {
@@ -226,11 +234,35 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
     }
 
     if (resp.status === 404) {
-      await handle404(claimed.id, claimed.leaseOwner ?? '');
-      return true;
+      // 只有 append_record / set_status 的 session-missing 404 才重建 create
+      // create_session 的 404 走正常退避（课程/组织不存在）
+      if (claimed.op === 'append_record' || claimed.op === 'set_status') {
+        const ec = await extractErrorCode(resp);
+        if (ec === 'NOT_FOUND' || ec === '' || ec === 'SESSION_NOT_FOUND') {
+          await handle404(claimed.id, claimed.leaseOwner ?? '');
+          return true;
+        }
+      }
+      // create 或其他 404 → 按失败重试
+      throw new Error(`HTTP 404 op=${claimed.op}`);
     }
 
     if (resp.status === 409) {
+      const ec = await extractErrorCode(resp);
+      // create 的 409 是幂等成功（会话已存在）→ R2 ensureSession 已签字
+      const isIdempotentConflict = ec === 'IDEMPOTENCY_CONFLICT';
+      if (claimed.op === 'create_session' && !isIdempotentConflict) {
+        // create CONFLICT → 服务端已有会话，按幂等成功处理
+        await db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+          const fresh = await db.runtimeOutbox.get(claimed.id);
+          if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return;
+          await db.runtimeOutbox.delete(claimed.id);
+          await db.succeededEntries.put({ entryId: claimed.id, deletedAt: now() } satisfies SucceededEntry);
+        });
+        reportTelemetry('outbox_create_conflict_ok', { entryId: claimed.id });
+        return true;
+      }
+      // append/set_status IDEMPOTENCY_CONFLICT → 递归 dead
       await db.transaction('rw', db.runtimeOutbox, async () => {
         const fresh = await db.runtimeOutbox.get(claimed.id);
         if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return;
