@@ -42,7 +42,7 @@ import {
   reportPlaybackSuperseded,
   shadowPlaybackProgress,   // R2 回退路径
 } from '@/lib/runtime/shadow-writer';
-import { shadowPlaybackProgressViaOutbox, drainPlaybackOutbox } from '@/lib/runtime/playback-outbox';
+import { shadowPlaybackProgressViaOutbox, drainPlaybackOutbox, isPlaybackOutboxEnabled, onPlaybackOutboxStartup, schedulePlaybackOutboxDrain } from '@/lib/runtime/playback-outbox';
 import {
   flushOnEngineMode,
   flushOnTeardown,
@@ -796,6 +796,9 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
 
     // R2.1 A1：per-stage 持久化实例生命周期（stage.id 变化时重建）
     const stageId = stage?.id;
+
+    // R3.1：启动回收 + 一次性迁移 + drain 存量 outbox
+    useEffect(() => { void onPlaybackOutboxStartup(); }, []);
     useEffect(() => {
       if (!stageId) return;
       const p = createPlaybackPersistence({
@@ -803,7 +806,11 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // R2.1 A2：落盘成功后影子写（shadow 内部双开关自门禁，关时零副作用）；
         // 旧 pending 被新快照覆盖时报 superseded 本地丢弃指标。
         onPersisted: () => {
-          void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+          if (isPlaybackOutboxEnabled()) {
+            void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+          } else {
+            void shadowPlaybackProgress(stageId);
+          }
         },
         onSuperseded: () => reportPlaybackSuperseded(),
       });
@@ -826,11 +833,20 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // R2.1 A1：pagehide 强制 flush
         flushOnPageHide(persistenceRef.current);
       };
+      // R3.1：online/visibility 恢复 drain——退避到期或离线恢复时重新发送
+      const onOnline = () => void schedulePlaybackOutboxDrain();
+      const onVisibilityDrain = () => {
+        if (document.visibilityState === 'visible') void schedulePlaybackOutboxDrain();
+      };
       document.addEventListener('visibilitychange', onVisibility);
       window.addEventListener('pagehide', onPageHide);
+      window.addEventListener('online', onOnline);
+      document.addEventListener('visibilitychange', onVisibilityDrain);
       return () => {
         document.removeEventListener('visibilitychange', onVisibility);
         window.removeEventListener('pagehide', onPageHide);
+        window.removeEventListener('online', onOnline);
+        document.removeEventListener('visibilitychange', onVisibilityDrain);
       };
     }, []);
 
@@ -846,7 +862,11 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // 已被覆盖的旧快照（旧笔已计 superseded）。
         const pending = await getPlaybackPendingInfo(stageId);
         if (pending.hasPending) {
-          void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+          if (isPlaybackOutboxEnabled()) {
+            void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+          } else {
+            void shadowPlaybackProgress(stageId);
+          }
         }
 
         const r = await resolveRestorablePlayback(stageId, scenes);
