@@ -42,7 +42,7 @@ import {
   reportPlaybackSuperseded,
   shadowPlaybackProgress,   // R2 回退路径
 } from '@/lib/runtime/shadow-writer';
-import { shadowPlaybackProgressViaOutbox, drainPlaybackOutbox, isPlaybackOutboxEnabled, onPlaybackOutboxStartup, schedulePlaybackOutboxDrain } from '@/lib/runtime/playback-outbox';
+import { shadowPlaybackProgressViaOutbox, drainPlaybackOutbox, isOutboxReady, onPlaybackOutboxStartup, schedulePlaybackOutboxDrain } from '@/lib/runtime/playback-outbox';
 import {
   flushOnEngineMode,
   flushOnTeardown,
@@ -806,7 +806,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // R2.1 A2：落盘成功后影子写（shadow 内部双开关自门禁，关时零副作用）；
         // 旧 pending 被新快照覆盖时报 superseded 本地丢弃指标。
         onPersisted: () => {
-          if (isPlaybackOutboxEnabled()) {
+          if (isOutboxReady()) {
             void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
           } else {
             void shadowPlaybackProgress(stageId);
@@ -862,7 +862,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // 已被覆盖的旧快照（旧笔已计 superseded）。
         const pending = await getPlaybackPendingInfo(stageId);
         if (pending.hasPending) {
-          if (isPlaybackOutboxEnabled()) {
+          if (isOutboxReady()) {
             void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
           } else {
             void shadowPlaybackProgress(stageId);
