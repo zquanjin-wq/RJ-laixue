@@ -236,6 +236,17 @@ describe('P0-4：create 409 幂等', () => {
     expect(e!.attempts).toBe(1);
   });
 
+  it('create + 409 空 body（无 errorCode）→ 不写成功凭据，进入退避', async () => {
+    // Empty body 409 (no errorCode) — proxy or anomalous response, NOT proof of session existence
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 409 }));
+    const cid = await enqueue({ kind: 'playback', op: 'create_session', sessionId: 'pb:c409e', semanticKey: 'k:ce', body: {} });
+    await dequeueOne('t1');
+    expect(await db.succeededEntries.get(cid)).toBeUndefined();
+    const e = await db.runtimeOutbox.get(cid);
+    expect(e!.status).toBe('pending');
+    expect(e!.attempts).toBe(1);
+  });
+
   it('append IDEMPOTENCY_CONFLICT (真实形状) → 递归 dead', async () => {
     const ts = new Date().toISOString();
     await db.runtimeOutbox.bulkPut([

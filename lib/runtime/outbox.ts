@@ -252,7 +252,8 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
       const ec = await extractErrorCode(resp);
       const isIdempotentConflict = ec === 'IDEMPOTENCY_CONFLICT';
       // create 的 CONFLICT（非 IDEMPOTENCY）→ 服务端已有会话，按幂等成功处理
-      const isCreateConflictOk = claimed.op === 'create_session' && (ec === 'CONFLICT' || ec === '');
+      // 空 errorCode 不等价于 CONFLICT——可能来自代理/异常响应，不证明会话存在
+      const isCreateConflictOk = claimed.op === 'create_session' && ec === 'CONFLICT';
       if (isCreateConflictOk) {
         // create CONFLICT → 按幂等成功处理
         const applied = await db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
@@ -265,8 +266,8 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
         if (applied) reportTelemetry('outbox_create_conflict_ok', { entryId: claimed.id });
         return true;
       }
-      // IDEMPOTENCY_CONFLICT → 递归 dead；空 errorCode 的 409 也按死信（旧格式兜底）
-      if (isIdempotentConflict || ec === '') {
+      // IDEMPOTENCY_CONFLICT → 递归 dead；非 create 的空 errorCode 409 也按死信（旧格式兜底）
+      if (isIdempotentConflict || (ec === '' && claimed.op !== 'create_session')) {
         const applied = await db.transaction('rw', db.runtimeOutbox, async () => {
           const fresh = await db.runtimeOutbox.get(claimed.id);
           if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return false;
