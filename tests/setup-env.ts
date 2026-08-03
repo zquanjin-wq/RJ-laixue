@@ -1,8 +1,21 @@
 /**
  * Load .env.local before tests so API keys are available.
+ * Also sets up fake-indexeddb so tests can import DB modules at the top level.
  */
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { IDBFactory } from 'fake-indexeddb';
+
+// Dexie checks globalThis.indexedDB at module load time.
+// Must be set before ANY business module is imported.
+(globalThis as any).indexedDB = new IDBFactory();
+
+// Dexie 4 checks for IDBKeyRange in its API detection.
+// fake-indexeddb provides it as a named export.
+import * as fakeIndexedDB from 'fake-indexeddb';
+(globalThis as any).IDBKeyRange = (fakeIndexedDB as any).IDBKeyRange;
+(globalThis as any).IDBCursor = (fakeIndexedDB as any).IDBCursor;
+(globalThis as any).IDBTransaction = (fakeIndexedDB as any).IDBTransaction;
 
 const envPath = resolve(__dirname, '..', '.env.local');
 try {

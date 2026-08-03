@@ -246,6 +246,41 @@ export interface AutoVoiceCacheRecord {
   updatedAt: number;
 }
 
+/**
+ * RuntimeOutbox table - R3.0 通用 outbox（v16）
+ * 持久化的"待发送到服务端的操作"列表，跨标签页安全。
+ */
+export interface RuntimeOutboxEntry {
+  id: string;
+  kind: 'playback' | 'quizAttempt' | 'chat';
+  op: 'create_session' | 'append_record' | 'set_status';
+  sessionId: string;
+  recordId?: string;
+  semanticKey: string;
+  body: unknown;
+  createdAt: string;
+  attempts: number;
+  nextAttemptAt: string;
+  lastAttemptAt?: string;
+  lastError?: string;
+  leaseOwner?: string;
+  leaseUntil?: string;
+  status: 'pending' | 'sending' | 'superseded' | 'dead';
+  sequence?: number;
+  dependsOnEntryId?: string;
+}
+
+/**
+ * SucceededEntries table - R3.0 成功凭据（v16）
+ * 条目成功发送并从 outbox 删除时，在同一事务内写入此表。
+ * 依赖检查时不得单凭"前置条目不在 outbox"推断成功，
+ * 必须查询此表确认真实成功凭据。
+ */
+export interface SucceededEntry {
+  entryId: string;
+  deletedAt: string;
+}
+
 /** Build the compound primary key for mediaFiles: `${stageId}:${elementId}` */
 export function mediaFileKey(stageId: string, elementId: string): string {
   return `${stageId}:${elementId}`;
@@ -254,7 +289,7 @@ export function mediaFileKey(stageId: string, elementId: string): string {
 // ==================== Database Definition ====================
 
 const DATABASE_NAME = 'MAIC-Database';
-const _DATABASE_VERSION = 14;
+const _DATABASE_VERSION = 16;
 
 /**
  * MAIC Database Instance
@@ -274,6 +309,8 @@ class MAICDatabase extends Dexie {
   voiceProfiles!: EntityTable<VoiceProfileRecord, 'id'>;
   autoVoiceCache!: EntityTable<AutoVoiceCacheRecord, 'voiceId'>;
   agentEditSessions!: EntityTable<AgentEditSessionRecord, 'id'>;
+  runtimeOutbox!: EntityTable<RuntimeOutboxEntry, 'id'>;
+  succeededEntries!: EntityTable<SucceededEntry, 'entryId'>;
 
   constructor() {
     super(DATABASE_NAME);
@@ -686,6 +723,27 @@ class MAICDatabase extends Dexie {
           skippedAlreadySet: allStages.length - updated,
         });
       });
+
+    // Version 16: R3.0 RuntimeStore 通用 outbox
+    // 新增 runtimeOutbox 表（持久化的"待发送到服务端的操作"列表）
+    // 和 succeededEntries 表（成功凭据，解决"不存在≠成功"问题）
+    this.version(16).stores({
+      stages: 'id, updatedAt',
+      scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+      audioFiles: 'id, createdAt',
+      imageFiles: 'id, createdAt',
+      snapshots: '++id',
+      chatSessions: 'id, stageId, [stageId+createdAt]',
+      playbackState: 'stageId',
+      stageOutlines: 'stageId',
+      mediaFiles: 'id, stageId, [stageId+type]',
+      generatedAgents: 'id, stageId',
+      voiceProfiles: 'id, providerId, kind, updatedAt',
+      autoVoiceCache: 'voiceId, updatedAt',
+      agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+      runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
+      succeededEntries: 'entryId, deletedAt',
+    });
   }
 }
 
