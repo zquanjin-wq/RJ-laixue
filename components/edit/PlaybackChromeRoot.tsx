@@ -40,8 +40,9 @@ import {
 // R2.1 A2：影子写接线（双开关自门禁——子开关关闭时调用为零副作用）
 import {
   reportPlaybackSuperseded,
-  shadowPlaybackProgress,
+  shadowPlaybackProgress,   // R2 回退路径
 } from '@/lib/runtime/shadow-writer';
+import { shadowPlaybackProgressViaOutbox, drainPlaybackOutbox } from '@/lib/runtime/playback-outbox';
 import {
   flushOnEngineMode,
   flushOnTeardown,
@@ -801,7 +802,9 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         stageId,
         // R2.1 A2：落盘成功后影子写（shadow 内部双开关自门禁，关时零副作用）；
         // 旧 pending 被新快照覆盖时报 superseded 本地丢弃指标。
-        onPersisted: () => void shadowPlaybackProgress(stageId),
+        onPersisted: () => {
+          void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+        },
         onSuperseded: () => reportPlaybackSuperseded(),
       });
       persistenceRef.current = p;
@@ -842,7 +845,9 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // 刷新中断）在挂载时重试当前 pending——只重试库中当前这笔，不重放
         // 已被覆盖的旧快照（旧笔已计 superseded）。
         const pending = await getPlaybackPendingInfo(stageId);
-        if (pending.hasPending) void shadowPlaybackProgress(stageId);
+        if (pending.hasPending) {
+          void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+        }
 
         const r = await resolveRestorablePlayback(stageId, scenes);
         if (!r) return;
