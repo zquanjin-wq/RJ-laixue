@@ -98,11 +98,12 @@ async function cascadeMarkDeadInTx(entryId: string): Promise<number> {
   return cascaded;
 }
 
-/** 从 409/404 响应中提取 errorCode，失败返回空字符串 */
+/** 从响应中提取 errorCode（优先 errorCode 字段，error 是人类可读文案不可用）。失败返回空字符串 */
 async function extractErrorCode(resp: Response): Promise<string> {
   try {
     const body = await resp.json().catch(() => ({}));
-    return (typeof body?.error === 'string' ? body.error : body?.errorCode) ?? '';
+    const code = body?.errorCode;
+    return typeof code === 'string' ? code : '';
   } catch { return ''; }
 }
 
@@ -249,27 +250,34 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
 
     if (resp.status === 409) {
       const ec = await extractErrorCode(resp);
-      // create 的 409 是幂等成功（会话已存在）→ R2 ensureSession 已签字
       const isIdempotentConflict = ec === 'IDEMPOTENCY_CONFLICT';
-      if (claimed.op === 'create_session' && !isIdempotentConflict) {
-        // create CONFLICT → 服务端已有会话，按幂等成功处理
-        await db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+      // create 的 CONFLICT（非 IDEMPOTENCY）→ 服务端已有会话，按幂等成功处理
+      const isCreateConflictOk = claimed.op === 'create_session' && (ec === 'CONFLICT' || ec === '');
+      if (isCreateConflictOk) {
+        // create CONFLICT → 按幂等成功处理
+        const applied = await db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
           const fresh = await db.runtimeOutbox.get(claimed.id);
-          if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return;
+          if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return false;
           await db.runtimeOutbox.delete(claimed.id);
           await db.succeededEntries.put({ entryId: claimed.id, deletedAt: now() } satisfies SucceededEntry);
+          return true;
         });
-        reportTelemetry('outbox_create_conflict_ok', { entryId: claimed.id });
+        if (applied) reportTelemetry('outbox_create_conflict_ok', { entryId: claimed.id });
         return true;
       }
-      // append/set_status IDEMPOTENCY_CONFLICT → 递归 dead
-      await db.transaction('rw', db.runtimeOutbox, async () => {
-        const fresh = await db.runtimeOutbox.get(claimed.id);
-        if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return;
-        await cascadeMarkDeadInTx(claimed.id);
-      });
-      reportTelemetry('outbox_dead', { entryId: claimed.id, reason: 'idempotency_conflict' });
-      return true;
+      // IDEMPOTENCY_CONFLICT → 递归 dead；空 errorCode 的 409 也按死信（旧格式兜底）
+      if (isIdempotentConflict || ec === '') {
+        const applied = await db.transaction('rw', db.runtimeOutbox, async () => {
+          const fresh = await db.runtimeOutbox.get(claimed.id);
+          if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return false;
+          await cascadeMarkDeadInTx(claimed.id);
+          return true;
+        });
+        if (applied) reportTelemetry('outbox_dead', { entryId: claimed.id, reason: 'idempotency_conflict' });
+        return true;
+      }
+      // 未知 409 → 按失败重试
+      throw new Error(`HTTP 409 errorCode=${ec || 'unknown'}`);
     }
 
     throw new Error(`HTTP ${resp.status}`);

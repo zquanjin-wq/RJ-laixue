@@ -172,22 +172,21 @@ describe('O4', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('P0-3：409 递归级联', () => {
-  it('append IDEMPOTENCY_CONFLICT → A→B→C 全链 dead', async () => {
+  it('append IDEMPOTENCY_CONFLICT → 级联', async () => {
     const ts = new Date().toISOString();
-    // Insert succeededEntries for 'a' so deps pass; 'b' is append that gets 409
-    await db.succeededEntries.put({ entryId: 'a', deletedAt: ts });
-    const R = (id: string, seq: number, dep?: string) => ({
-      id, kind: 'playback' as const, op: (id === 'a' ? 'create_session' : id === 'c' ? 'set_status' : 'append_record') as any,
-      sessionId: 's', semanticKey: id, body: {}, createdAt: ts, attempts: 0, nextAttemptAt: ts,
-      status: 'pending' as const, sequence: seq, ...(dep ? { dependsOnEntryId: dep } : {}),
-    });
-    await db.runtimeOutbox.bulkPut([R('a', 1), R('b', 2, 'a'), R('c', 3, 'b')]);
+    // ca is a create that already succeeded (in succeededEntries)
+    // cb is an append that depends on ca → will get 409
+    // cc is set_status that depends on cb → cascade
+    await db.succeededEntries.put({ entryId: 'ca', deletedAt: ts });
+    await db.runtimeOutbox.bulkPut([
+      { id: 'cb', kind: 'playback' as const, op: 'append_record' as const, sessionId: 's', semanticKey: 'B', body: {}, createdAt: ts, attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 2, dependsOnEntryId: 'ca' },
+      { id: 'cc', kind: 'playback' as const, op: 'set_status' as const, sessionId: 's', semanticKey: 'C', body: {}, createdAt: ts, attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 3, dependsOnEntryId: 'cb' },
+    ]);
     globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: 'IDEMPOTENCY_CONFLICT' }), { status: 409 }),
+      new Response(JSON.stringify({ errorCode: 'IDEMPOTENCY_CONFLICT', error: 'Mismatch' }), { status: 409 }),
     );
-    // dequeueOne picks 'b' (a's dep satisfied by succeededEntries), gets IDEMPOTENCY_CONFLICT → cascade
     expect(await dequeueOne('t1')).toBe(true);
-    for (const id of ['a', 'b', 'c']) expect((await db.runtimeOutbox.get(id))!.status).toBe('dead');
+    for (const id of ['cb', 'cc']) expect((await db.runtimeOutbox.get(id))!.status).toBe('dead');
   });
 });
 
@@ -209,10 +208,10 @@ describe('O5', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('P0-4：create 409 幂等', () => {
-  it('create 409 CONFLICT → 成功，后续 append 继续', async () => {
-    // create gets 409 CONFLICT → treated as success
+  it('create 409 CONFLICT (真实形状) → 成功，后续 append 继续', async () => {
+    // real API response: {success:false, errorCode:'CONFLICT', error:'...'}
     globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'CONFLICT' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, errorCode: 'CONFLICT', error: 'Session already exists' }), { status: 409 }))
       .mockResolvedValueOnce(new Response('{}', { status: 201 }));
     const cid = await enqueue({ kind: 'playback', op: 'create_session', sessionId: 'pb:c409', semanticKey: 'k:c', body: {} });
     const aid = await enqueue({ kind: 'playback', op: 'append_record', sessionId: 'pb:c409', semanticKey: 'k:a', body: {}, dependsOnEntryId: cid });
@@ -222,16 +221,32 @@ describe('P0-4：create 409 幂等', () => {
     expect(await db.succeededEntries.get(aid)).toBeTruthy();
   });
 
-  it('append IDEMPOTENCY_CONFLICT → 递归 dead 全链', async () => {
+  it('create 收到未知 409（非 CONFLICT）→ 不写成功凭据，按失败退避', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('HTTP 409'));
+    // stub fetch to return 409 with unknown errorCode (e.g. FUTURE_VERSION)
+    const resp = new Response(JSON.stringify({ success: false, errorCode: 'FUTURE_VERSION', error: 'Schema version mismatch' }), { status: 409 });
+    globalThis.fetch = vi.fn().mockResolvedValue(resp);
+    const cid = await enqueue({ kind: 'playback', op: 'create_session', sessionId: 'pb:c409u', semanticKey: 'k:cu', body: {} });
+    await dequeueOne('t1');
+    // 不应写成功凭据
+    expect(await db.succeededEntries.get(cid)).toBeUndefined();
+    // 不应标记 dead（走正常失败退避）
+    const e = await db.runtimeOutbox.get(cid);
+    expect(e!.status).toBe('pending');
+    expect(e!.attempts).toBe(1);
+  });
+
+  it('append IDEMPOTENCY_CONFLICT (真实形状) → 递归 dead', async () => {
     const ts = new Date().toISOString();
     await db.runtimeOutbox.bulkPut([
       { id: 'a', kind: 'playback' as const, op: 'create_session' as const, sessionId: 's', semanticKey: 'A', body: {}, createdAt: ts, attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 1 },
       { id: 'b', kind: 'playback' as const, op: 'append_record' as const, sessionId: 's', semanticKey: 'B', body: {}, createdAt: ts, attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 2, dependsOnEntryId: 'a' },
     ]);
-    // insert succeededEntries for 'a' so dependency checks pass
     await db.succeededEntries.put({ entryId: 'a', deletedAt: ts });
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'IDEMPOTENCY_CONFLICT' }), { status: 409 }));
-    await dequeueOne('t1'); // picks 'b', gets IDEMPOTENCY_CONFLICT → cascade dead
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: false, errorCode: 'IDEMPOTENCY_CONFLICT', error: 'Record content mismatch' }), { status: 409 }),
+    );
+    await dequeueOne('t1');
     expect((await db.runtimeOutbox.get('b'))!.status).toBe('dead');
   });
 });
@@ -242,18 +257,21 @@ describe('P0-4：create 409 幂等', () => {
 
 describe('P0-5：create 404 不无限循环', () => {
   it('create 404 → 正常退避，不产生第二个 create', async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('HTTP 404'));
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'NOT_FOUND', error: 'Session not found' }), { status: 404 }),
+    );
     const cid = await enqueue({ kind: 'playback', op: 'create_session', sessionId: 'pb:c404', semanticKey: 'k:c', body: {} });
     await dequeueOne('t1');
     const e = await db.runtimeOutbox.get(cid);
     expect(e!.status).toBe('pending');
     expect(e!.attempts).toBe(1);
-    // 不应有新 create 入队
     expect(await db.runtimeOutbox.count()).toBe(1);
   });
 
   it('create 连续 404 → 7次 dead + 级联', async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('HTTP 404'));
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'NOT_FOUND' }), { status: 404 }),
+    );
     // A→B→C chain, A is create that keeps failing
     const ts = new Date().toISOString();
     await db.runtimeOutbox.bulkPut([
@@ -273,7 +291,7 @@ describe('P0-5：create 404 不无限循环', () => {
 
   it('set_status/append 404 仍重建 create', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: 'NOT_FOUND' }), { status: 404 }),
+      new Response(JSON.stringify({ errorCode: 'NOT_FOUND', error: 'Session missing' }), { status: 404 }),
     );
     const eid = await enqueue({ kind: 'playback', op: 'set_status', sessionId: 'pb:s404', semanticKey: 'k:s', body: {} });
     expect(await dequeueOne('t1')).toBe(true);
