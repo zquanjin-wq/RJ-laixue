@@ -2,6 +2,8 @@
  * lib/runtime/quiz-outbox.ts
  *
  * R3.2: quizAttempt shadow write → outbox mode.
+ * Strict sequential chain: create → submit → completed → reviewed → archived
+ * Chain tail persisted in succeededEntries (same rw tx as outbox enqueue).
  */
 
 import { db } from '@/lib/utils/database';
@@ -20,13 +22,11 @@ function readResults(sceneId: string): unknown[] | null {
   } catch { return null; }
 }
 
-// ─── 开关 ────────────────────────────────────────────────────────────────────
+// ─── 开关 / ready ────────────────────────────────────────────────────────────
 
 export function isQuizOutboxEnabled(): boolean {
   return isRuntimeShadowEnabled() && process.env.NEXT_PUBLIC_RUNTIME_SHADOW_QUIZ === '1';
 }
-
-// ─── outboxReady 门禁 ────────────────────────────────────────────────────────
 
 const QUIZ_READY_KEY = 'r3:quiz:outbox:ready';
 
@@ -39,17 +39,32 @@ export function setQuizOutboxReady(): void {
   if (typeof localStorage !== 'undefined') localStorage.setItem(QUIZ_READY_KEY, '1');
 }
 
-// ─── drain ───────────────────────────────────────────────────────────────────
+// ─── 链尾（Dexie succeededEntries，与 outbox 同事务）────────────────────────
+
+function _chainKey(sessionId: string): string {
+  return `r3quiz:tail:${sessionId}`;
+}
+
+/** 在事务内读取链尾 entry ID（可为 undefined） */
+async function _getTailInTx(sessionId: string): Promise<string | undefined> {
+  const row = await db.succeededEntries.get(_chainKey(sessionId));
+  return row ? row.deletedAt : undefined; // repurposing deletedAt as tail entry id
+}
+
+/** 在事务内更新链尾 */
+async function _setTailInTx(sessionId: string, entryId: string): Promise<void> {
+  await db.succeededEntries.put({ entryId: _chainKey(sessionId), deletedAt: entryId });
+}
+
+// ─── drain / scheduler ───────────────────────────────────────────────────────
 
 let quizDrainRunning = false;
 let quizDrainTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 递归解析依赖链根条目的有效到期时间。复用 R3.1 playback 逻辑。 */
 async function resolveQuizEffectiveTime(entry: RuntimeOutboxEntry): Promise<number> {
   const allEntries = await db.runtimeOutbox.where('kind').equals('quizAttempt').toArray();
   const byId = new Map(allEntries.map((e) => [e.id, e]));
   const succIds = new Set((await db.succeededEntries.toArray()).map((s) => s.entryId));
-
   let current = entry;
   let blockerTime = new Date(entry.nextAttemptAt).getTime();
   const visited = new Set<string>();
@@ -67,8 +82,7 @@ async function resolveQuizEffectiveTime(entry: RuntimeOutboxEntry): Promise<numb
     }
     if (dep.status === 'pending') {
       blockerTime = Math.max(blockerTime, new Date(dep.nextAttemptAt).getTime());
-      current = dep;
-      continue;
+      current = dep; continue;
     }
     break;
   }
@@ -78,14 +92,11 @@ async function resolveQuizEffectiveTime(entry: RuntimeOutboxEntry): Promise<numb
 async function scheduleNextQuizDrain(): Promise<void> {
   if (quizDrainTimer) { clearTimeout(quizDrainTimer); quizDrainTimer = null; }
   if (!isQuizOutboxEnabled()) return;
-  const pending = await db.runtimeOutbox
-    .where('kind').equals('quizAttempt')
-    .filter((e) => e.status === 'pending')
-    .toArray();
+  const pending = await db.runtimeOutbox.where('kind').equals('quizAttempt')
+    .filter((e) => e.status === 'pending').toArray();
   if (pending.length === 0) return;
   const times = await Promise.all(pending.map((e) => resolveQuizEffectiveTime(e)));
-  const earliest = Math.min(...times);
-  const delay = Math.max(1000, earliest - Date.now()) + 50;
+  const delay = Math.max(1000, Math.min(...times) - Date.now()) + 50;
   quizDrainTimer = setTimeout(() => void drainQuizOutbox(), delay);
 }
 
@@ -116,142 +127,101 @@ export async function onQuizOutboxStartup(tabId?: string): Promise<{ ready: bool
   return { ready: true };
 }
 
-// ─── 公开 API ─────────────────────────────────────────────────────────────────
+// ─── 公开 API — 严格链 ──────────────────────────────────────────────────────
 
 /**
- * R3.2: 替代 shadowQuizSubmitted。
- * 入队 create → submit → status(completed)，并记录链尾 ID 供 reviewed 续接。
+ * 入队 create → submit → completed。链尾 = completed entry ID。
  */
 export async function quizSubmittedViaOutbox(
-  stageId: string | null | undefined,
-  sceneId: string,
+  stageId: string | null | undefined, sceneId: string,
 ): Promise<'enqueued' | 'skipped' | 'disabled'> {
   if (!isQuizOutboxEnabled() || !stageId) return 'disabled';
   const envelope = readSubmittedEnvelope(sceneId);
   if (!envelope) return 'skipped';
-
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
 
-  return db.transaction('rw', db.runtimeOutbox, async () => {
-    // create — 使用确定性 semKey 防重复
+  return db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
     const createId = await _qEnqueue({
       kind: 'quizAttempt', op: 'create_session', sessionId,
       semanticKey: `quiz:create:${sessionId}`,
       body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'active', createdAt: nowStr, updatedAt: nowStr },
     });
-    // submit record — depends on create
     const submitId = await _qEnqueue({
       kind: 'quizAttempt', op: 'append_record', sessionId,
       semanticKey: `quiz:submit:${sessionId}`,
-      body: {
-        id: `${sessionId}:submit`, createdAt: nowStr, sceneId,
-        payload: { phase: 'submitted' as const, answers: envelope.answers },
-      },
+      body: { id: `${sessionId}:submit`, createdAt: nowStr, sceneId,
+        payload: { phase: 'submitted' as const, answers: envelope.answers } },
     }, createId);
-    // set_status completed — depends on submit
-    await _qEnqueue({
+    const completedId = await _qEnqueue({
       kind: 'quizAttempt', op: 'set_status', sessionId,
-      semanticKey: `quiz:status:${sessionId}`,
+      semanticKey: `quiz:completed:${sessionId}`,   // distinct from archived
       body: { status: 'completed' as const, updatedAt: nowStr },
     }, submitId);
-
-    // 记录链尾用于 reviewed 续接
-    _setChainTail(sessionId, submitId, createId);
+    await _setTailInTx(sessionId, completedId);
     return 'enqueued' as const;
   });
 }
 
 /**
- * R3.2: 替代 shadowQuizReviewed。
- * 必须续接 submitted 链：复用同一 create_session，grade 依赖 submitted 链尾。
+ * 依赖当前链尾（completed），入队 reviewed。链尾 → reviewed。
  */
 export async function quizReviewedViaOutbox(
-  stageId: string | null | undefined,
-  sceneId: string,
+  stageId: string | null | undefined, sceneId: string,
 ): Promise<'enqueued' | 'skipped' | 'disabled'> {
   if (!isQuizOutboxEnabled() || !stageId) return 'disabled';
   const envelope = readSubmittedEnvelope(sceneId);
   if (!envelope) return 'skipped';
   const results = readResults(sceneId);
   if (!results) return 'skipped';
-
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
 
-  return db.transaction('rw', db.runtimeOutbox, async () => {
-    const chainInfo = _getChainTail(sessionId);
-    // grade 始终依赖 submitId——不绕过提交结果。
-    // submit 在 outbox → 等待；在 succeededEntries → 通用状态机放行；
-    // dead/superseded/lost → 状态机级联阻止 reviewed。
-    let gradeDepId: string | undefined = chainInfo?.submitId ?? chainInfo?.createId;
-
-    // ensure create exists (fallback — only when no chain info at all)
-    if (!gradeDepId) {
-      const existingCreate = await db.runtimeOutbox
-        .where('semanticKey').equals(`quiz:create:${sessionId}`)
-        .filter((e) => e.status !== 'superseded' && e.status !== 'dead')
-        .first();
-      if (!existingCreate) {
-        gradeDepId = await _qEnqueue({
-          kind: 'quizAttempt', op: 'create_session', sessionId,
-          semanticKey: `quiz:create:${sessionId}`,
-          body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'completed', createdAt: nowStr, updatedAt: nowStr },
-        });
-      } else {
-        gradeDepId = existingCreate.id;
-      }
+  return db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+    let tailId = await _getTailInTx(sessionId);
+    if (!tailId) {
+      // 无链尾 → 创建 create（session 可能由 reviewed 首次创建）
+      tailId = await _qEnqueue({
+        kind: 'quizAttempt', op: 'create_session', sessionId,
+        semanticKey: `quiz:create:${sessionId}`,
+        body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'completed', createdAt: nowStr, updatedAt: nowStr },
+      });
     }
-
-    await _qEnqueue({
+    const gradeId = await _qEnqueue({
       kind: 'quizAttempt', op: 'append_record', sessionId,
       semanticKey: `quiz:grade:${sessionId}`,
-      body: {
-        id: `${sessionId}:grade`, createdAt: nowStr, sceneId,
-        payload: { phase: 'reviewed' as const, answers: envelope.answers, results },
-      },
-    }, gradeDepId);
-
+      body: { id: `${sessionId}:grade`, createdAt: nowStr, sceneId,
+        payload: { phase: 'reviewed' as const, answers: envelope.answers, results } },
+    }, tailId);
+    await _setTailInTx(sessionId, gradeId);
     return 'enqueued' as const;
   });
 }
 
+/**
+ * 依赖当前链尾，入队 archived。链尾 → archived。
+ * semanticKey 与 completed 不同，防止压缩。
+ */
 export async function quizRetryViaOutbox(
-  stageId: string | null | undefined,
-  sceneId: string,
+  stageId: string | null | undefined, sceneId: string,
 ): Promise<'enqueued' | 'skipped' | 'disabled'> {
   if (!isQuizOutboxEnabled() || !stageId) return 'disabled';
   const envelope = readSubmittedEnvelope(sceneId);
   if (!envelope?.attemptId) return 'skipped';
-
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
 
-  return db.transaction('rw', db.runtimeOutbox, async () => {
-    await _qEnqueue({
+  return db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+    const tailId = await _getTailInTx(sessionId);
+    if (!tailId) return 'skipped' as const; // 无前序链 → 不发送独立的 archived
+    const archivedId = await _qEnqueue({
       kind: 'quizAttempt', op: 'set_status', sessionId,
-      semanticKey: `quiz:status:${sessionId}`,
+      semanticKey: `quiz:archived:${sessionId}`,   // distinct from completed
       body: { status: 'archived' as const, updatedAt: nowStr },
-    });
+    }, tailId);
+    await _setTailInTx(sessionId, archivedId);
     return 'enqueued' as const;
   });
-}
-
-// ─── 链尾追踪（用于 reviewed 续接 submitted 链）─────────────────────────────
-
-const CHAIN_KEY_PREFIX = 'r3:quiz:chain:';
-
-function _setChainTail(sessionId: string, submitId: string, createId: string): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(CHAIN_KEY_PREFIX + sessionId, JSON.stringify({ submitId, createId }));
-}
-
-function _getChainTail(sessionId: string): { submitId?: string; createId?: string } | null {
-  if (typeof localStorage === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(CHAIN_KEY_PREFIX + sessionId);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
 }
 
 // ─── 内部辅助 ────────────────────────────────────────────────────────────────
@@ -284,13 +254,11 @@ async function _qEnqueue(
 
 async function _qsDepsInTx(entryId: string): Promise<void> {
   const deps = await db.runtimeOutbox.where('dependsOnEntryId').equals(entryId)
-    .filter((e) => e.status === 'pending' && !e.leaseOwner)
-    .toArray();
+    .filter((e) => e.status === 'pending' && !e.leaseOwner).toArray();
   for (const d of deps) {
     await db.runtimeOutbox.update(d.id, { status: 'superseded' });
     await _qsDepsInTx(d.id);
   }
 }
 
-// 导出供调度器测试
 export { resolveQuizEffectiveTime };
