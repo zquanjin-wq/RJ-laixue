@@ -32,7 +32,7 @@ const QUIZ_READY_KEY = 'r3:quiz:outbox:ready';
 
 export function isQuizOutboxReady(): boolean {
   if (typeof localStorage === 'undefined') return false;
-  return localStorage.getItem(QUIZ_READY_KEY) === '1';
+  return isQuizOutboxEnabled() && localStorage.getItem(QUIZ_READY_KEY) === '1';
 }
 
 export function setQuizOutboxReady(): void {
@@ -44,6 +44,37 @@ export function setQuizOutboxReady(): void {
 let quizDrainRunning = false;
 let quizDrainTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** 递归解析依赖链根条目的有效到期时间。复用 R3.1 playback 逻辑。 */
+async function resolveQuizEffectiveTime(entry: RuntimeOutboxEntry): Promise<number> {
+  const allEntries = await db.runtimeOutbox.where('kind').equals('quizAttempt').toArray();
+  const byId = new Map(allEntries.map((e) => [e.id, e]));
+  const succIds = new Set((await db.succeededEntries.toArray()).map((s) => s.entryId));
+
+  let current = entry;
+  let blockerTime = new Date(entry.nextAttemptAt).getTime();
+  const visited = new Set<string>();
+  for (let depth = 0; depth < 50; depth++) {
+    if (!current.dependsOnEntryId || visited.has(current.id)) break;
+    visited.add(current.id);
+    const depId = current.dependsOnEntryId;
+    if (succIds.has(depId)) break;
+    const dep = byId.get(depId);
+    if (!dep) break;
+    if (dep.status === 'dead' || dep.status === 'superseded') break;
+    if (dep.status === 'sending' && dep.leaseUntil) {
+      blockerTime = Math.max(blockerTime, new Date(dep.leaseUntil).getTime());
+      break;
+    }
+    if (dep.status === 'pending') {
+      blockerTime = Math.max(blockerTime, new Date(dep.nextAttemptAt).getTime());
+      current = dep;
+      continue;
+    }
+    break;
+  }
+  return Math.max(new Date(entry.nextAttemptAt).getTime(), blockerTime);
+}
+
 async function scheduleNextQuizDrain(): Promise<void> {
   if (quizDrainTimer) { clearTimeout(quizDrainTimer); quizDrainTimer = null; }
   if (!isQuizOutboxEnabled()) return;
@@ -52,20 +83,7 @@ async function scheduleNextQuizDrain(): Promise<void> {
     .filter((e) => e.status === 'pending')
     .toArray();
   if (pending.length === 0) return;
-  // 复用 R3.1 依赖链解析逻辑——沿 dependsOnEntryId 找到根阻断时间
-  const timesPromises = pending.map(async (e) => {
-    if (!e.dependsOnEntryId) return new Date(e.nextAttemptAt).getTime();
-    const dep = await db.runtimeOutbox.get(e.dependsOnEntryId);
-    if (!dep) return new Date(e.nextAttemptAt).getTime();
-    if (dep.status === 'sending' && dep.leaseUntil) {
-      return Math.max(new Date(e.nextAttemptAt).getTime(), new Date(dep.leaseUntil).getTime());
-    }
-    if (dep.status === 'pending') {
-      return Math.max(new Date(e.nextAttemptAt).getTime(), new Date(dep.nextAttemptAt).getTime());
-    }
-    return new Date(e.nextAttemptAt).getTime();
-  });
-  const times = await Promise.all(timesPromises);
+  const times = await Promise.all(pending.map((e) => resolveQuizEffectiveTime(e)));
   const earliest = Math.min(...times);
   const delay = Math.max(1000, earliest - Date.now()) + 50;
   quizDrainTimer = setTimeout(() => void drainQuizOutbox(), delay);
@@ -273,3 +291,6 @@ async function _qsDepsInTx(entryId: string): Promise<void> {
     await _qsDepsInTx(d.id);
   }
 }
+
+// 导出供调度器测试
+export { resolveQuizEffectiveTime };

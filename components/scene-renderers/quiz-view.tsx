@@ -788,7 +788,7 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
     writeSubmittedAnswers(sceneId, answers);
     // R2 影子写（fire-and-forget，须在 writeSubmittedAnswers 之后：envelope 已持久化；
     // 影子路径只从持久化 envelope 读回 attemptId+answers，不用内存数据）
-    void (isQuizOutboxReady() ? quizSubmittedViaOutbox(stageId, sceneId) : shadowQuizSubmitted(stageId, sceneId));
+    void (isQuizOutboxReady() ? quizSubmittedViaOutbox(stageId, sceneId).then(() => { void scheduleQuizOutboxDrain(); }) : shadowQuizSubmitted(stageId, sceneId));
   }, [clearAnswersCache, answers, sceneId, stageId]);
 
   // When entering grading phase, grade choice questions locally + call API for short-answer
@@ -821,7 +821,7 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
       setPhase('reviewing');
       writeSubmittedResults(sceneId, ordered);
       // R2 影子写（fire-and-forget）
-      void (isQuizOutboxReady() ? quizReviewedViaOutbox(stageId, sceneId) : shadowQuizReviewed(stageId, sceneId, ordered));
+      void (isQuizOutboxReady() ? quizReviewedViaOutbox(stageId, sceneId).then(() => { void scheduleQuizOutboxDrain(); }) : shadowQuizReviewed(stageId, sceneId, ordered));
     })();
 
     return () => {
@@ -836,7 +836,7 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
     clearAnswersCache();
     // R2 影子写：归档本周期的 runtime 会话——必须先于 clearSubmitted
     // （后者会清除 attemptId，之后无法再定位要归档的会话）
-    void (isQuizOutboxReady() ? quizRetryViaOutbox(stageId, sceneId) : shadowQuizRetry(stageId, sceneId));
+    void (isQuizOutboxReady() ? quizRetryViaOutbox(stageId, sceneId).then(() => { void scheduleQuizOutboxDrain(); }) : shadowQuizRetry(stageId, sceneId));
     clearSubmitted(sceneId);
   }, [clearAnswersCache, sceneId, stageId]);
 

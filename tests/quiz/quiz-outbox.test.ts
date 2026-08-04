@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   quizSubmittedViaOutbox, quizReviewedViaOutbox, quizRetryViaOutbox,
   drainQuizOutbox, onQuizOutboxStartup, isQuizOutboxReady, setQuizOutboxReady,
+  resolveQuizEffectiveTime,
 } from '@/lib/runtime/quiz-outbox';
 import { db } from '@/lib/utils/database';
 
@@ -54,6 +55,18 @@ describe('双开关', () => {
     const r = await onQuizOutboxStartup();
     expect(r.ready).toBe(false);
     expect(isQuizOutboxReady()).toBe(false);
+  });
+
+  it('ready=1 后关闭子开关 → isQuizOutboxReady=false', async () => {
+    enableSwitch();
+    await onQuizOutboxStartup();
+    expect(isQuizOutboxReady()).toBe(true);
+    // Turn off sub-switch
+    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW_QUIZ', '0');
+    expect(isQuizOutboxReady()).toBe(false);
+    // Turn it back on
+    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW_QUIZ', '1');
+    expect(isQuizOutboxReady()).toBe(true);
   });
 });
 
@@ -107,18 +120,21 @@ describe('submit→reviewed 严格依赖', () => {
     expect(grade!.dependsOnEntryId).toBe(chainEntry.submitId);
   });
 
-  it('submit dead → reviewed 被级联阻止', async () => {
+  it('submit dead → reviewed 被级联 dead', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
     writeEnvelope('sc1', 'att1', { q1: 'A' }); writeResults('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
     const all1 = await db.runtimeOutbox.toArray();
     const submit = all1.find((e) => e.semanticKey.startsWith('quiz:submit'))!;
+    // Mark submit dead
     await db.runtimeOutbox.update(submit.id, { status: 'dead' });
     await quizReviewedViaOutbox('st1', 'sc1');
-    const all2 = await db.runtimeOutbox.toArray();
-    const grade = all2.find((e) => e.semanticKey.startsWith('quiz:grade'))!;
-    // grade depends on dead submit → state machine blocks it
+    const grade = (await db.runtimeOutbox.toArray()).find((e) => e.semanticKey.startsWith('quiz:grade'))!;
     expect(grade.dependsOnEntryId).toBe(submit.id);
-    expect(grade.status).toBe('pending'); // blocked, not processed
+    // drain should cascade dead on grade (dequeueOne finds dead dep → cascade)
+    await drainQuizOutbox('tab-d');
+    const final = await db.runtimeOutbox.get(grade.id);
+    expect(final!.status).toBe('dead');
   });
 });
 
@@ -147,24 +163,31 @@ describe('drain + scheduler', () => {
     expect(await db.runtimeOutbox.where('status').equals('pending').count()).toBe(0);
   });
 
-  it('退避时间计算：阻塞 create 时取 create 的 nextAttemptAt', async () => {
+  it('三段链 create→submit→status：全部退避5min', async () => {
     const nowMs = Date.now();
     const fiveMin = new Date(nowMs + 5 * 60 * 1000).toISOString();
-    const cId = crypto.randomUUID();
-    const aId = crypto.randomUUID();
+    const cId = crypto.randomUUID(), sId = crypto.randomUUID(), tId = crypto.randomUUID();
     await db.runtimeOutbox.bulkPut([
       { id: cId, kind: 'quizAttempt' as const, op: 'create_session' as const,
-        sessionId: 'qa:st:sc:a1', semanticKey: 'qc', body: {}, createdAt: new Date().toISOString(),
+        sessionId: 'qa:cst', semanticKey: 'qc', body: {}, createdAt: new Date().toISOString(),
         attempts: 3, nextAttemptAt: fiveMin, status: 'pending' as const, sequence: 1 },
-      { id: aId, kind: 'quizAttempt' as const, op: 'append_record' as const,
-        sessionId: 'qa:st:sc:a1', semanticKey: 'qa', body: {}, createdAt: new Date().toISOString(),
+      { id: sId, kind: 'quizAttempt' as const, op: 'append_record' as const,
+        sessionId: 'qa:cst', semanticKey: 'qs', body: {}, createdAt: new Date().toISOString(),
         attempts: 0, nextAttemptAt: new Date(nowMs).toISOString(), status: 'pending' as const, sequence: 2,
         dependsOnEntryId: cId },
+      { id: tId, kind: 'quizAttempt' as const, op: 'set_status' as const,
+        sessionId: 'qa:cst', semanticKey: 'qt', body: {}, createdAt: new Date().toISOString(),
+        attempts: 0, nextAttemptAt: new Date(nowMs).toISOString(), status: 'pending' as const, sequence: 3,
+        dependsOnEntryId: sId },
     ]);
-    // The drain scheduler should resolve to ~5min (blocked by create)
-    // We can't test setTimeout directly due to Dexie, but the drain won't fire now
-    const pending = await db.runtimeOutbox.where('status').equals('pending').toArray();
-    expect(pending.length).toBe(2); // both still pending (create blocked)
+    // Dynamically import the resolver (not exported, but testable via scheduleNextQuizDrain's logic)
+    // Use the fact that resolveQuizEffectiveTime walks the full chain
+    const { resolveQuizEffectiveTime } = await import('@/lib/runtime/quiz-outbox');
+    // Test status (3rd level) resolves to create's 5min
+    const status = (await db.runtimeOutbox.toArray()).find((e) => e.op === 'set_status')!;
+    const resolved = await resolveQuizEffectiveTime(status);
+    expect(resolved - nowMs).toBeGreaterThan(4.5 * 60 * 1000);
+    expect(resolved - nowMs).toBeLessThan(5.5 * 60 * 1000);
   });
 });
 
