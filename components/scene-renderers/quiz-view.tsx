@@ -37,7 +37,15 @@ import {
   shadowQuizReviewed,
   shadowQuizRetry,
   shadowQuizSubmitted,
-} from '@/lib/runtime/shadow-writer';
+} from '@/lib/runtime/shadow-writer';   // R2 回退路径
+import {
+  quizSubmittedViaOutbox,
+  quizReviewedViaOutbox,
+  quizRetryViaOutbox,
+  isQuizOutboxReady,
+  onQuizOutboxStartup,
+  scheduleQuizOutboxDrain,
+} from '@/lib/runtime/quiz-outbox';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -697,6 +705,19 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
   // R2 影子写需要 stageId（runtime 会话 id 的组成 + 服务端课程可读门禁）
   const stageId = useStageStore((s) => s.stage?.id ?? null);
 
+  // R3.2: quiz outbox startup + drain + online/visibility recovery
+  useEffect(() => { void onQuizOutboxStartup(); }, []);
+  useEffect(() => {
+    const onOnline = () => void scheduleQuizOutboxDrain();
+    const onVisible = () => { if (document.visibilityState === 'visible') void scheduleQuizOutboxDrain(); };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   // Rehydrate submitted state from localStorage on first mount. Runs once.
   const [initialSubmitted] = useState<SubmittedState>(() => readSubmittedState(sceneId));
 
@@ -767,7 +788,7 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
     writeSubmittedAnswers(sceneId, answers);
     // R2 影子写（fire-and-forget，须在 writeSubmittedAnswers 之后：envelope 已持久化；
     // 影子路径只从持久化 envelope 读回 attemptId+answers，不用内存数据）
-    void shadowQuizSubmitted(stageId, sceneId);
+    void (isQuizOutboxReady() ? quizSubmittedViaOutbox(stageId, sceneId) : shadowQuizSubmitted(stageId, sceneId));
   }, [clearAnswersCache, answers, sceneId, stageId]);
 
   // When entering grading phase, grade choice questions locally + call API for short-answer
@@ -800,7 +821,7 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
       setPhase('reviewing');
       writeSubmittedResults(sceneId, ordered);
       // R2 影子写（fire-and-forget）
-      void shadowQuizReviewed(stageId, sceneId, ordered);
+      void (isQuizOutboxReady() ? quizReviewedViaOutbox(stageId, sceneId) : shadowQuizReviewed(stageId, sceneId, ordered));
     })();
 
     return () => {
@@ -815,7 +836,7 @@ export function QuizView({ questions, sceneId }: QuizViewProps) {
     clearAnswersCache();
     // R2 影子写：归档本周期的 runtime 会话——必须先于 clearSubmitted
     // （后者会清除 attemptId，之后无法再定位要归档的会话）
-    void shadowQuizRetry(stageId, sceneId);
+    void (isQuizOutboxReady() ? quizRetryViaOutbox(stageId, sceneId) : shadowQuizRetry(stageId, sceneId));
     clearSubmitted(sceneId);
   }, [clearAnswersCache, sceneId, stageId]);
 

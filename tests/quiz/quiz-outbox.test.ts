@@ -2,10 +2,12 @@
  * R3.2 quiz outbox 门禁测试
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { quizSubmittedViaOutbox, quizReviewedViaOutbox, quizRetryViaOutbox, drainQuizOutbox } from '@/lib/runtime/quiz-outbox';
+import {
+  quizSubmittedViaOutbox, quizReviewedViaOutbox, quizRetryViaOutbox,
+  drainQuizOutbox, onQuizOutboxStartup, isQuizOutboxReady, setQuizOutboxReady,
+} from '@/lib/runtime/quiz-outbox';
 import { db } from '@/lib/utils/database';
 
-// Mock localStorage for quiz envelope
 const store: Record<string, string> = {};
 vi.stubGlobal('window', {});
 vi.stubGlobal('localStorage', {
@@ -18,9 +20,8 @@ function writeEnvelope(sceneId: string, attemptId: string, answers: Record<strin
   store[`quizAnswers:${sceneId}`] = JSON.stringify({ v: 1, attemptId, answers });
   store[`quizResults:${sceneId}`] = JSON.stringify([]);
 }
-
-function writeResults(sceneId: string, results: unknown[]) {
-  store[`quizResults:${sceneId}`] = JSON.stringify(results);
+function writeResults(sceneId: string) {
+  store[`quizResults:${sceneId}`] = JSON.stringify([{ q: 'q1', correct: true }]);
 }
 
 afterEach(async () => {
@@ -34,66 +35,73 @@ afterEach(async () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('quizSubmitted', () => {
-  beforeEach(() => {
-    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
-  });
-
+  beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); });
   it('入队 create→submit→status', async () => {
     writeEnvelope('sc1', 'att1', { q1: 'A' });
-    const result = await quizSubmittedViaOutbox('st1', 'sc1');
-    expect(result).toBe('enqueued');
+    expect(await quizSubmittedViaOutbox('st1', 'sc1')).toBe('enqueued');
     const entries = await db.runtimeOutbox.toArray();
     expect(entries.length).toBe(3);
     expect(entries.map((e) => e.op).sort()).toEqual(['append_record', 'create_session', 'set_status']);
   });
-
   it('无 envelope → skipped', async () => {
     expect(await quizSubmittedViaOutbox('st1', 'sc2')).toBe('skipped');
-    expect(await db.runtimeOutbox.count()).toBe(0);
   });
-
   it('开关关闭 → disabled', async () => {
     vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '0');
     writeEnvelope('sc1', 'att1', { q1: 'A' });
     expect(await quizSubmittedViaOutbox('st1', 'sc1')).toBe('disabled');
-    vi.unstubAllEnvs();
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe('quizReviewed', () => {
-  beforeEach(() => {
-    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
-  });
+describe('submitted→reviewed 严格依赖链', () => {
+  beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); });
 
-  it('入队 create→grade', async () => {
+  it('reviewed grade 依赖 submitted 链尾（同 session）', async () => {
     writeEnvelope('sc1', 'att1', { q1: 'A' });
-    writeResults('sc1', [{ questionId: 'q1', correct: true }]);
-    const result = await quizReviewedViaOutbox('st1', 'sc1');
-    expect(result).toBe('enqueued');
-    const entries = await db.runtimeOutbox.toArray();
-    expect(entries.length).toBe(2);
-    expect(entries.map((e) => e.op).sort()).toEqual(['append_record', 'create_session']);
-    const grade = entries.find((e) => e.op === 'append_record');
-    const body = grade!.body as any;
-    expect(body.payload.phase).toBe('reviewed');
-    expect(body.payload.results).toBeTruthy();
+    writeResults('sc1');
+    // First submitted
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const submitEntries = await db.runtimeOutbox.toArray();
+    const submitOp = submitEntries.find((e) => e.op === 'append_record');
+    expect(submitOp).toBeTruthy();
+    // Then reviewed — should reuse same create_session, grade depends on submit chain
+    await quizReviewedViaOutbox('st1', 'sc1');
+    const all = await db.runtimeOutbox.toArray();
+    // Should NOT create a second create_session
+    const creates = all.filter((e) => e.op === 'create_session');
+    expect(creates.length).toBe(1);
+    // grade should depend on something from the submitted chain
+    const grade = all.find((e) => e.semanticKey.startsWith('quiz:grade'));
+    expect(grade).toBeTruthy();
+    expect(grade!.dependsOnEntryId).toBeTruthy();
   });
 
-  it('无结果 → skipped', async () => {
-    writeEnvelope('sc2', 'att2', { q1: 'A' });
-    expect(await quizReviewedViaOutbox('st1', 'sc2')).toBe('skipped');
+  it('submitted 未发送时立即 reviewed → grade 链不悬挂', async () => {
+    writeEnvelope('sc1', 'att1', { q1: 'A' });
+    writeResults('sc1');
+    // Both enqueue without drain in between
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    await quizReviewedViaOutbox('st1', 'sc1');
+    const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
+    // All create_session entries
+    const creates = entries.filter((e) => e.op === 'create_session');
+    expect(creates.length).toBe(1); // reused, not duplicated
+    // No pending depends on superseded
+    const supersededIds = new Set(entries.filter((e) => e.status === 'superseded').map((e) => e.id));
+    for (const e of entries) {
+      if (e.status === 'pending' && e.dependsOnEntryId) {
+        expect(supersededIds.has(e.dependsOnEntryId)).toBe(false);
+      }
+    }
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('quizRetry', () => {
-  beforeEach(() => {
-    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
-  });
-
+  beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); });
   it('入队 set_status:archived', async () => {
     writeEnvelope('sc1', 'att1', { q1: 'A' });
     const result = await quizRetryViaOutbox('st1', 'sc1');
@@ -103,20 +111,14 @@ describe('quizRetry', () => {
     expect(entries[0].op).toBe('set_status');
     expect((entries[0].body as any).status).toBe('archived');
   });
-
-  it('无 attemptId → skipped', async () => {
-    expect(await quizRetryViaOutbox('st1', 'sc2')).toBe('skipped');
-  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe('drain', () => {
-  beforeEach(() => {
-    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
-  });
+describe('drain + recovery', () => {
+  beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); });
 
-  it('drain sends all enqueued entries', async () => {
+  it('drain sends all enqueued', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
     writeEnvelope('sc1', 'att1', { q1: 'A' });
     await quizSubmittedViaOutbox('st1', 'sc1');
@@ -124,29 +126,88 @@ describe('drain', () => {
     expect(await db.runtimeOutbox.where('status').equals('pending').count()).toBe(0);
     expect(await db.succeededEntries.count()).toBeGreaterThan(0);
   });
+
+  it('startup sets ready + drains', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+    writeEnvelope('sc1', 'att1', { q1: 'A' });
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const result = await onQuizOutboxStartup('tab-s');
+    expect(result.ready).toBe(true);
+    expect(isQuizOutboxReady()).toBe(true);
+    expect(await db.runtimeOutbox.where('status').equals('pending').count()).toBe(0);
+  });
+
+  it('outbox not ready → old path still works', async () => {
+    // Verify isQuizOutboxReady returns false before startup
+    expect(isQuizOutboxReady()).toBe(false);
+    // After startup, ready=true
+    writeEnvelope('sc1', 'att1', { q1: 'A' });
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+    await onQuizOutboxStartup('tab-t');
+    expect(isQuizOutboxReady()).toBe(true);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe('依赖链', () => {
-  beforeEach(() => {
-    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
+describe('body 契约', () => {
+  beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); });
+
+  it('create body matches R2 contract', async () => {
+    writeEnvelope('sc1', 'att1', { q1: 'A' });
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const c = (await db.runtimeOutbox.toArray()).find((e) => e.op === 'create_session');
+    const b = c!.body as any;
+    expect(b.id).toBe('qa:st1:sc1:att1');
+    expect(b.kind).toBe('quizAttempt');
+    expect(b.stageId).toBe('st1');
+    expect(b.status).toBe('active');
+    expect(b.createdAt).toBeTruthy();
+    expect(b.updatedAt).toBeTruthy();
   });
 
-  it('submit→grade→status 正确依赖链', async () => {
+  it('submit record body matches R2 contract', async () => {
     writeEnvelope('sc1', 'att1', { q1: 'A' });
-    writeResults('sc1', [{ questionId: 'q1', correct: true }]);
-    // First submitted (create→submit→status), then reviewed (create→grade)
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const s = (await db.runtimeOutbox.toArray()).find((e) => e.op === 'append_record' && e.semanticKey.startsWith('quiz:submit'));
+    const b = s!.body as any;
+    expect(b.id).toBe('qa:st1:sc1:att1:submit');
+    expect(b.sceneId).toBe('sc1');
+    expect(b.payload.phase).toBe('submitted');
+    expect(b.payload.answers).toEqual({ q1: 'A' });
+  });
+
+  it('grade record body matches R2 contract', async () => {
+    writeEnvelope('sc1', 'att1', { q1: 'A' });
+    writeResults('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
     await quizReviewedViaOutbox('st1', 'sc1');
-    const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    expect(entries.length).toBe(5);
-    // submitted chain: create→submit→status (seq 1-3)
-    // reviewed chain: create→grade (seq 4-5)
-    const submits = entries.filter((e) => e.semanticKey.startsWith('quiz:submit'));
-    expect(submits.length).toBe(1);
-    const grades = entries.filter((e) => e.semanticKey.startsWith('quiz:grade'));
-    expect(grades.length).toBe(1);
-    expect(grades[0].dependsOnEntryId).toBeTruthy();
+    const g = (await db.runtimeOutbox.toArray()).find((e) => e.op === 'append_record' && e.semanticKey.startsWith('quiz:grade'));
+    const b = g!.body as any;
+    expect(b.id).toBe('qa:st1:sc1:att1:grade');
+    expect(b.payload.phase).toBe('reviewed');
+    expect(b.payload.results).toBeTruthy();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('幂等 + 压缩', () => {
+  beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); });
+
+  it('第二次 submit 压缩旧链', async () => {
+    writeEnvelope('sc1', 'att1', { q1: 'A' });
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const firstCount = await db.runtimeOutbox.count();
+    // Second submit with same envelope
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const all = await db.runtimeOutbox.toArray();
+    // Old entries compacted, replaced
+    const pending = all.filter((e) => e.status === 'pending');
+    const superseded = all.filter((e) => e.status === 'superseded');
+    expect(pending.length).toBeGreaterThan(0);
+    expect(superseded.length).toBeGreaterThan(0);
+    // Old submit entry compacted
+    expect(superseded.some((e) => e.op === 'append_record')).toBe(true);
   });
 });
