@@ -52,7 +52,7 @@ async function scheduleNextDrain(): Promise<void> {
   if (pending.length === 0) return;
 
   const earliest = Math.min(...pending.map((e) => new Date(e.nextAttemptAt).getTime()));
-  const delay = Math.max(0, earliest - Date.now()) + 50; // +50ms buffer
+  const delay = Math.max(1000, earliest - Date.now()) + 50; // 1s floor + 50ms buffer
   drainTimer = setTimeout(() => void drainPlaybackOutbox(), delay);
 }
 
@@ -96,10 +96,11 @@ export async function shadowPlaybackProgressViaOutbox(stageId: string): Promise<
     }, createId);
 
     if (row.completed) {
-      await _enqueueInTx({
+      const statusId = await _enqueueInTx({
         kind: 'playback', op: 'set_status', sessionId, semanticKey: `status:${sessionId}`,
         body: { status: 'completed', updatedAt: capturedAt },
       }, appendId);
+      await db.playbackState.update(stageId, { r3OutboxStatusEntryId: statusId });
     }
 
     // 原子清除 shadowPending（标记已入队）
@@ -185,13 +186,10 @@ export function schedulePlaybackOutboxDrain(): void {
 async function _cleanupCompletedRows(): Promise<void> {
   const completedRows = await db.playbackState.filter((r) => r.completed === true).toArray();
   for (const row of completedRows) {
-    if (!row.runtimeShadowEventId) continue;
-    const sid = `pb:${row.stageId}`;
-    // 确认该 session 的所有 outbox 条目已排空（全部成功或 dead）
-    const pendingEntries = await db.runtimeOutbox.where('sessionId').equals(sid).toArray();
-    const active = pendingEntries.filter((e) => e.status === 'pending' || e.status === 'sending');
-    if (active.length > 0) continue;
-
+    if (!row.runtimeShadowEventId || !row.r3OutboxStatusEntryId) continue;
+    // 必须确认 set_status 条目已在 succeededEntries（成功），而非 dead 或被跳过
+    const cred = await db.succeededEntries.get(row.r3OutboxStatusEntryId);
+    if (!cred) continue;
     // R2.1 条件删除：仅当 runtimeShadowEventId 匹配
     const current = await db.playbackState.get(row.stageId);
     if (current?.runtimeShadowEventId === row.runtimeShadowEventId) {

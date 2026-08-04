@@ -103,17 +103,29 @@ describe('迁移 + outboxReady', () => {
     expect(isOutboxReady()).toBe(true);
   });
 
-  it('迁移失败不清 shadowPending，outboxReady=false', async () => {
-    // Simulate: shadowPending present but enqueue-tx fails — we can't easily inject
-    // a DB failure, so test that a failed call doesn't set the flag.
-    // Verify: after startup without setting ready, flag stays false.
-    await db.playbackState.put(makePlaybackRow('mf'));
-    // Manually simulate failed migration by not calling migrateShadowPendingToOutbox
-    // and ensuring onPlaybackOutboxStartup returns ready=false if env disabled
-    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '0');
-    const s = await onPlaybackOutboxStartup();
-    expect(s.ready).toBe(false);
-    expect(isOutboxReady()).toBe(false);
+  it('迁移中第二行事务失败 → outboxReady 不设、未迁移 pending 保留', async () => {
+    await db.playbackState.bulkPut([
+      makePlaybackRow('mf1'),
+      makePlaybackRow('mf2', { completed: true }),
+    ]);
+    // Inject DB write failure: runtimeOutbox.put throws after first row is done
+    let putCount = 0;
+    const realPut = (db.runtimeOutbox as any).put as Function;
+    let restorePut: Function | null = null;
+    try {
+      (db.runtimeOutbox as any).put = async (entry: any) => {
+        putCount++;
+        if (putCount >= 3) throw new Error('Injected DB write failure');
+        return realPut.call(db.runtimeOutbox, entry);
+      };
+      const r = await migrateShadowPendingToOutbox();
+      expect(r.failed).toBe(true);
+      expect(isOutboxReady()).toBe(false);
+      const row2 = await db.playbackState.get('mf2');
+      expect(row2!.shadowPending).toBeTruthy();
+    } finally {
+      (db.runtimeOutbox as any).put = realPut;
+    }
   });
 });
 

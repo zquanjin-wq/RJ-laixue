@@ -165,6 +165,8 @@ export interface PlaybackStateRecord {
   /** A2：结构化 pending（非松散布尔）。发送成功后只能条件清除：
    *  仅当数据库当前 eventId === 已发送 eventId 时清除（R2.1 §4.3） */
   shadowPending?: { eventId: string; capturedAt: string };
+  /** R3.1：completed 行的 set_status outbox entry ID，用于清理时校验 succeededEntries */
+  r3OutboxStatusEntryId?: string;
 }
 
 /**
