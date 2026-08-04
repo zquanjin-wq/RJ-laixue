@@ -289,6 +289,76 @@ describe('superseded 级联 + lease 回收', () => {
     const status = await db.runtimeOutbox.get(statusId);
     expect(status).toBeUndefined(); // sent
   });
+
+  it('遗留 pending→superseded → dequeueOne 级联 dead', async () => {
+    const ts = new Date().toISOString();
+    await db.runtimeOutbox.bulkPut([
+      {
+        id: 'sup-ol', kind: 'playback' as const, op: 'append_record' as const,
+        sessionId: 'pb:sd', semanticKey: 'k:a', body: {}, createdAt: ts,
+        attempts: 0, nextAttemptAt: ts, status: 'superseded' as const, sequence: 1,
+      },
+      {
+        id: 'pen-dep', kind: 'playback' as const, op: 'set_status' as const,
+        sessionId: 'pb:sd', semanticKey: 'k:s', body: {}, createdAt: ts,
+        attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 2,
+        dependsOnEntryId: 'sup-ol',
+      },
+    ]);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+    const { dequeueOne } = await import('@/lib/runtime/outbox');
+    await dequeueOne('tab-sd');
+    const final = await db.runtimeOutbox.get('pen-dep');
+    expect(final!.status).toBe('dead'); // cascaded, not stuck as pending
+  });
+
+  it('scheduler 过期 lease → resolveEffectiveNextAttempt 映射到 leaseUntil', async () => {
+    const ts = new Date().toISOString();
+    const nowMs = Date.now();
+    const sendId = 'send-sched2';
+    await db.runtimeOutbox.bulkPut([
+      {
+        id: sendId, kind: 'playback' as const, op: 'append_record' as const,
+        sessionId: 'pb:sch2', semanticKey: 'k:a', body: {}, createdAt: ts,
+        attempts: 0, nextAttemptAt: ts, status: 'sending' as const, sequence: 2,
+        leaseOwner: 'old', leaseUntil: new Date(nowMs - 10000).toISOString(),
+      },
+      {
+        id: 'stat-sched2', kind: 'playback' as const, op: 'set_status' as const,
+        sessionId: 'pb:sch2', semanticKey: 'k:s', body: {},
+        createdAt: ts, attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 3,
+        dependsOnEntryId: sendId,
+      },
+    ]);
+    const { resolveEffectiveNextAttempt } = await import('@/lib/runtime/playback-outbox');
+    const resolved = await resolveEffectiveNextAttempt((await db.runtimeOutbox.get('stat-sched2'))!);
+    // Lease is 10s expired → resolved time should be in the past (≤ now + 1s)
+    expect(resolved).toBeLessThanOrEqual(nowMs + 1000);
+  });
+
+  it('scheduler 5min 退避 → resolveEffectiveNextAttempt≥4.5min', async () => {
+    const nowMs = Date.now();
+    const fiveMin = new Date(nowMs + 5 * 60 * 1000).toISOString();
+    const cId = crypto.randomUUID();
+    const aId = crypto.randomUUID();
+    await db.runtimeOutbox.bulkPut([
+      {
+        id: cId, kind: 'playback' as const, op: 'create_session' as const,
+        sessionId: 'pb:nopoll', semanticKey: 's:c', body: {}, createdAt: new Date().toISOString(),
+        attempts: 3, nextAttemptAt: fiveMin, status: 'pending' as const, sequence: 1,
+      },
+      {
+        id: aId, kind: 'playback' as const, op: 'append_record' as const,
+        sessionId: 'pb:nopoll', semanticKey: 's:a', body: {}, createdAt: new Date().toISOString(),
+        attempts: 0, nextAttemptAt: new Date(nowMs).toISOString(), status: 'pending' as const, sequence: 2,
+        dependsOnEntryId: cId,
+      },
+    ]);
+    const { resolveEffectiveNextAttempt } = await import('@/lib/runtime/playback-outbox');
+    const resolved = await resolveEffectiveNextAttempt((await db.runtimeOutbox.get(aId))!);
+    // Resolve through chain to create's 5min backoff, not append's now
+    expect(resolved - nowMs).toBeGreaterThan(4.5 * 60 * 1000);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

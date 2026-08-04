@@ -93,7 +93,7 @@ async function scheduleNextDrain(): Promise<void> {
 
   const times = await Promise.all(pending.map((e) => resolveEffectiveNextAttempt(e)));
   const earliest = Math.min(...times);
-  const delay = Math.max(0, earliest - Date.now()) + 50;
+  const delay = Math.max(1000, earliest - Date.now()) + 50;
   drainTimer = setTimeout(() => void drainPlaybackOutbox(), delay);
 }
 

@@ -181,7 +181,7 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
         if (entry.dependsOnEntryId) {
           const dep = await db.runtimeOutbox.get(entry.dependsOnEntryId);
           if (dep) {
-            if (dep.status === 'dead') {
+            if (dep.status === 'dead' || dep.status === 'superseded') {
               await cascadeMarkDeadInTx(entry.id);
               reportTelemetry('outbox_dependency_dead', { rootEntryId: entry.id });
               return { sentinel: DEAD_CASCADE_SENTINEL };
