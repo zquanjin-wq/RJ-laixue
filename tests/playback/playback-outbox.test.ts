@@ -228,6 +228,71 @@ describe('Scheduler 依赖链', () => {
 
 // ══════════════════════════════════════════════════════════════════════════════
 
+describe('superseded 级联 + lease 回收', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
+    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK', '1');
+  });
+
+  it('completed 链被新快照压缩后，无 pending→superseded 悬挂', async () => {
+    // Scenario: completed row creates append→status chain
+    await db.playbackState.put(makePlaybackRow('csc', { completed: true }));
+    await shadowPlaybackProgressViaOutbox('csc');
+    // New snapshot comes in, compresses old append → superseded
+    // set_status (depends on old append) should also be recursively superseded
+    await db.playbackState.update('csc', {
+      shadowPending: { eventId: 'evt-csc-v2', capturedAt: new Date().toISOString() },
+      actionIndex: 10,
+    });
+    await shadowPlaybackProgressViaOutbox('csc');
+    // All old entries should be superseded, new entries should be pending
+    const all = await db.runtimeOutbox.toArray();
+    const pending = all.filter((e) => e.status === 'pending');
+    const superseded = all.filter((e) => e.status === 'superseded');
+    // No pending entry should depend on a superseded entry
+    const supersededIds = new Set(superseded.map((e) => e.id));
+    for (const p of pending) {
+      if (p.dependsOnEntryId) {
+        expect(supersededIds.has(p.dependsOnEntryId)).toBe(false);
+      }
+    }
+    // Old status entry should be superseded (not dangling pending)
+    expect(superseded.some((e) => e.op === 'set_status')).toBe(true);
+  });
+
+  it('sending lease 过期 → drain 回收后后继可发送', async () => {
+    // Set up: create succeeded (in succeededEntries), append is sent but sending (expired lease),
+    // status depends on append
+    const ts = new Date().toISOString();
+    await db.succeededEntries.put({ entryId: 'create-c', deletedAt: ts });
+    const appendId = 'append-lr';
+    const statusId = 'status-lr';
+    await db.runtimeOutbox.bulkPut([
+      {
+        id: appendId, kind: 'playback' as const, op: 'append_record' as const,
+        sessionId: 'pb:lr', semanticKey: 'k:a', body: {}, createdAt: ts,
+        attempts: 0, nextAttemptAt: ts, status: 'sending' as const, sequence: 2,
+        leaseOwner: 'old-tab', leaseUntil: new Date(Date.now() - 99999).toISOString(),
+      },
+      {
+        id: statusId, kind: 'playback' as const, op: 'set_status' as const,
+        sessionId: 'pb:lr', semanticKey: 'k:s', body: { status: 'completed', updatedAt: ts },
+        createdAt: ts, attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 3,
+        dependsOnEntryId: appendId,
+      },
+    ]);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+    // Drain should: cleanup expired lease → send append → send status
+    await drainPlaybackOutbox('tab-lr');
+    const append = await db.runtimeOutbox.get(appendId);
+    expect(append).toBeUndefined(); // sent
+    const status = await db.runtimeOutbox.get(statusId);
+    expect(status).toBeUndefined(); // sent
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+
 describe('幂等+压缩', () => {
   beforeEach(() => {
     vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');

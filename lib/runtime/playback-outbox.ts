@@ -58,7 +58,7 @@ async function resolveEffectiveNextAttempt(entry: RuntimeOutboxEntry): Promise<n
     if (succIds.has(depId)) break;
     const dep = byId.get(depId);
     if (!dep) break; // not in outbox + not in succeeded → dependency_lost, drain handles it
-    if (dep.status === 'dead') break; // will be cascade-marked next drain
+    if (dep.status === 'dead' || dep.status === 'superseded') break; // will be cascade-handled next drain
     if (dep.status === 'sending' && dep.leaseUntil) {
       // Blocked by a sending entry — use max of its leaseUntil and now
       const leaseEnd = new Date(dep.leaseUntil).getTime();
@@ -210,6 +210,7 @@ export async function drainPlaybackOutbox(tabId?: string): Promise<void> {
   drainRunning = true;
   try {
     const tid = tabId ?? `pb-drain-${crypto.randomUUID().slice(0, 8)}`;
+    await cleanupExpiredLeases(tid);
     await scanAndDrain(tid);
     // R3.1: 扫描 completed 行，set_status 成功发送后条件清理
     await _cleanupCompletedRows();
@@ -244,6 +245,16 @@ async function _cleanupCompletedRows(): Promise<void> {
 
 // ─── 内部辅助 ────────────────────────────────────────────────────────────────
 
+async function _supersedeDependentsInTx(entryId: string): Promise<void> {
+  const deps = await db.runtimeOutbox.where('dependsOnEntryId').equals(entryId)
+    .filter((e) => e.status === 'pending' && !e.leaseOwner)
+    .toArray();
+  for (const d of deps) {
+    await db.runtimeOutbox.update(d.id, { status: 'superseded' });
+    await _supersedeDependentsInTx(d.id);
+  }
+}
+
 async function _enqueueInTx(
   params: { kind: 'playback'; op: RuntimeOutboxEntry['op']; sessionId: string; semanticKey: string; body: unknown },
   dependsOnEntryId?: string,
@@ -254,7 +265,11 @@ async function _enqueueInTx(
     .where('semanticKey').equals(params.semanticKey)
     .filter((e) => e.status === 'pending' && !e.leaseOwner && e.id !== id)
     .toArray();
-  for (const e of existing) await db.runtimeOutbox.update(e.id, { status: 'superseded' });
+  for (const e of existing) {
+    await db.runtimeOutbox.update(e.id, { status: 'superseded' });
+    // 级联 supersede 依赖该被压缩条目的 pending 后继，防止悬挂引用
+    await _supersedeDependentsInTx(e.id);
+  }
   const rows = await db.runtimeOutbox.where('sessionId').equals(params.sessionId).toArray();
   const lastSeq = rows.length > 0 ? Math.max(...rows.map((e) => e.sequence ?? 0)) : 0;
   const entry: RuntimeOutboxEntry = {
