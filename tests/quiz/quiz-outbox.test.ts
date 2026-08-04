@@ -36,45 +36,43 @@ afterEach(async () => {
 describe('strict chain', () => {
   beforeEach(() => on());
 
-  it('create→submit→completed→reviewed→archived 完整严格链', async () => {
+  it('create→submit→reviewed→completed→archived 完整严格链 (E2E fix)', async () => {
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
     await quizReviewedViaOutbox('st1', 'sc1');
     await quizRetryViaOutbox('st1', 'sc1');
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    // create(1) → submit(2) → completed(3) → reviewed(4) → archived(5)
+    // 新顺序：create(1) → submit(2) → reviewed/grade(3) → completed(4) → archived(5)
     expect(entries.length).toBe(5);
     expect(entries[0].op).toBe('create_session');
     expect(entries[1].op).toBe('append_record'); // submit
-    expect(entries[2].op).toBe('set_status');     // completed
-    expect(entries[3].op).toBe('append_record'); // reviewed
+    expect(entries[2].op).toBe('append_record'); // reviewed (grade)
+    expect(entries[3].op).toBe('set_status');     // completed
     expect(entries[4].op).toBe('set_status');     // archived
     for (let i = 1; i < entries.length; i++) {
       expect(entries[i].dependsOnEntryId).toBe(entries[i - 1].id);
     }
-    // completed and archived use distinct semanticKeys
-    expect(entries[2].semanticKey).toContain('completed');
+    expect(entries[3].semanticKey).toContain('completed');
     expect(entries[4].semanticKey).toContain('archived');
-    expect(entries[2].semanticKey).not.toBe(entries[4].semanticKey);
   });
 
-  it('reviewed 依赖 completed（非 submit）', async () => {
+  it('reviewed append_record 发生在 completed 之前 (E2E fix)', async () => {
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
     await quizReviewedViaOutbox('st1', 'sc1');
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    const completed = entries[2]; // set_status completed
-    const reviewed = entries[3];  // append_record reviewed
-    expect(reviewed.dependsOnEntryId).toBe(completed.id);
+    const reviewedIdx = entries.findIndex((e) => e.semanticKey.startsWith('quiz:grade'));
+    const completedIdx = entries.findIndex((e) => e.semanticKey.startsWith('quiz:completed'));
+    expect(reviewedIdx).toBeLessThan(completedIdx);
   });
 
-  it('retry 依赖 reviewed（非无依赖）', async () => {
+  it('retry 依赖 reviewed (E2E fix)', async () => {
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
     await quizReviewedViaOutbox('st1', 'sc1');
     await quizRetryViaOutbox('st1', 'sc1');
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    expect(entries[4].dependsOnEntryId).toBe(entries[3].id); // archived depends on reviewed
+    expect(entries[4].dependsOnEntryId).toBe(entries[3].id);
   });
 
   it('无前序链时 retry 跳过', async () => {
@@ -95,7 +93,8 @@ describe('链尾原子性', () => {
     const tailRow = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
     expect(tailRow).toBeTruthy();
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    expect(tailRow!.tailEntryId).toBe(entries[2].id);
+    // E2E fix：submitted 链尾 = submit entry (entries[1])
+    expect(tailRow!.tailEntryId).toBe(entries[1].id);
   });
 
   it('刷新恢复：只靠 Dexie 找回链尾', async () => {
@@ -105,6 +104,7 @@ describe('链尾原子性', () => {
     const tailRow = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
     expect(tailRow).toBeTruthy();
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
+    // E2E fix：reviewed 完成时链尾 = completed (entries[3])
     expect(tailRow!.tailEntryId).toBe(entries[3].id);
   });
 

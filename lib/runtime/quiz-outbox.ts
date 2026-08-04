@@ -124,7 +124,11 @@ export async function onQuizOutboxStartup(tabId?: string): Promise<{ ready: bool
 // ─── 公开 API — 严格链 ──────────────────────────────────────────────────────
 
 /**
- * 入队 create → submit → completed。链尾 = completed entry ID。
+ * R3.2 E2E 修正（2026-08-04）：服务端 completed 后禁止追加 record（409 INACTIVE_SESSION）。
+ * 新链顺序：create → submitted → reviewed → completed → archived
+ * - submitted: 入队 create → submit
+ * - reviewed: 依赖链尾（submit）入队 grade → set_status completed
+ * - retry: 依赖链尾（completed）入队 set_status archived
  */
 export async function quizSubmittedViaOutbox(
   stageId: string | null | undefined, sceneId: string,
@@ -147,18 +151,15 @@ export async function quizSubmittedViaOutbox(
       body: { id: `${sessionId}:submit`, createdAt: nowStr, sceneId,
         payload: { phase: 'submitted' as const, answers: envelope.answers } },
     }, createId);
-    const completedId = await _qEnqueue({
-      kind: 'quizAttempt', op: 'set_status', sessionId,
-      semanticKey: `quiz:completed:${sessionId}`,   // distinct from archived
-      body: { status: 'completed' as const, updatedAt: nowStr },
-    }, submitId);
-    await _setTailInTx(sessionId, completedId);
+    // 链尾停在 submit——completed 由 reviewed 触发的 grade 成功后一起 set
+    await _setTailInTx(sessionId, submitId);
     return 'enqueued' as const;
   });
 }
 
 /**
- * 依赖当前链尾（completed），入队 reviewed。链尾 → reviewed。
+ * reviewed 入队 grade（依赖 submit 链尾），grade 成功后 set_status completed。
+ * 两步原子入队，确保服务端 send 顺序：grade → completed（不再被服务端拒绝）。
  */
 export async function quizReviewedViaOutbox(
   stageId: string | null | undefined, sceneId: string,
@@ -174,20 +175,33 @@ export async function quizReviewedViaOutbox(
   return db.transaction('rw', db.runtimeOutbox, db.runtimeChainHeads, async () => {
     let tailId = await _getTailInTx(sessionId);
     if (!tailId) {
-      // 无链尾 → 创建 create（session 可能由 reviewed 首次创建）
-      tailId = await _qEnqueue({
+      // 极少见：reviewed 先于 submitted 触发（user 立即批改）。补建 create+submit。
+      const newCreate = await _qEnqueue({
         kind: 'quizAttempt', op: 'create_session', sessionId,
         semanticKey: `quiz:create:${sessionId}`,
-        body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'completed', createdAt: nowStr, updatedAt: nowStr },
+        body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'active', createdAt: nowStr, updatedAt: nowStr },
       });
+      tailId = await _qEnqueue({
+        kind: 'quizAttempt', op: 'append_record', sessionId,
+        semanticKey: `quiz:submit:${sessionId}`,
+        body: { id: `${sessionId}:submit`, createdAt: nowStr, sceneId,
+          payload: { phase: 'submitted' as const, answers: envelope.answers } },
+      }, newCreate);
     }
+    // grade 依赖链尾
     const gradeId = await _qEnqueue({
       kind: 'quizAttempt', op: 'append_record', sessionId,
       semanticKey: `quiz:grade:${sessionId}`,
       body: { id: `${sessionId}:grade`, createdAt: nowStr, sceneId,
         payload: { phase: 'reviewed' as const, answers: envelope.answers, results } },
     }, tailId);
-    await _setTailInTx(sessionId, gradeId);
+    // completed 紧随 grade（链尾指向 completed）
+    const completedId = await _qEnqueue({
+      kind: 'quizAttempt', op: 'set_status', sessionId,
+      semanticKey: `quiz:completed:${sessionId}`,
+      body: { status: 'completed' as const, updatedAt: nowStr },
+    }, gradeId);
+    await _setTailInTx(sessionId, completedId);
     return 'enqueued' as const;
   });
 }
