@@ -27,7 +27,7 @@ function on() { vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1'); vi.stubEnv('NEXT_
 
 afterEach(async () => {
   vi.restoreAllMocks(); vi.unstubAllEnvs();
-  await db.runtimeOutbox.clear(); await db.succeededEntries.clear();
+  await db.runtimeOutbox.clear(); await db.succeededEntries.clear(); await db.runtimeChainHeads.clear();
   for (const k of Object.keys(store)) delete store[k];
 });
 
@@ -92,29 +92,26 @@ describe('链尾原子性', () => {
   it('Dexie 事务成功 → 链尾更新', async () => {
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
-    // After submitted, tail should be the completed entry
-    const tailRow = await db.succeededEntries.get('r3quiz:tail:qa:st1:sc1:att1');
+    const tailRow = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
     expect(tailRow).toBeTruthy();
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    expect(tailRow!.deletedAt).toBe(entries[2].id); // completed entry
+    expect(tailRow!.tailEntryId).toBe(entries[2].id);
   });
 
   it('刷新恢复：只靠 Dexie 找回链尾', async () => {
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
     await quizReviewedViaOutbox('st1', 'sc1');
-    // Simulate refresh: tail is only in Dexie (succeededEntries)
-    const tailRow = await db.succeededEntries.get('r3quiz:tail:qa:st1:sc1:att1');
+    const tailRow = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
     expect(tailRow).toBeTruthy();
-    // Tail should point to reviewed entry
     const entries = await db.runtimeOutbox.orderBy('sequence').toArray();
-    expect(tailRow!.deletedAt).toBe(entries[3].id);
+    expect(tailRow!.tailEntryId).toBe(entries[3].id);
   });
 
   it('Dexie 写失败 → 链尾不前移', async () => {
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
-    const beforeTail = await db.succeededEntries.get('r3quiz:tail:qa:st1:sc1:att1');
+    const beforeTail = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
     // Make reviewed fail
     const realPut = (db.runtimeOutbox as any).put as Function;
     try {
@@ -123,8 +120,21 @@ describe('链尾原子性', () => {
     } catch { /* expected */ }
     finally { (db.runtimeOutbox as any).put = realPut; }
     // Tail should NOT have moved
-    const afterTail = await db.succeededEntries.get('r3quiz:tail:qa:st1:sc1:att1');
-    expect(afterTail!.deletedAt).toBe(beforeTail!.deletedAt);
+    const afterTail = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
+    expect(afterTail!.tailEntryId).toBe(beforeTail!.tailEntryId);
+  });
+
+  it('cleanupSucceededEntries 不清除 chain head', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+    we('sc1', 'att1', { q1: 'A' }); wr('sc1');
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    await drainQuizOutbox('tab-c');
+    expect(await db.succeededEntries.count()).toBeGreaterThan(0);
+    const tail = await db.runtimeChainHeads.get('qa:st1:sc1:att1');
+    expect(tail).toBeTruthy();
+    const entries = await db.succeededEntries.toArray();
+    const fake = entries.filter((e) => e.entryId.startsWith('r3quiz:tail'));
+    expect(fake.length).toBe(0);
   });
 });
 

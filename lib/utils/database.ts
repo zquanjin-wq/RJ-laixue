@@ -283,6 +283,17 @@ export interface SucceededEntry {
   deletedAt: string;
 }
 
+/**
+ * RuntimeChainHeads table - R3.2 严格链尾（v17）
+ * 每个 session 记录当前链尾的 outbox entry ID。
+ * 与 outbox 入队在同一 rw 事务内原子更新。
+ */
+export interface RuntimeChainHead {
+  sessionId: string;
+  tailEntryId: string;
+  updatedAt: string;
+}
+
 /** Build the compound primary key for mediaFiles: `${stageId}:${elementId}` */
 export function mediaFileKey(stageId: string, elementId: string): string {
   return `${stageId}:${elementId}`;
@@ -313,6 +324,7 @@ class MAICDatabase extends Dexie {
   agentEditSessions!: EntityTable<AgentEditSessionRecord, 'id'>;
   runtimeOutbox!: EntityTable<RuntimeOutboxEntry, 'id'>;
   succeededEntries!: EntityTable<SucceededEntry, 'entryId'>;
+  runtimeChainHeads!: EntityTable<RuntimeChainHead, 'sessionId'>;
 
   constructor() {
     super(DATABASE_NAME);
@@ -745,6 +757,26 @@ class MAICDatabase extends Dexie {
       agentEditSessions: 'id, stageId, [stageId+updatedAt]',
       runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
       succeededEntries: 'entryId, deletedAt',
+    });
+
+    // R3.2 严格链尾表（v17）
+    this.version(17).stores({
+      stages: 'id, updatedAt',
+      scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+      audioFiles: 'id, createdAt',
+      imageFiles: 'id, createdAt',
+      snapshots: '++id',
+      chatSessions: 'id, stageId, [stageId+createdAt]',
+      playbackState: 'stageId',
+      stageOutlines: 'stageId',
+      mediaFiles: 'id, stageId, [stageId+type]',
+      generatedAgents: 'id, stageId',
+      voiceProfiles: 'id, providerId, kind, updatedAt',
+      autoVoiceCache: 'voiceId, updatedAt',
+      agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+      runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
+      succeededEntries: 'entryId, deletedAt',
+      runtimeChainHeads: 'sessionId',
     });
   }
 }

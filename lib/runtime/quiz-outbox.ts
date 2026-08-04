@@ -39,21 +39,15 @@ export function setQuizOutboxReady(): void {
   if (typeof localStorage !== 'undefined') localStorage.setItem(QUIZ_READY_KEY, '1');
 }
 
-// ─── 链尾（Dexie succeededEntries，与 outbox 同事务）────────────────────────
+// ─── 链尾（Dexie runtimeChainHeads，与 outbox 同事务）─────────────────────
 
-function _chainKey(sessionId: string): string {
-  return `r3quiz:tail:${sessionId}`;
-}
-
-/** 在事务内读取链尾 entry ID（可为 undefined） */
 async function _getTailInTx(sessionId: string): Promise<string | undefined> {
-  const row = await db.succeededEntries.get(_chainKey(sessionId));
-  return row ? row.deletedAt : undefined; // repurposing deletedAt as tail entry id
+  const row = await db.runtimeChainHeads.get(sessionId);
+  return row?.tailEntryId;
 }
 
-/** 在事务内更新链尾 */
 async function _setTailInTx(sessionId: string, entryId: string): Promise<void> {
-  await db.succeededEntries.put({ entryId: _chainKey(sessionId), deletedAt: entryId });
+  await db.runtimeChainHeads.put({ sessionId, tailEntryId: entryId, updatedAt: new Date().toISOString() });
 }
 
 // ─── drain / scheduler ───────────────────────────────────────────────────────
@@ -141,7 +135,7 @@ export async function quizSubmittedViaOutbox(
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
 
-  return db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+  return db.transaction('rw', db.runtimeOutbox, db.runtimeChainHeads, async () => {
     const createId = await _qEnqueue({
       kind: 'quizAttempt', op: 'create_session', sessionId,
       semanticKey: `quiz:create:${sessionId}`,
@@ -177,7 +171,7 @@ export async function quizReviewedViaOutbox(
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
 
-  return db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+  return db.transaction('rw', db.runtimeOutbox, db.runtimeChainHeads, async () => {
     let tailId = await _getTailInTx(sessionId);
     if (!tailId) {
       // 无链尾 → 创建 create（session 可能由 reviewed 首次创建）
@@ -211,7 +205,7 @@ export async function quizRetryViaOutbox(
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
 
-  return db.transaction('rw', db.runtimeOutbox, db.succeededEntries, async () => {
+  return db.transaction('rw', db.runtimeOutbox, db.runtimeChainHeads, async () => {
     const tailId = await _getTailInTx(sessionId);
     if (!tailId) return 'skipped' as const; // 无前序链 → 不发送独立的 archived
     const archivedId = await _qEnqueue({
