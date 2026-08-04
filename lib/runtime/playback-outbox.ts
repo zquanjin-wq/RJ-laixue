@@ -39,7 +39,47 @@ function setOutboxReady(): void {
 let drainTimer: ReturnType<typeof setTimeout> | null = null;
 let drainRunning = false;
 
-/** 读取下一个 playback pending 条目的 nextAttemptAt，安排定时唤醒 */
+/** 按依赖链解析有效到期时间：跟随 dependsOnEntryId 链找到阻断根条目 */
+async function resolveEffectiveNextAttempt(entry: RuntimeOutboxEntry): Promise<number> {
+  // 收集所有 playback 条目 + succeededEntries 凭据用于链行走
+  const allEntries = await db.runtimeOutbox.where('kind').equals('playback').toArray();
+  const byId = new Map(allEntries.map((e) => [e.id, e]));
+  const succIds = new Set((await db.succeededEntries.toArray()).map((s) => s.entryId));
+
+  // Walk up the dependency chain
+  let current = entry;
+  let blockerTime = new Date(entry.nextAttemptAt).getTime();
+  const visited = new Set<string>();
+
+  while (current.dependsOnEntryId && !visited.has(current.id)) {
+    visited.add(current.id);
+    const depId = current.dependsOnEntryId;
+    // Succeeded → chain satisfied, no blocker above this point
+    if (succIds.has(depId)) break;
+    const dep = byId.get(depId);
+    if (!dep) break; // not in outbox + not in succeeded → dependency_lost, drain handles it
+    if (dep.status === 'dead') break; // will be cascade-marked next drain
+    if (dep.status === 'sending' && dep.leaseUntil) {
+      // Blocked by a sending entry — use max of its leaseUntil and now
+      const leaseEnd = new Date(dep.leaseUntil).getTime();
+      blockerTime = Math.max(blockerTime, leaseEnd);
+      break; // can't walk past a sending entry
+    }
+    if (dep.status === 'pending') {
+      // Follow the chain up
+      blockerTime = Math.max(blockerTime, new Date(dep.nextAttemptAt).getTime());
+      current = dep;
+      continue;
+    }
+    break;
+  }
+
+  return Math.max(new Date(entry.nextAttemptAt).getTime(), blockerTime);
+}
+
+export { resolveEffectiveNextAttempt };
+
+/** 按依赖可执行性调度下次唤醒 */
 async function scheduleNextDrain(): Promise<void> {
   if (drainTimer) { clearTimeout(drainTimer); drainTimer = null; }
   if (!isPlaybackOutboxEnabled()) return;
@@ -51,8 +91,9 @@ async function scheduleNextDrain(): Promise<void> {
 
   if (pending.length === 0) return;
 
-  const earliest = Math.min(...pending.map((e) => new Date(e.nextAttemptAt).getTime()));
-  const delay = Math.max(1000, earliest - Date.now()) + 50; // 1s floor + 50ms buffer
+  const times = await Promise.all(pending.map((e) => resolveEffectiveNextAttempt(e)));
+  const earliest = Math.min(...times);
+  const delay = Math.max(0, earliest - Date.now()) + 50;
   drainTimer = setTimeout(() => void drainPlaybackOutbox(), delay);
 }
 
@@ -152,6 +193,9 @@ export async function onPlaybackOutboxStartup(tabId?: string): Promise<{ ready: 
 
   if (!isOutboxReady()) {
     const result = await migrateShadowPendingToOutbox();
+    // 即使迁移部分失败，已迁入 outbox 的条目也需要 drain
+    await drainPlaybackOutbox(tid);
+    await scheduleNextDrain();
     if (result.failed) return { ready: false };
   }
 

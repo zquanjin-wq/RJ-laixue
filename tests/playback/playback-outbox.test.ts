@@ -103,26 +103,33 @@ describe('迁移 + outboxReady', () => {
     expect(isOutboxReady()).toBe(true);
   });
 
-  it('迁移中第二行事务失败 → outboxReady 不设、未迁移 pending 保留', async () => {
+  it('迁移中第二行事务失败 → 已迁移条目 drain、未迁移保留、ready=false', async () => {
     await db.playbackState.bulkPut([
       makePlaybackRow('mf1'),
       makePlaybackRow('mf2', { completed: true }),
     ]);
-    // Inject DB write failure: runtimeOutbox.put throws after first row is done
     let putCount = 0;
     const realPut = (db.runtimeOutbox as any).put as Function;
-    let restorePut: Function | null = null;
     try {
       (db.runtimeOutbox as any).put = async (entry: any) => {
         putCount++;
         if (putCount >= 3) throw new Error('Injected DB write failure');
         return realPut.call(db.runtimeOutbox, entry);
       };
-      const r = await migrateShadowPendingToOutbox();
-      expect(r.failed).toBe(true);
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
+      const result = await onPlaybackOutboxStartup('tab-mf');
+      expect(result.ready).toBe(false);
       expect(isOutboxReady()).toBe(false);
-      const row2 = await db.playbackState.get('mf2');
-      expect(row2!.shadowPending).toBeTruthy();
+      // Row 1: migrated → outbox entries sent
+      expect((await db.playbackState.get('mf1'))!.shadowPending).toBeUndefined();
+      // Row 2: not migrated → shadowPending preserved
+      const r2 = await db.playbackState.get('mf2');
+      expect(r2!.shadowPending).toBeTruthy();
+      // Fetch was called (row 1's entries went through)
+      expect((globalThis.fetch as any).mock.calls.length).toBeGreaterThan(0);
+      // No double-send: only calls for row 1 (2 ops = create + append), not row 2
+      const callCount = (globalThis.fetch as any).mock.calls.length;
+      expect(callCount).toBeLessThan(3); // not 3 (which would include row 2's create)
     } finally {
       (db.runtimeOutbox as any).put = realPut;
     }
@@ -164,6 +171,58 @@ describe('Recovery', () => {
     expect(result.ready).toBe(true);
     expect(isOutboxReady()).toBe(true);
     expect((await db.playbackState.get('r3'))!.shadowPending).toBeUndefined();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('Scheduler 依赖链', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW', '1');
+    vi.stubEnv('NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK', '1');
+  });
+
+  it('create 退避 5min → 依赖链解析到 5min 而非 append 的 now', async () => {
+    const nowMs = Date.now();
+    const fiveMinFromNow = new Date(nowMs + 5 * 60 * 1000).toISOString();
+    const createId = crypto.randomUUID();
+    const appendId = crypto.randomUUID();
+    await db.runtimeOutbox.bulkPut([
+      {
+        id: createId, kind: 'playback' as const, op: 'create_session' as const,
+        sessionId: 'pb:st', semanticKey: 's:c', body: {}, createdAt: new Date().toISOString(),
+        attempts: 3, nextAttemptAt: fiveMinFromNow, status: 'pending' as const, sequence: 1,
+      },
+      {
+        id: appendId, kind: 'playback' as const, op: 'append_record' as const,
+        sessionId: 'pb:st', semanticKey: 's:a', body: {}, createdAt: new Date().toISOString(),
+        attempts: 0, nextAttemptAt: new Date(nowMs).toISOString(), status: 'pending' as const, sequence: 2,
+        dependsOnEntryId: createId,
+      },
+    ]);
+    const all = await db.runtimeOutbox.toArray();
+    const append = all.find((e) => e.id === appendId)!;
+    const { resolveEffectiveNextAttempt } = await import('@/lib/runtime/playback-outbox');
+    const resolved = await resolveEffectiveNextAttempt(append);
+    // Should resolve to ~5 minutes (create's blocker time), not ~now (append's own time)
+    const diffMs = resolved - nowMs;
+    expect(diffMs).toBeGreaterThan(4.5 * 60 * 1000); // close to 5 min
+    expect(diffMs).toBeLessThan(5.5 * 60 * 1000);
+  });
+
+  it('无依赖条目用自身 nextAttemptAt', async () => {
+    const nowMs = Date.now();
+    const ts = new Date(nowMs + 30000).toISOString();
+    const id = crypto.randomUUID();
+    await db.runtimeOutbox.put({
+      id, kind: 'playback' as const, op: 'create_session' as const,
+      sessionId: 'pb:st2', semanticKey: 's2', body: {}, createdAt: new Date().toISOString(),
+      attempts: 0, nextAttemptAt: ts, status: 'pending' as const, sequence: 1,
+    });
+    const { resolveEffectiveNextAttempt } = await import('@/lib/runtime/playback-outbox');
+    const resolved = await resolveEffectiveNextAttempt((await db.runtimeOutbox.get(id))!);
+    expect(resolved - nowMs).toBeGreaterThan(25000);
+    expect(resolved - nowMs).toBeLessThan(35000);
   });
 });
 
