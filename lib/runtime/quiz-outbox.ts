@@ -23,7 +23,7 @@ function readResults(sceneId: string): unknown[] | null {
 // ─── 开关 ────────────────────────────────────────────────────────────────────
 
 export function isQuizOutboxEnabled(): boolean {
-  return isRuntimeShadowEnabled();
+  return isRuntimeShadowEnabled() && process.env.NEXT_PUBLIC_RUNTIME_SHADOW_QUIZ === '1';
 }
 
 // ─── outboxReady 门禁 ────────────────────────────────────────────────────────
@@ -42,6 +42,34 @@ export function setQuizOutboxReady(): void {
 // ─── drain ───────────────────────────────────────────────────────────────────
 
 let quizDrainRunning = false;
+let quizDrainTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function scheduleNextQuizDrain(): Promise<void> {
+  if (quizDrainTimer) { clearTimeout(quizDrainTimer); quizDrainTimer = null; }
+  if (!isQuizOutboxEnabled()) return;
+  const pending = await db.runtimeOutbox
+    .where('kind').equals('quizAttempt')
+    .filter((e) => e.status === 'pending')
+    .toArray();
+  if (pending.length === 0) return;
+  // 复用 R3.1 依赖链解析逻辑——沿 dependsOnEntryId 找到根阻断时间
+  const timesPromises = pending.map(async (e) => {
+    if (!e.dependsOnEntryId) return new Date(e.nextAttemptAt).getTime();
+    const dep = await db.runtimeOutbox.get(e.dependsOnEntryId);
+    if (!dep) return new Date(e.nextAttemptAt).getTime();
+    if (dep.status === 'sending' && dep.leaseUntil) {
+      return Math.max(new Date(e.nextAttemptAt).getTime(), new Date(dep.leaseUntil).getTime());
+    }
+    if (dep.status === 'pending') {
+      return Math.max(new Date(e.nextAttemptAt).getTime(), new Date(dep.nextAttemptAt).getTime());
+    }
+    return new Date(e.nextAttemptAt).getTime();
+  });
+  const times = await Promise.all(timesPromises);
+  const earliest = Math.min(...times);
+  const delay = Math.max(1000, earliest - Date.now()) + 50;
+  quizDrainTimer = setTimeout(() => void drainQuizOutbox(), delay);
+}
 
 export async function drainQuizOutbox(tabId?: string): Promise<void> {
   if (!isQuizOutboxEnabled() || quizDrainRunning) return;
@@ -52,6 +80,7 @@ export async function drainQuizOutbox(tabId?: string): Promise<void> {
     await scanAndDrain(tid);
   } finally {
     quizDrainRunning = false;
+    await scheduleNextQuizDrain();
   }
 }
 
@@ -133,36 +162,27 @@ export async function quizReviewedViaOutbox(
   const nowStr = new Date().toISOString();
 
   return db.transaction('rw', db.runtimeOutbox, async () => {
-    // 找到 submitted 链的 create 条目（复用，不再新建 create）
     const chainInfo = _getChainTail(sessionId);
-    let gradeDepId = chainInfo?.createId; // default: depend on create (if submit chain not found)
+    // grade 始终依赖 submitId——不绕过提交结果。
+    // submit 在 outbox → 等待；在 succeededEntries → 通用状态机放行；
+    // dead/superseded/lost → 状态机级联阻止 reviewed。
+    let gradeDepId: string | undefined = chainInfo?.submitId ?? chainInfo?.createId;
 
-    // 若 submitted 链存在，grade 应依赖 submit 条目的最终状态
-    if (chainInfo?.submitId) {
-      // 尝试找到仍存在于 outbox 的 submit 或 status 条目
-      const submitEntry = await db.runtimeOutbox.get(chainInfo.submitId);
-      if (submitEntry) {
-        // 若 submit 尚未被 superseded/dead → 依赖它
-        if (submitEntry.status === 'pending' || submitEntry.status === 'sending') {
-          gradeDepId = chainInfo.submitId;
-        }
+    // ensure create exists (fallback — only when no chain info at all)
+    if (!gradeDepId) {
+      const existingCreate = await db.runtimeOutbox
+        .where('semanticKey').equals(`quiz:create:${sessionId}`)
+        .filter((e) => e.status !== 'superseded' && e.status !== 'dead')
+        .first();
+      if (!existingCreate) {
+        gradeDepId = await _qEnqueue({
+          kind: 'quizAttempt', op: 'create_session', sessionId,
+          semanticKey: `quiz:create:${sessionId}`,
+          body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'completed', createdAt: nowStr, updatedAt: nowStr },
+        });
+      } else {
+        gradeDepId = existingCreate.id;
       }
-      // 若 submit 已发送（不在 outbox）→ 依赖满足于 succeededEntries，gradeDepId 指向 createId
-      // 若 create 也不在 outbox 或已被 superseded → fallback 新建 create
-    }
-
-    // ensure create exists (fallback)
-    const existingCreate = await db.runtimeOutbox
-      .where('semanticKey').equals(`quiz:create:${sessionId}`)
-      .filter((e) => e.status !== 'superseded' && e.status !== 'dead')
-      .first();
-    if (!existingCreate && !chainInfo?.createId) {
-      const newCreateId = await _qEnqueue({
-        kind: 'quizAttempt', op: 'create_session', sessionId,
-        semanticKey: `quiz:create:${sessionId}`,
-        body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'completed', createdAt: nowStr, updatedAt: nowStr },
-      });
-      gradeDepId = newCreateId;
     }
 
     await _qEnqueue({
