@@ -13,6 +13,7 @@ import { scanAndDrain, cleanupExpiredLeases } from '@/lib/runtime/outbox';
 import type { RuntimeOutboxEntry } from '@/lib/utils/database';
 import { isPlaybackShadowEnabled } from '@/lib/runtime/shadow-writer';
 import { getPlaybackPendingInfo } from '@/lib/utils/playback-persistence';
+import { persistSnapshotWithComplete, VisitCycleCompletedError } from '@/lib/runtime/playback-visit';
 
 // ─── 开关 ────────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,41 @@ export async function shadowPlaybackProgressViaOutbox(stageId: string): Promise<
 
     return 'enqueued' as const;
   });
+}
+
+/**
+ * R3.1a visit-based shadow write：将旧 playbackState 行转换为 visit 模型入队。
+ * 本函数仅供迁移期和主路径使用，不覆写旧 shadowPlaybackProgressViaOutbox 的语义。
+ */
+export async function shadowPlaybackProgressVisit(stageId: string): Promise<'enqueued' | 'skipped' | 'disabled'> {
+  if (!isPlaybackOutboxEnabled()) return 'disabled';
+
+  const row = await db.playbackState.get(stageId);
+  if (!row?.shadowPending) return 'skipped';
+
+  const snapshot = {
+    eventId: row.runtimeShadowEventId ?? crypto.randomUUID(),
+    capturedAt: row.capturedAt ?? new Date(row.updatedAt).toISOString(),
+    sceneId: row.sceneId,
+    sceneIndex: row.sceneIndex ?? 0,
+    actionIndex: row.actionIndex ?? 0,
+    consumedDiscussions: row.consumedDiscussions,
+    completed: row.completed,
+  };
+
+  try {
+    await persistSnapshotWithComplete(stageId, snapshot);
+  } catch (err) {
+    if (err instanceof VisitCycleCompletedError) {
+      await persistSnapshotWithComplete(stageId, snapshot);
+      await db.playbackState.update(stageId, { shadowPending: undefined });
+      return 'enqueued' as const;
+    }
+    throw err;
+  }
+
+  await db.playbackState.update(stageId, { shadowPending: undefined });
+  return 'enqueued' as const;
 }
 
 /**

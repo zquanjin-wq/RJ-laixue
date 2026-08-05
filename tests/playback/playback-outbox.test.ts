@@ -23,6 +23,8 @@ afterEach(async () => {
   await db.runtimeOutbox.clear();
   await db.succeededEntries.clear();
   await db.playbackState.clear();
+  await db.playbackVisits.clear();
+  await db.playbackVisitStates.clear();
   for (const k of Object.keys(lsStore)) delete lsStore[k];
 });
 
