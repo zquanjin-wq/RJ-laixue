@@ -159,10 +159,15 @@ export async function POST(req: NextRequest) {
       }
     }
     if (isSelfHostedMinerUProvider(provider.id) && !managed && !clientBaseUrl) {
+      // RJ-laixue is a server-managed deployment: clients (teachers/learners)
+      // never configure providers themselves. Surface "service not configured,
+      // contact admin" instead of telling the user to set up MinerU — the
+      // operator must enable `PDF_MINERU_CLOUD_API_KEY` (or
+      // `PDF_MINERU_BASE_URL`) on the server.
       return apiError(
-        'INVALID_REQUEST',
+        'SERVICE_NOT_CONFIGURED',
         422,
-        `${requestedTypeLabel(mimeType)} extraction requires a configured MinerU document extractor. Configure a self-hosted MinerU base URL or a MinerU Cloud API key in PDF provider settings.`,
+        `${requestedTypeLabel(mimeType)} extraction is not configured on this server. Please contact your administrator to enable document parsing.`,
       );
     }
     if (clientBaseUrl && process.env.NODE_ENV === 'production') {
