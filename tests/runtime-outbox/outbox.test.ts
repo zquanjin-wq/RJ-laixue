@@ -652,7 +652,7 @@ describe('C1: INACTIVE_SESSION classification', () => {
     expect(final!.deadReason).toBe('IDEMPOTENCY_CONFLICT_permanent');
   });
 
-  it('C1-7: fresh lease INACTIVE_SESSION → CAS passes → dead', async () => {
+  it('C1-7a: fresh lease INACTIVE_SESSION → CAS passes → dead', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: '...' }), { status: 409 }),
     );
@@ -665,5 +665,23 @@ describe('C1: INACTIVE_SESSION classification', () => {
     // CAS passes: fresh.leaseOwner === claimed.leaseOwner ('tab-c1')
     expect(final!.status).toBe('dead');
     expect(final!.deadReason).toBe('INACTIVE_SESSION_permanent');
+  });
+
+  it('C1-7b: stale lease INACTIVE_SESSION → CAS rejected → not dead', async () => {
+    // tab-A claims, then between claim and CAS the leaseOwner is changed to tab-B.
+    // Mock fetch intercepts to mutate leaseOwner before CAS check runs.
+    const entryId = await enqueue({
+      kind: 'playback', op: 'append_record', sessionId: 'pb:c1-7b',
+      semanticKey: 'c1-7b', body: {},
+    });
+    globalThis.fetch = vi.fn().mockImplementationOnce(async () => {
+      // Simulate: tab-A claimed, but tab-B stole the lease before response arrived
+      await db.runtimeOutbox.update(entryId, { leaseOwner: 'tab-other' });
+      return new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: '...' }), { status: 409 });
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    expect(final!.status).not.toBe('dead');
+    expect(final!.deadReason).toBeUndefined();
   });
 });
