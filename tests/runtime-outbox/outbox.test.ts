@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  enqueue, dequeueOne, markDead, cleanupExpiredLeases,
+  enqueue, dequeueOne, scanAndDrain, markDead, cleanupExpiredLeases,
   cleanupDeadEntries, cleanupSucceededEntries, getLastSequence,
   getOutboxStats, buildRequest,
 } from '@/lib/runtime/outbox';
@@ -552,5 +552,118 @@ describe('Xtra', () => {
     await db.runtimeOutbox.bulkPut([R('p', 'pending'), R('s', 'sending'), R('d', 'dead'), R('x', 'superseded')]);
     await db.succeededEntries.put({ entryId: 'done', deletedAt: ts });
     expect(await getOutboxStats()).toEqual({ pending: 1, sending: 1, dead: 1, superseded: 1, succeededEntries: 1 });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+
+// R3.0-C1：中央 INACTIVE_SESSION 分类门禁
+describe('C1: INACTIVE_SESSION classification', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+  it('C1-1: append INACTIVE_SESSION → permanent dead', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: 'session not active' }), { status: 409 }),
+    );
+    const entryId = await enqueue({
+      kind: 'playback', op: 'append_record', sessionId: 'pb:c1-1',
+      semanticKey: 'c1-1', body: { eventId: 'e1' },
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    expect(final!.status).toBe('dead');
+    expect(final!.deadReason).toBe('INACTIVE_SESSION_permanent');
+    expect(final!.deadAt).toBeTruthy();
+    expect(final!.attempts).toBe(0);
+  });
+
+  it('C1-2: append INACTIVE_SESSION → status successor cascade dead', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: '...' }), { status: 409 }),
+    );
+    const appendId = await enqueue({
+      kind: 'playback', op: 'append_record', sessionId: 'pb:c1-2',
+      semanticKey: 'c1-2-a', body: {},
+    });
+    const statusId = await enqueue({
+      kind: 'playback', op: 'set_status', sessionId: 'pb:c1-2',
+      semanticKey: 'c1-2-s', body: { status: 'completed' }, dependsOnEntryId: appendId,
+    });
+    await scanAndDrain('tab-c1');
+    const append = await db.runtimeOutbox.get(appendId);
+    const status = await db.runtimeOutbox.get(statusId);
+    expect(append!.deadReason).toBe('INACTIVE_SESSION_permanent');
+    expect(status!.deadReason).toBe('CASCADE_DEAD');
+  });
+
+  it('C1-3: set_status INACTIVE_SESSION → permanent dead', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: '...' }), { status: 409 }),
+    );
+    const entryId = await enqueue({
+      kind: 'quizAttempt', op: 'set_status', sessionId: 'qa:c1-3',
+      semanticKey: 'c1-3-s', body: { status: 'completed' },
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    expect(final!.status).toBe('dead');
+    expect(final!.deadReason).toBe('INACTIVE_SESSION_permanent');
+  });
+
+  it('C1-4: create_session INACTIVE_SESSION → retry (not dead)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: '...' }), { status: 409 }),
+    );
+    const ts = new Date().toISOString();
+    const entryId = await enqueue({
+      kind: 'playback', op: 'create_session', sessionId: 'pb:c1-4',
+      semanticKey: 'c1-4-c', body: { id: 'pb:c1-4', kind: 'playback', stageId: 'x', status: 'active', createdAt: ts, updatedAt: ts },
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    expect(final!.status).toBe('pending'); // retried, not dead
+    expect(final!.attempts).toBe(1);
+  });
+
+  it('C1-5: empty errorCode 409 → UNKNOWN_409_permanent', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 409 }));
+    const entryId = await enqueue({
+      kind: 'playback', op: 'append_record', sessionId: 'pb:c1-5',
+      semanticKey: 'c1-5', body: {},
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    expect(final!.status).toBe('dead');
+    expect(final!.deadReason).toBe('UNKNOWN_409_permanent');
+    expect(final!.deadAt).toBeTruthy();
+  });
+
+  it('C1-6: 409 IDEMPOTENCY_CONFLICT → permanent dead', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'IDEMPOTENCY_CONFLICT', error: 'mismatch' }), { status: 409 }),
+    );
+    const entryId = await enqueue({
+      kind: 'playback', op: 'append_record', sessionId: 'pb:c1-6',
+      semanticKey: 'c1-6', body: {},
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    expect(final!.status).toBe('dead');
+    expect(final!.deadReason).toBe('IDEMPOTENCY_CONFLICT_permanent');
+  });
+
+  it('C1-7: fresh lease INACTIVE_SESSION → CAS passes → dead', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ errorCode: 'INACTIVE_SESSION', error: '...' }), { status: 409 }),
+    );
+    const entryId = await enqueue({
+      kind: 'playback', op: 'append_record', sessionId: 'pb:c1-7',
+      semanticKey: 'c1-7', body: {},
+    });
+    await scanAndDrain('tab-c1');
+    const final = await db.runtimeOutbox.get(entryId);
+    // CAS passes: fresh.leaseOwner === claimed.leaseOwner ('tab-c1')
+    expect(final!.status).toBe('dead');
+    expect(final!.deadReason).toBe('INACTIVE_SESSION_permanent');
   });
 });

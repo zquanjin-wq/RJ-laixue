@@ -85,15 +85,21 @@ function buildRequest(entry: RuntimeOutboxEntry): { url: string; method: string 
 
 // ─── 内部辅助（需在 Dexie rw 事务内调用） ──────────────────────────────────
 
-async function cascadeMarkDeadInTx(entryId: string): Promise<number> {
+async function cascadeMarkDeadInTx(entryId: string, reason?: string): Promise<number> {
   let cascaded = 0;
-  const queue = [entryId];
+  const queue: Array<{ id: string; reason: string }> = [{ id: entryId, reason: reason ?? 'CASCADE_DEAD' }];
   while (queue.length > 0) {
-    const id = queue.shift()!;
-    await db.runtimeOutbox.update(id, { status: 'dead', leaseOwner: undefined, leaseUntil: undefined });
+    const { id, reason: r } = queue.shift()!;
+    await db.runtimeOutbox.update(id, {
+      status: 'dead',
+      leaseOwner: undefined,
+      leaseUntil: undefined,
+      deadReason: r,
+      deadAt: now(),
+    });
     cascaded++;
     const deps = await db.runtimeOutbox.where('dependsOnEntryId').equals(id).toArray();
-    for (const dep of deps) queue.push(dep.id);
+    for (const dep of deps) queue.push({ id: dep.id, reason: 'CASCADE_DEAD' });
   }
   return cascaded;
 }
@@ -266,15 +272,42 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
         if (applied) reportTelemetry('outbox_create_conflict_ok', { entryId: claimed.id });
         return true;
       }
-      // IDEMPOTENCY_CONFLICT → 递归 dead；非 create 的空 errorCode 409 也按死信（旧格式兜底）
-      if (isIdempotentConflict || (ec === '' && claimed.op !== 'create_session')) {
+      // R3.0-C1：INACTIVE_SESSION（append/set_status 在 completed 后触发）→ 永久 dead
+      if (ec === 'INACTIVE_SESSION') {
+        if (claimed.op !== 'create_session') {
+          const applied = await db.transaction('rw', db.runtimeOutbox, async () => {
+            const fresh = await db.runtimeOutbox.get(claimed.id);
+            if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return false;
+            await cascadeMarkDeadInTx(claimed.id, 'INACTIVE_SESSION_permanent');
+            return true;
+          });
+          if (applied) {
+            reportTelemetry('outbox_dead', { entryId: claimed.id, reason: 'inactive_session', sessionId: claimed.sessionId });
+          }
+          return true;
+        }
+        // create_session + INACTIVE_SESSION → 不可能出现，按未知 409 退避
+      }
+      // IDEMPOTENCY_CONFLICT → 永久 dead
+      if (isIdempotentConflict) {
         const applied = await db.transaction('rw', db.runtimeOutbox, async () => {
           const fresh = await db.runtimeOutbox.get(claimed.id);
           if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return false;
-          await cascadeMarkDeadInTx(claimed.id);
+          await cascadeMarkDeadInTx(claimed.id, 'IDEMPOTENCY_CONFLICT_permanent');
           return true;
         });
         if (applied) reportTelemetry('outbox_dead', { entryId: claimed.id, reason: 'idempotency_conflict' });
+        return true;
+      }
+      // 非 create 的空 errorCode 409 → 死信（旧格式兜底）
+      if (ec === '' && claimed.op !== 'create_session') {
+        const applied = await db.transaction('rw', db.runtimeOutbox, async () => {
+          const fresh = await db.runtimeOutbox.get(claimed.id);
+          if (!fresh || fresh.status !== 'sending' || fresh.leaseOwner !== claimed.leaseOwner) return false;
+          await cascadeMarkDeadInTx(claimed.id, 'UNKNOWN_409_permanent');
+          return true;
+        });
+        if (applied) reportTelemetry('outbox_dead', { entryId: claimed.id, reason: 'unknown_409' });
         return true;
       }
       // 未知 409 → 按失败重试
@@ -290,7 +323,7 @@ export async function dequeueOne(tabId: string): Promise<boolean> {
 
       if (nextAttempts >= DEAD_AFTER_ATTEMPTS) {
         await db.runtimeOutbox.update(claimed.id, { attempts: nextAttempts, lastError: String(err), lastAttemptAt: now() });
-        const cascaded = await cascadeMarkDeadInTx(claimed.id);
+        const cascaded = await cascadeMarkDeadInTx(claimed.id, 'max_retries');
         reportTelemetry('outbox_dead', { entryId: claimed.id, reason: 'max_retries', attempts: nextAttempts, cascadedCount: cascaded - 1 });
       } else {
         const backoffMs = BACKOFF_SCHEDULE[nextAttempts] ?? 0;

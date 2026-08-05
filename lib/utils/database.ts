@@ -270,6 +270,8 @@ export interface RuntimeOutboxEntry {
   status: 'pending' | 'sending' | 'superseded' | 'dead';
   sequence?: number;
   dependsOnEntryId?: string;
+  deadReason?: string;
+  deadAt?: string;
 }
 
 /**
