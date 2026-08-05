@@ -296,6 +296,41 @@ export interface RuntimeChainHead {
   updatedAt: string;
 }
 
+/**
+ * PlaybackVisit table - R3.1a 跨 completed playback cycle（v18）
+ * 每次有效的已持久化播放周期对应一行。主键 visitId 为全局唯一 32-hex ID。
+ */
+export interface PlaybackVisit {
+  visitId: string;           // PK
+  stageId: string;
+  tabOwnerId: string;        // 32 hex
+  sessionId: string;         // = "pb:<stageId>:<visitId>"（legacy = "pb:<stageId>"）
+  status: 'active' | 'completed';
+  createEntryId?: string;
+  completedStatusEntryId?: string;
+  createdAt: string;
+  completedCredentialAt?: string;
+  isLegacyAdopted?: boolean;  // v17→v18 迁移标记
+}
+
+/**
+ * PlaybackVisitStates table - R3.1a visit-specific snapshot/state（v18）
+ * 与 legacy playbackState 行对应，但按 visitId 隔离，消除跨标签页覆盖。
+ */
+export interface PlaybackVisitState {
+  visitId: string;           // PK
+  stageId: string;
+  sceneIndex: number;
+  actionIndex: number;
+  consumedDiscussions: string[];
+  updatedAt: number;
+  sceneId?: string;
+  capturedAt?: string;
+  completed?: boolean;
+  runtimeShadowEventId?: string;
+  shadowPending?: { eventId: string; capturedAt: string };
+}
+
 /** Build the compound primary key for mediaFiles: `${stageId}:${elementId}` */
 export function mediaFileKey(stageId: string, elementId: string): string {
   return `${stageId}:${elementId}`;
@@ -327,6 +362,8 @@ class MAICDatabase extends Dexie {
   runtimeOutbox!: EntityTable<RuntimeOutboxEntry, 'id'>;
   succeededEntries!: EntityTable<SucceededEntry, 'entryId'>;
   runtimeChainHeads!: EntityTable<RuntimeChainHead, 'sessionId'>;
+  playbackVisits!: EntityTable<PlaybackVisit, 'visitId'>;
+  playbackVisitStates!: EntityTable<PlaybackVisitState, 'visitId'>;
 
   constructor() {
     super(DATABASE_NAME);
@@ -779,6 +816,60 @@ class MAICDatabase extends Dexie {
       runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
       succeededEntries: 'entryId, deletedAt',
       runtimeChainHeads: 'sessionId',
+    });
+
+    // R3.1a Playback visit-session lifecycle（v18）
+    this.version(18).stores({
+      stages: 'id, updatedAt',
+      scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+      audioFiles: 'id, createdAt',
+      imageFiles: 'id, createdAt',
+      snapshots: '++id',
+      chatSessions: 'id, stageId, [stageId+createdAt]',
+      playbackState: 'stageId',
+      playbackVisits: 'visitId, [stageId+status], [tabOwnerId+stageId], completedCredentialAt',
+      playbackVisitStates: 'visitId, [stageId+visitId]',
+      stageOutlines: 'stageId',
+      mediaFiles: 'id, stageId, [stageId+type]',
+      generatedAgents: 'id, stageId',
+      voiceProfiles: 'id, providerId, kind, updatedAt',
+      autoVoiceCache: 'voiceId, updatedAt',
+      agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+      runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
+      succeededEntries: 'entryId, deletedAt',
+      runtimeChainHeads: 'sessionId',
+    }).upgrade(async (tx) => {
+      // v17→v18 migration: legacy playbackState → visits + visitStates
+      const oldRows = await tx.table('playbackState').toArray();
+      if (oldRows.length === 0) return;
+
+      const legacyVisits: PlaybackVisit[] = oldRows.map((row: any) => ({
+        visitId: `legacy-${row.stageId}`,
+        stageId: row.stageId,
+        tabOwnerId: 'legacy-unknown',
+        sessionId: `pb:${row.stageId}`,  // 旧 outbox session identity 原样保留
+        status: row.completed ? 'completed' : 'active',
+        createdAt: new Date(row.updatedAt || Date.now()).toISOString(),
+        isLegacyAdopted: true,
+      }));
+      await tx.table('playbackVisits').bulkAdd(legacyVisits);
+
+      const newStates: PlaybackVisitState[] = oldRows.map((row: any) => ({
+        visitId: `legacy-${row.stageId}`,
+        stageId: row.stageId,
+        sceneIndex: row.sceneIndex ?? 0,
+        actionIndex: row.actionIndex ?? 0,
+        consumedDiscussions: row.consumedDiscussions ?? [],
+        sceneId: row.sceneId,
+        capturedAt: row.capturedAt,
+        updatedAt: row.updatedAt ?? Date.now(),
+        completed: row.completed,
+        runtimeShadowEventId: row.runtimeShadowEventId,
+        shadowPending: row.shadowPending,
+      }));
+      await tx.table('playbackVisitStates').bulkAdd(newStates);
+
+      // 旧 playbackState 行不删除（v19+ 另案）
     });
   }
 }
