@@ -13,7 +13,7 @@ import { scanAndDrain, cleanupExpiredLeases } from '@/lib/runtime/outbox';
 import type { RuntimeOutboxEntry } from '@/lib/utils/database';
 import { isPlaybackShadowEnabled } from '@/lib/runtime/shadow-writer';
 import { getPlaybackPendingInfo } from '@/lib/utils/playback-persistence';
-import { persistSnapshotWithComplete, VisitCycleCompletedError } from '@/lib/runtime/playback-visit';
+import { persistSnapshotWithComplete, checkVisitCompleted, VisitCycleCompletedError } from '@/lib/runtime/playback-visit';
 
 // ─── 开关 ────────────────────────────────────────────────────────────────────
 
@@ -250,6 +250,8 @@ export async function drainPlaybackOutbox(tabId?: string): Promise<void> {
     await scanAndDrain(tid);
     // R3.1: 扫描 completed 行，set_status 成功发送后条件清理
     await _cleanupCompletedRows();
+    // R3.1a: 翻转已有成功凭据的 visit 状态（§1.9 不变量）
+    await _flipCompletedVisits();
   } finally {
     drainRunning = false;
     await scheduleNextDrain();
@@ -276,6 +278,17 @@ async function _cleanupCompletedRows(): Promise<void> {
     if (current?.runtimeShadowEventId === row.runtimeShadowEventId) {
       await db.playbackState.delete(row.stageId);
     }
+  }
+}
+
+// R3.1a：遍历 active visits，已获成功凭据的翻转状态
+async function _flipCompletedVisits(): Promise<void> {
+  const visits = await db.playbackVisits
+    .where('[stageId+status]').between(['', 'active'], ['\uffff', 'active'])
+    .filter((v) => !!v.completedStatusEntryId)
+    .toArray();
+  for (const visit of visits) {
+    await checkVisitCompleted(visit.visitId);
   }
 }
 

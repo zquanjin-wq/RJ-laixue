@@ -78,7 +78,7 @@ async function claimOrReuseVisitInTx(
   // Step 0: legacy adoption (adopted visit has isLegacyAdopted=true, sessionId="pb:<stageId>")
   const legacy = await db.playbackVisits
     .where('[stageId+status]').equals([stageId, 'active'])
-    .filter((v) => v.visitId === `legacy-${stageId}` && v.isLegacyAdopted)
+    .filter((v) => v.visitId === `legacy-${stageId}` && !!v.isLegacyAdopted)
     .first();
   if (legacy) {
     await db.playbackVisits.update(legacy.visitId, {
@@ -211,12 +211,13 @@ export async function persistSnapshotWithComplete(
 
   return db.transaction(
     'rw',
-    [db.playbackVisits, db.playbackVisitStates, db.runtimeOutbox, db.runtimeChainHeads],
+    [db.playbackVisits, db.playbackVisitStates, db.runtimeOutbox, db.runtimeChainHeads, db.succeededEntries],
     async () => {
       const visit = await claimOrReuseVisitInTx(stageId, ownerId);
 
-      // ★ Preflight (M4 §1.8: must complete BEFORE state write + append enqueue)
-      if (snapshot.completed && visit.completedStatusEntryId) {
+      // ★ Preflight (M4 §1.8: unconditional when completedStatusEntryId exists)
+      // Covers all three edge cases: credential exists, append-sent-status-pending, eventId match/mismatch
+      if (visit.completedStatusEntryId) {
         const pre = await completePreflightInTx(visit, snapshot);
         if (pre.action === 'idempotent') {
           return { visitId: visit.visitId, appendId: pre.appendId, statusId: pre.statusId };

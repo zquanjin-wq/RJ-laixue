@@ -53,7 +53,7 @@ describe('basic visit lifecycle', () => {
     const s = snap();
     const result = await persistSnapshotWithComplete('stg1', s);
     expect(result.visitId).toBeTruthy();
-    const outbox = await db.runtimeOutbox.toArray();
+    const outbox = await db.runtimeOutbox.orderBy('sequence').toArray();
     expect(outbox.length).toBe(2); // create + append (no completed)
     expect(outbox[0].op).toBe('create_session');
     expect(outbox[1].op).toBe('append_record');
@@ -161,5 +161,50 @@ describe('correct dependency chain', () => {
     expect(entries[2].op).toBe('set_status');
     expect(entries[1].dependsOnEntryId).toBe(entries[0].id);
     expect(entries[2].dependsOnEntryId).toBe(entries[1].id);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('#15 v17→v18 migration', () => {
+  it('v18 tables exist and accept visit/state data', async () => {
+    const vid = crypto.randomUUID();
+    await db.playbackVisits.put({
+      visitId: vid, stageId: 'stg-mig', tabOwnerId: 'test',
+      sessionId: 'pb:stg-mig', status: 'active', createdAt: ts(),
+    } satisfies any);
+    expect(await db.playbackVisits.get(vid)).toBeTruthy();
+    await db.playbackVisitStates.put({
+      visitId: vid, stageId: 'stg-mig', sceneIndex: 0, actionIndex: 1,
+      consumedDiscussions: [], updatedAt: Date.now(),
+    } satisfies any);
+    expect(await db.playbackVisitStates.get(vid)).toBeTruthy();
+  });
+});
+
+describe('#17-#19 adoption', () => {
+  beforeEach(async () => {
+    await db.playbackVisits.put({
+      visitId: 'legacy-stg-adopt', stageId: 'stg-adopt',
+      tabOwnerId: 'legacy-unknown', sessionId: 'pb:stg-adopt',
+      status: 'active', createdAt: ts(), isLegacyAdopted: true,
+    } satisfies any);
+  });
+
+  it('#17: [stageId+status] indexed query works', async () => {
+    await persistSnapshotWithComplete('stg-adopt', snap());
+    const visit = await db.playbackVisits.get('legacy-stg-adopt');
+    expect(visit!.isLegacyAdopted).toBeUndefined();
+    const outbox = await db.runtimeOutbox.orderBy('sequence').toArray();
+    expect(outbox[0].sessionId).toBe('pb:stg-adopt');
+  });
+
+  it('#19: completed legacy NOT adopted', async () => {
+    await db.playbackVisits.update('legacy-stg-adopt', { status: 'completed' });
+    await persistSnapshotWithComplete('stg-adopt', snap({ eventId: 'evt-new' }));
+    const visits = await db.playbackVisits.toArray();
+    expect(visits.length).toBe(2);
+    const newVisit = visits.find(v => v.visitId !== 'legacy-stg-adopt')!;
+    expect(newVisit.sessionId).toContain('pb:stg-adopt:');
   });
 });

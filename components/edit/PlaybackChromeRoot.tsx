@@ -42,7 +42,7 @@ import {
   reportPlaybackSuperseded,
   shadowPlaybackProgress,   // R2 回退路径
 } from '@/lib/runtime/shadow-writer';
-import { shadowPlaybackProgressViaOutbox, drainPlaybackOutbox, isOutboxReady, onPlaybackOutboxStartup, schedulePlaybackOutboxDrain } from '@/lib/runtime/playback-outbox';
+import { shadowPlaybackProgressViaOutbox, shadowPlaybackProgressVisit, drainPlaybackOutbox, isOutboxReady, onPlaybackOutboxStartup, schedulePlaybackOutboxDrain } from '@/lib/runtime/playback-outbox';
 import {
   flushOnEngineMode,
   flushOnTeardown,
@@ -807,7 +807,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         // 旧 pending 被新快照覆盖时报 superseded 本地丢弃指标。
         onPersisted: () => {
           if (isOutboxReady()) {
-            void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+            void shadowPlaybackProgressVisit(stageId).then(() => drainPlaybackOutbox());
           } else {
             void shadowPlaybackProgress(stageId);
           }
@@ -863,7 +863,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         const pending = await getPlaybackPendingInfo(stageId);
         if (pending.hasPending) {
           if (isOutboxReady()) {
-            void shadowPlaybackProgressViaOutbox(stageId).then(() => drainPlaybackOutbox());
+            void shadowPlaybackProgressVisit(stageId).then(() => drainPlaybackOutbox());
           } else {
             void shadowPlaybackProgress(stageId);
           }
