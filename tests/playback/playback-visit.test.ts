@@ -171,8 +171,8 @@ describe('#15 v17→v18 migration', () => {
     const vid = crypto.randomUUID();
     await db.playbackVisits.put({
       visitId: vid, stageId: 'stg-mig', tabOwnerId: 'test',
-      sessionId: 'pb:stg-mig', status: 'active', createdAt: ts(),
-    } satisfies any);
+      sessionId: 'pb:stg-mig', status: 'active' as const, createdAt: ts(),
+    } as any);
     expect(await db.playbackVisits.get(vid)).toBeTruthy();
     await db.playbackVisitStates.put({
       visitId: vid, stageId: 'stg-mig', sceneIndex: 0, actionIndex: 1,
@@ -187,8 +187,8 @@ describe('#17-#19 adoption', () => {
     await db.playbackVisits.put({
       visitId: 'legacy-stg-adopt', stageId: 'stg-adopt',
       tabOwnerId: 'legacy-unknown', sessionId: 'pb:stg-adopt',
-      status: 'active', createdAt: ts(), isLegacyAdopted: true,
-    } satisfies any);
+      status: 'active' as const, createdAt: ts(), isLegacyAdopted: true,
+    } as any);
   });
 
   it('#17: [stageId+status] indexed query works', async () => {
