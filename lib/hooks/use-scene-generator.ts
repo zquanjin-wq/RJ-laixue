@@ -473,52 +473,74 @@ export async function generateAndStoreTTS(
 }
 
 /** Generate TTS for all speech actions in a scene. Returns result. */
-async function generateTTSForScene(
+/**
+ * Fire-and-forget background TTS generation for a scene.
+ *
+ * Called immediately after scene actions are generated (non-blocking).
+ * Speech actions get audioId assigned synchronously; actual TTS API calls
+ * run in the background via tts-queue (3 concurrent, same rate limit).
+ *
+ * Success: audio blob written to IndexedDB, audioId is already on the action.
+ * Failure: error logged, single-action failure never blocks the scene.
+ * Epoch guard: if generationEpoch has changed by the time TTS completes,
+ *   results are discarded.
+ *
+ * Returns a Promise that resolves when ALL actions in the scene have been
+ * attempted (success or failure). The caller can await it for tracking
+ * but MUST NOT block scene display on it.
+ */
+async function spawnBackgroundTTS(
   scene: Scene,
-  language?: string,
-  signal?: AbortSignal,
-): Promise<{ success: boolean; failedCount: number; error?: string }> {
+  language: string | undefined,
+  signal: AbortSignal | undefined,
+  epoch: number,
+  onFailed: (audioId: string, error: string) => void,
+): Promise<{ attempted: number; failed: number }> {
   const providerId = useSettingsStore.getState().ttsProviderId;
   scene.actions = splitLongSpeechActions(scene.actions || [], providerId);
   const speechActions = (scene.actions as Action[]).filter(
     (a): a is SpeechAction => a.type === 'speech' && !!a.text,
   );
-  if (speechActions.length === 0) return { success: true, failedCount: 0 };
+  if (speechActions.length === 0) return { attempted: 0, failed: 0 };
 
-  let failedCount = 0;
-  let lastError: string | undefined;
-
-  // Use scene order to make audio IDs unique across scenes
-  // This prevents audio collision when action IDs are sequential (e.g., action_1, action_2)
   const sceneOrder = scene.order;
+  let attempted = 0;
+  let failed = 0;
 
+  // Assign audioIds synchronously (ID scheme: tts_s{sceneOrder}_{action.id})
   for (const action of speechActions) {
-    // Include scene order in audioId to prevent collision across scenes
     const audioId = `tts_s${sceneOrder}_${action.id}`;
     action.audioId = audioId;
+  }
+
+  // Generate each action's TTS sequentially in background (tts-queue
+  // handles per-request concurrency across all background scenes).
+  for (const action of speechActions) {
+    const audioId = action.audioId!;
+    attempted++;
     try {
+      // Epoch check: discard if user switched course
+      if (useStageStore.getState().generationEpoch !== epoch) break;
+      if (signal?.aborted) break;
+
       await generateAndStoreTTS(audioId, action.text, language, signal);
     } catch (error) {
-      if (isAbortError(error)) throw error;
-
-      failedCount++;
-      lastError = error instanceof Error ? error.message : `TTS failed for action ${action.id}`;
-      log.warn('TTS generation failed:', {
+      if (isAbortError(error) || useStageStore.getState().generationEpoch !== epoch) break;
+      failed++;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      onFailed(audioId, errMsg);
+      log.warn('Background TTS failed:', {
         providerId,
         actionId: action.id,
         sceneOrder,
         audioId,
         textLength: action.text.length,
-        error: lastError,
+        error: errMsg,
       });
     }
   }
 
-  return {
-    success: failedCount === 0,
-    failedCount,
-    error: lastError,
-  };
+  return { attempted, failed };
 }
 
 export interface UseSceneGeneratorOptions {
@@ -737,6 +759,9 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
 
       // Get previousSpeeches from last completed scene
       let previousSpeeches: string[] = [];
+
+      // Track background TTS tasks for "语音收尾中" indicator
+      const pendingTtsBg: Promise<unknown>[] = [];
       const sortedScenes = [...scenes].sort((a, b) => a.order - b.order);
       if (sortedScenes.length > 0) {
         const lastScene = sortedScenes[sortedScenes.length - 1];
@@ -881,34 +906,8 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             const scene = actionsResult.scene;
             const settings = useSettingsStore.getState();
 
-            // TTS generation — failure means the whole scene fails
-            if (
-              settings.ttsEnabled &&
-              settings.ttsProviderId !== 'browser-native-tts' &&
-              isTTSProviderEnabled(
-                settings.ttsProviderId,
-                settings.ttsProvidersConfig?.[settings.ttsProviderId],
-              )
-            ) {
-              const ttsResult = await generateTTSForScene(
-                scene,
-                params.languageDirective || params.stageInfo.language,
-                signal,
-              );
-              if (!ttsResult.success) {
-                if (abortRef.current || store.getState().generationEpoch !== startEpoch) {
-                  pausedByFailureOrAbort = true;
-                  break;
-                }
-                markOutlineFailed(outline);
-                options.onSceneFailed?.(outline, ttsResult.error || 'TTS generation failed');
-                store.getState().setGenerationStatus('paused');
-                pausedByFailureOrAbort = true;
-                break;
-              }
-            }
-
-            // Epoch changed — stage switched, discard this scene
+            // ── Add scene immediately (non-blocking) ──
+            // Epoch check before mutation
             if (store.getState().generationEpoch !== startEpoch) {
               pausedByFailureOrAbort = true;
               break;
@@ -918,6 +917,33 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             store.getState().addScene(scene);
             options.onSceneGenerated?.(scene, outline.order);
             previousSpeeches = actionsResult.previousSpeeches || [];
+
+            // ── Background TTS: fire-and-forget ──
+            if (
+              settings.ttsEnabled &&
+              settings.ttsProviderId !== 'browser-native-tts' &&
+              isTTSProviderEnabled(
+                settings.ttsProviderId,
+                settings.ttsProvidersConfig?.[settings.ttsProviderId],
+              )
+            ) {
+              const bgTtsPromise = spawnBackgroundTTS(
+                scene,
+                params.languageDirective || params.stageInfo.language,
+                signal,
+                startEpoch,
+                (_audioId, error) => {
+                  // Collect failures for the generation report only;
+                  // save path (publish Tier3) handles regeneration.
+                  if (store.getState().generationEpoch === startEpoch) {
+                    const current = store.getState().ttsBackgroundFailures ?? [];
+                    store.setState({ ttsBackgroundFailures: [...current, _audioId] });
+                  }
+                },
+              );
+              // Track for "语音收尾中" indicator on completion
+              pendingTtsBg.push(bgTtsPromise);
+            }
           } else {
             if (abortRef.current || store.getState().generationEpoch !== startEpoch) {
               pausedByFailureOrAbort = true;
@@ -941,6 +967,13 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             clearAllOutlineTimeouts();
             clearTotalTimeout();
           } else {
+            // ── Background TTS: wait for all pending to settle ──
+            if (pendingTtsBg.length > 0) {
+              store.getState().setGenerationStatus('completed');
+              // Show "语音收尾中" while background TTS finishes
+              // (store status is 'completed' but user sees the hint below)
+              await Promise.allSettled(pendingTtsBg);
+            }
             store.getState().setGenerationStatus('completed');
             store.getState().setGeneratingOutlines([]);
             store.getState().setGenerationComplete(true);
@@ -1096,29 +1129,34 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           return;
         }
 
-        // Step 3: TTS
-        const settings = useSettingsStore.getState();
+        // ── Add scene immediately (non-blocking) ──
+        removeGeneratingOutline();
+        store.getState().addScene(actionsResult.scene);
+
+        // ── Background TTS: fire-and-forget ──
+        const bgSettings = useSettingsStore.getState();
         if (
-          settings.ttsEnabled &&
-          settings.ttsProviderId !== 'browser-native-tts' &&
+          bgSettings.ttsEnabled &&
+          bgSettings.ttsProviderId !== 'browser-native-tts' &&
           isTTSProviderEnabled(
-            settings.ttsProviderId,
-            settings.ttsProvidersConfig?.[settings.ttsProviderId],
+            bgSettings.ttsProviderId,
+            bgSettings.ttsProvidersConfig?.[bgSettings.ttsProviderId],
           )
         ) {
-          const ttsResult = await generateTTSForScene(
+          const bgEpoch = store.getState().generationEpoch;
+          spawnBackgroundTTS(
             actionsResult.scene,
             params.languageDirective || params.stageInfo.language,
             signal,
-          );
-          if (!ttsResult.success) {
-            markOutlineFailed(outline);
-            return;
-          }
+            bgEpoch,
+            (_audioId, _err) => {
+              if (store.getState().generationEpoch === bgEpoch) {
+                const cur = store.getState().ttsBackgroundFailures ?? [];
+                store.setState({ ttsBackgroundFailures: [...cur, _audioId] });
+              }
+            },
+          ).catch(() => {});
         }
-
-        removeGeneratingOutline();
-        store.getState().addScene(actionsResult.scene);
 
         // Resume remaining generation if there are pending outlines
         if (store.getState().generatingOutlines.length > 0 && lastParamsRef.current) {

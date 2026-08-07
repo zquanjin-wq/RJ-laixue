@@ -1180,8 +1180,9 @@ function GenerationPreviewContent() {
         );
 
         let ttsFailCount = 0;
+        const sceneOrder = firstScene.order ?? 0;
         for (const action of speechActions) {
-          const audioId = `tts_${action.id}`;
+          const audioId = `tts_s${sceneOrder}_${action.id}`;
           action.audioId = audioId;
           try {
             await generateAndStoreTTS(
