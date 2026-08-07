@@ -1,9 +1,24 @@
 'use client';
 
 import { useEffect, useState, ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 import { AccessCodeModal } from '@/components/access-code-modal';
 
+// Paths that should bypass the access-code gate even when the operator has
+// ACCESS_CODE set. These pages are reference material intended to be reachable
+// without friction (e.g. the public-facing user manual for teachers).
+const ACCESS_CODE_EXEMPT_PATHS = ['/docs'];
+
+function isAccessCodeExempt(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return ACCESS_CODE_EXEMPT_PATHS.some(
+    (exempt) => pathname === exempt || pathname.startsWith(`${exempt}/`),
+  );
+}
+
 export function AccessCodeGuard({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const exempt = isAccessCodeExempt(pathname);
   const [status, setStatus] = useState<{
     enabled: boolean;
     authenticated: boolean;
@@ -11,6 +26,7 @@ export function AccessCodeGuard({ children }: { children: ReactNode }) {
   }>({ enabled: false, authenticated: false, loading: true });
 
   useEffect(() => {
+    if (exempt) return;
     let cancelled = false;
     fetch('/api/access-code/status')
       .then((res) => res.json())
@@ -32,9 +48,9 @@ export function AccessCodeGuard({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [exempt]);
 
-  const needsAuth = !status.loading && status.enabled && !status.authenticated;
+  const needsAuth = !exempt && !status.loading && status.enabled && !status.authenticated;
 
   return (
     <>

@@ -49,13 +49,15 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // Whitelist: access-code endpoints, health check
+  // Whitelist: access-code endpoints, health check, public docs site
   if (
     pathname.startsWith('/api/access-code/') ||
     pathname.startsWith('/api/courses') ||
     pathname.startsWith('/api/students') ||
     pathname.startsWith('/api/learning') ||
-    pathname === '/api/health'
+    pathname === '/api/health' ||
+    pathname === '/docs' ||
+    pathname.startsWith('/docs/')
   ) {
     return NextResponse.next();
   }
