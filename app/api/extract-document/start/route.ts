@@ -8,10 +8,9 @@
  *
  * Flow:
  *   1. Auth + path validation (reuse existing pattern)
- *   2. Verify material exists in storage
- *   3. Generate Supabase public URL for the material
- *   4. Call MinerU POST /extract/task/batch with the URL
- *   5. Return { batchId } (< 10s target)
+ *   2. Generate Supabase public URL for the material
+ *   3. Call MinerU POST /extract/task/batch with the URL
+ *   4. Return { batchId } (< 10s target)
  *
  * The client then polls POST /api/extract-document/poll until done.
  */

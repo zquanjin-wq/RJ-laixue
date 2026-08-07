@@ -337,7 +337,6 @@ function GenerationPreviewContent() {
         };
 
         while (!parseResult) {
-          if (signal?.aborted) throw new Error('AbortError');
           if (Date.now() - pollStartMs > MAX_POLL_MS) {
             throw new Error('解析超时，请重试');
           }
@@ -380,7 +379,8 @@ function GenerationPreviewContent() {
           } else if (pollData.status === 'failed') {
             throw new Error(pollData.error || 'MinerU 解析失败');
           }
-          // processing — wait and try again
+          // processing — wait interval then poll again
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         }
 
         if (!parseResult) throw new Error(t('generation.courseMaterialParseFailed'));
@@ -464,7 +464,6 @@ function GenerationPreviewContent() {
           let extraResult: any = null;
           const extraPollStart = Date.now();
           while (!extraResult) {
-            if (signal?.aborted) throw new Error('AbortError');
             if (Date.now() - extraPollStart > MAX_POLL_MS) {
               throw new Error(`${material.fileName}：解析超时，请重试`);
             }
@@ -491,6 +490,8 @@ function GenerationPreviewContent() {
             } else if (extraPoll.data?.status === 'failed') {
               throw new Error(`${material.fileName}：${extraPoll.data.error || 'MinerU 解析失败'}`);
             }
+            // processing — wait interval then poll again
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
           }
           if (!extraResult) throw new Error(`${material.fileName}：${t('generation.courseMaterialParseFailed')}`);
 
