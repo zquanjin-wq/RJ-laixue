@@ -29,6 +29,7 @@ import {
   loadImageMappingCompressed,
   cleanupOldImages,
   storeImages,
+  storeImagesFromUrls,
 } from '@/lib/utils/image-storage';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
@@ -304,7 +305,14 @@ function GenerationPreviewContent() {
           if (parseResponse.status === 413) {
             throw new Error('课程材料超过 49MB 上限,请压缩或拆分后再上传');
           }
+          // Non-JSON responses are platform-layer errors (Vercel replaces 200 with
+          // error page). 500→likely oversized response; other→fallback.
           if (!contentType.includes('application/json')) {
+            if (parseResponse.status === 500) {
+              throw new Error(
+                '解析结果过大或平台错误，请重试或拆分材料。如持续失败请联系管理员。',
+              );
+            }
             throw new Error(t('generation.courseMaterialParseFailed'));
           }
           const errorData = await parseResponse.json();
@@ -324,12 +332,26 @@ function GenerationPreviewContent() {
 
         // Create image metadata and store images
         // Prefer metadata.pdfImages (both parsers now return this)
+        interface MaterialImage {
+          id: string;
+          src: string;
+          publicUrl?: string;
+          storagePath?: string;
+          missing?: boolean;
+          pageNumber: number;
+          description?: string;
+          width?: number;
+          height?: number;
+        }
         const rawPdfImages = parseResult.data.metadata?.pdfImages;
-        const images = rawPdfImages
+        const images: MaterialImage[] = rawPdfImages
           ? rawPdfImages.map(
               (img: {
                 id: string;
                 src?: string;
+                publicUrl?: string;
+                storagePath?: string;
+                missing?: boolean;
                 pageNumber?: number;
                 description?: string;
                 width?: number;
@@ -337,6 +359,9 @@ function GenerationPreviewContent() {
               }) => ({
                 id: img.id,
                 src: img.src || '',
+                publicUrl: img.publicUrl,
+                storagePath: img.storagePath,
+                missing: img.missing,
                 pageNumber: img.pageNumber || 1,
                 description: img.description,
                 width: img.width,
@@ -387,6 +412,9 @@ function GenerationPreviewContent() {
                 (img: {
                   id: string;
                   src?: string;
+                  publicUrl?: string;
+                  storagePath?: string;
+                  missing?: boolean;
                   pageNumber?: number;
                   description?: string;
                   width?: number;
@@ -394,6 +422,9 @@ function GenerationPreviewContent() {
                 }) => ({
                   id: `${materialIndex + 1}-${img.id}`,
                   src: img.src || '',
+                  publicUrl: img.publicUrl,
+                  storagePath: img.storagePath,
+                  missing: img.missing,
                   pageNumber: img.pageNumber || 1,
                   description: img.description,
                   width: img.width,
@@ -408,29 +439,62 @@ function GenerationPreviewContent() {
           images.push(...extraImages);
         }
 
-        const imageStorageIds = await storeImages(images);
+        // Store images: unified pipeline handles both externalized (publicUrl)
+        // and legacy base64 images. Align by imgId (Map), NOT by array index.
+        // A missing/failed image leaves no entry in the map; PdfImage.storageId
+        // is optional, so undefined → no storage reference → correct behavior.
+        const storageIdMap = new Map<string, string>();
 
-        const pdfImages: PdfImage[] = images.map(
-          (
-            img: {
-              id: string;
-              src: string;
-              pageNumber: number;
-              description?: string;
-              width?: number;
-              height?: number;
-            },
-            i: number,
-          ) => ({
-            id: img.id,
-            src: '',
-            pageNumber: img.pageNumber,
-            description: img.description,
-            width: img.width,
-            height: img.height,
-            storageId: imageStorageIds[i],
-          }),
+        // 1) Externalized images: download from publicUrl → IndexedDB
+        const extImages = images.filter((img) => img.publicUrl);
+        if (extImages.length > 0) {
+          const extIds = await storeImagesFromUrls(
+            extImages.map((img) => ({
+              id: img.id,
+              url: img.publicUrl!,
+              pageNumber: img.pageNumber,
+            })),
+          );
+          extImages.forEach((img, i) => {
+            if (extIds[i]) storageIdMap.set(img.id, extIds[i]);
+          });
+        }
+
+        // 2) Legacy base64 images: store directly from data URI
+        const b64Images = images.filter(
+          (img) => !img.publicUrl && img.src?.startsWith('data:'),
         );
+        if (b64Images.length > 0) {
+          const b64Ids = await storeImages(
+            b64Images.map((img) => ({
+              id: img.id,
+              src: img.src,
+              pageNumber: img.pageNumber,
+            })),
+          );
+          // storeImages returns a dense array of successful ids only
+          // (may be shorter than input if some fail). Iterate by input.
+          b64Images.forEach((img, i) => {
+            if (i < b64Ids.length) storageIdMap.set(img.id, b64Ids[i]);
+          });
+        }
+
+        // 3) Build PdfImage[]: lookup storageId by imgId from the map
+        const pdfImages: PdfImage[] = images.map((img) => ({
+          id: img.id,
+          src: '',
+          pageNumber: img.pageNumber,
+          description: img.description,
+          width: img.width,
+          height: img.height,
+          storageId: storageIdMap.get(img.id),
+        }));
+
+        // Derive imageStorageIds from the map (maintains existing session shape).
+        // Filter out undefined entries (failed/missing images) to match string[] contract.
+        const imageStorageIds = images
+          .map((img) => storageIdMap.get(img.id))
+          .filter((id): id is string => !!id);
 
         // Update session with extracted document data
         const updatedSession = {

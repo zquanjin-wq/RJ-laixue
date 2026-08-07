@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import {
   isServerConfiguredProvider,
   resolvePDFApiKey,
@@ -18,11 +18,13 @@ import {
   fetchCourseMaterialFromStorage,
   MaterialFetchError,
 } from '@/lib/server/course-asset-storage';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { MAX_PDF_CONTENT_CHARS } from '@/lib/constants/generation';
+import { COURSE_ASSET_BUCKET } from '@/lib/course-assets/shared';
+import { nanoid } from 'nanoid';
 
 const log = createLogger('Extract Document');
 
@@ -173,6 +175,7 @@ export async function POST(req: NextRequest) {
         providerId: effectiveProviderId,
         apiKey,
         baseUrl,
+        callerUserId,
         resolvedProviderIdHolder: { current: undefined },
       });
     }
@@ -315,7 +318,7 @@ export async function POST(req: NextRequest) {
       config,
     });
     const result = documentArtifactToParsedPdfContent(artifact);
-    return apiSuccess({
+    return safeApiSuccess({
       data: trimAndWrap(result, documentFile.name, documentFile.size, mimeType, provider.id),
     });
   } catch (error) {
@@ -339,6 +342,7 @@ async function runExtraction(opts: {
   providerId: PDFProviderId;
   apiKey?: string;
   baseUrl?: string;
+  callerUserId: string;
   resolvedProviderIdHolder: { current: DocumentExtractorProviderId | undefined };
 }): Promise<Response> {
   const { mimeType, buffer, fileName, fileSize, providerId, apiKey, baseUrl } = opts;
@@ -419,8 +423,16 @@ async function runExtraction(opts: {
   };
 
   const artifact = await provider.extract({ buffer, fileName, fileSize, mimeType, config });
-  const result = documentArtifactToParsedPdfContent(artifact);
-  return apiSuccess({
+  const rawResult = documentArtifactToParsedPdfContent(artifact);
+  const { result, stats: uploadStats } = await externalizeImages(rawResult, {
+    callerUserId: opts.callerUserId,
+  });
+  log.info(
+    `Image externalization: ${uploadStats.total} images, ${uploadStats.uploaded} uploaded` +
+      (uploadStats.failed > 0 ? `, ${uploadStats.failed} failed` : '') +
+      `, ${(uploadStats.totalBytes / 1024 / 1024).toFixed(1)} MB total`,
+  );
+  return safeApiSuccess({
     data: trimAndWrap(result, fileName, fileSize, mimeType, provider.id),
   });
 }
@@ -432,8 +444,9 @@ function trimAndWrap(
   mimeType: string,
   parserId: string,
 ): ParsedPdfContent {
-  // 服务端截断到 MAX_PDF_CONTENT_CHARS,确保响应体永远 < 4.5MB(Vercel 限制)。
-  // 客户端拿到后再做最终截断只用于本地展示,不再承担"防止 413"职责。
+  // 服务端截断文本到 MAX_PDF_CONTENT_CHARS。
+  // 图片安全由 externalizeImages 保证(base64 → Storage 引用)，
+  // 响应体体积由 safeApiSuccess 硬断言，不再依赖本函数的"假安全感"逻辑。
   const rawText = result.text || '';
   const text =
     rawText.length > MAX_PDF_CONTENT_CHARS ? rawText.substring(0, MAX_PDF_CONTENT_CHARS) : rawText;
@@ -449,4 +462,179 @@ function trimAndWrap(
       parser: result.metadata?.parser ?? parserId,
     },
   };
+}
+
+// ── 图片外部化：base64 → Supabase Storage ────────────────────────────────────
+
+const MIME_TO_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+/** Vercel Functions 响应体上限 4.5MB，留 ~0.5MB 余量避免边界 case */
+const RESPONSE_MAX_BYTES = 4 * 1024 * 1024; // 4MB
+
+interface ExternalizeOptions {
+  callerUserId: string;
+  extractSessionId?: string;
+}
+
+interface ExternalizeStats {
+  total: number;
+  uploaded: number;
+  failed: number;
+  totalBytes: number;
+}
+
+interface ExternalizeResult {
+  result: ParsedPdfContent;
+  stats: ExternalizeStats;
+}
+
+/**
+ * 将 ParsedPdfContent 中的 base64 图片逐个上传到 course-assets bucket，
+ * 响应中只保留 storagePath / publicUrl 引用，不再携带 base64 src。
+ *
+ * 单张上传失败不阻断整次提取：该图标记为 missing，与前端 storeImages
+ * 现有的单图失败容忍语义一致。
+ */
+async function externalizeImages(
+  parsed: ParsedPdfContent,
+  opts: ExternalizeOptions,
+): Promise<ExternalizeResult> {
+  const sessionId = opts.extractSessionId ?? nanoid(12);
+  const pdfImages = parsed.metadata?.pdfImages;
+  const stats: ExternalizeStats = { total: 0, uploaded: 0, failed: 0, totalBytes: 0 };
+
+  if (!pdfImages || pdfImages.length === 0) {
+    // 没有图片 —— 仍清理 base64 数组，避免残留
+    return {
+      result: {
+        ...parsed,
+        images: [],
+        metadata: { ...parsed.metadata, pageCount: parsed.metadata?.pageCount ?? 0, imageMapping: {}, pdfImages: [] },
+      },
+      stats,
+    };
+  }
+
+  const service = getServiceSupabase();
+  const pathPrefix = `pending/${opts.callerUserId}/images/${sessionId}`;
+
+  const externalizedPdfImages = await Promise.all(
+    pdfImages.map(async (img) => {
+      // 只处理有 base64 src 的图片（跳过已外部化或 src 为空的）
+      if (!img.src || !img.src.startsWith('data:')) {
+        return img;
+      }
+
+      stats.total++;
+      const commaIdx = img.src.indexOf(',');
+      if (commaIdx === -1) {
+        // 格式异常，保留但清 src
+        stats.failed++;
+        return {
+          ...img,
+          src: '',
+          missing: true,
+        };
+      }
+
+      const header = img.src.slice(5, commaIdx);
+      const mimeType = header.split(';')[0] || 'image/png';
+      const base64 = img.src.slice(commaIdx + 1);
+      const ext = MIME_TO_EXT[mimeType] || 'png';
+      const storagePath = `${pathPrefix}/${img.id}.${ext}`;
+
+      try {
+        const buffer = Buffer.from(base64, 'base64');
+        stats.totalBytes += buffer.length;
+
+        const { error } = await service.storage
+          .from(COURSE_ASSET_BUCKET)
+          .upload(storagePath, buffer, {
+            contentType: mimeType,
+            upsert: true,
+          });
+
+        if (error) {
+          log.error(`Image upload failed [${img.id} → ${storagePath}]:`, error.message);
+          stats.failed++;
+          return {
+            ...img,
+            src: '',
+            storagePath,
+            missing: true,
+          };
+        }
+
+        const { data: publicData } = service.storage
+          .from(COURSE_ASSET_BUCKET)
+          .getPublicUrl(storagePath);
+
+        stats.uploaded++;
+        return {
+          ...img,
+          src: '',
+          storagePath,
+          publicUrl: publicData.publicUrl,
+        };
+      } catch (e) {
+        log.error(`Image upload exception [${img.id} → ${storagePath}]:`, e);
+        stats.failed++;
+        return {
+          ...img,
+          src: '',
+          storagePath,
+          missing: true,
+        };
+      }
+    }),
+  );
+
+  // 同时清除 images 数组中的 base64（legacy 接口兼容）
+  return {
+    result: {
+      ...parsed,
+      images: [],
+      metadata: {
+        ...parsed.metadata,
+        pageCount: parsed.metadata?.pageCount ?? 0,
+        imageMapping: {},
+        pdfImages: externalizedPdfImages,
+      },
+    },
+    stats,
+  };
+}
+
+// ── 响应体体积硬断言 ─────────────────────────────────────────────────────────
+
+/**
+ * 与 apiSuccess 语义相同，但在返回前序列化 JSON 并断言 < RESPONSE_MAX_BYTES。
+ * 超限时返回结构化错误（而非让 Vercel 平台层把 200 替换成非 JSON 错误页）。
+ */
+function safeApiSuccess<T extends Record<string, unknown>>(data: T): NextResponse {
+  const bodyString = JSON.stringify({ success: true, ...data });
+  const bodyBytes = Buffer.byteLength(bodyString, 'utf-8');
+  log.info(
+    `Response body size: ${bodyBytes} bytes (${(bodyBytes / 1024 / 1024).toFixed(2)} MB)` +
+      ` / limit ${RESPONSE_MAX_BYTES} bytes`,
+  );
+
+  if (bodyBytes > RESPONSE_MAX_BYTES) {
+    log.error(
+      `Response body ${bodyBytes} bytes exceeds ${RESPONSE_MAX_BYTES} bytes limit ` +
+        `(${(bodyBytes / 1024 / 1024).toFixed(1)} MB > ${(RESPONSE_MAX_BYTES / 1024 / 1024).toFixed(1)} MB)`,
+    );
+    return apiError(
+      'PARSE_FAILED',
+      500,
+      `解析结果过大 (${(bodyBytes / 1024 / 1024).toFixed(1)} MB)，请拆分材料后重试`,
+    );
+  }
+
+  return NextResponse.json({ success: true, ...data }, { status: 200 });
 }
