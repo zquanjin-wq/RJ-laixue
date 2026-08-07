@@ -2,7 +2,7 @@ import type { Action, SpeechAction } from '@/lib/types/action';
 import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
-import { uploadCourseBlobsConcurrently, type ConcurrentUploadTask } from '@/lib/course-assets/client';
+import { uploadCourseBlob, uploadCourseBlobsConcurrently, type ConcurrentUploadTask } from '@/lib/course-assets/client';
 import { enqueueTTSFetchTask } from '@/lib/audio/tts-queue';
 
 const log = createLogger('AudioPublish');
