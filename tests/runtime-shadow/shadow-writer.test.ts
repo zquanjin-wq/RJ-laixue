@@ -395,11 +395,67 @@ describe('runtime shadow writer', () => {
     responder = (url) => ({ status: url.includes('/records') ? 409 : 201 });
     await shadowChatSessions('stage1', [makeChatSession('cs1', ['m1'])]);
     expect(telemetryOutcomes()).toEqual(['ok', 'idempotency_conflict']);
-    // 冲突后游标不前进，下次保存从同一下标重试
+    // M1: 冲突后游标前进（跳过中毒记录），下次保存不再重放该条
     fetchCalls.length = 0;
     responder = okResponder;
     await shadowChatSessions('stage1', [makeChatSession('cs1', ['m1', 'm2'])]);
     const appends = apiCalls().filter((c) => c.url.includes('/records'));
-    expect(appends.map((c) => c.body.id)).toEqual(['cs1:m1', 'cs1:m2']);
+    expect(appends.map((c) => c.body.id)).toEqual(['cs1:m2']); // m1 was skipped
+  });
+
+  // ── M1 止血：chat IDEMPOTENCY_CONFLICT 409 → 游标跳过 ──────────────────────
+
+  it('M1: chat append 409 → skip poisoned record, advance cursor, telemetry once', async () => {
+    process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
+
+    const lecRecordId = 'cs-m1:lec';
+    const baseResponder = responder;
+
+    // Step 1: inject 409 for lecture message → cursor skips it
+    responder = (_url, body: Record<string, unknown> | undefined) => {
+      if (body && (body as any).id === lecRecordId) return { status: 409 };
+      return { status: 201 };
+    };
+
+    const s1 = makeChatSession('cs-m1', ['lec', 'm2']);
+    await shadowChatSessions('stage1', [s1]);
+
+    // m2 succeeds, lecture 409 → telemetry exactly once
+    const telemetry = telemetryCalls().filter((b) => b.outcome === 'idempotency_conflict');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].op).toBe('append_record');
+    expect(telemetry[0].kind).toBe('chat');
+
+    // Step 2: retry with same message count → lecture already skipped, m2 already sent
+    // Cursor at position 2, no new messages → zero appends
+    fetchCalls.length = 0;
+    responder = okResponder;
+    await shadowChatSessions('stage1', [makeChatSession('cs-m1', ['lec', 'm2'])]);
+    // Zero new telemetry for the skipped record
+    expect(telemetryCalls().filter((b) => b.outcome === 'idempotency_conflict').length).toBe(0);
+    // No new appends (both already sent/skipped)
+    expect(apiCalls().filter((c) => c.url.includes('/records')).length).toBe(0);
+
+    // Step 3: add new message m3 → m3 gets appended normally
+    fetchCalls.length = 0;
+    await shadowChatSessions('stage1', [makeChatSession('cs-m1', ['lec', 'm2', 'm3'])]);
+    expect(apiCalls().filter((c) => c.url.includes('/records')).map((c) => c.body.id))
+      .toEqual(['cs-m1:m3']);
+
+    responder = baseResponder;
+  });
+
+  it('M1: other error (non-409) still stops cursor — not skipped', async () => {
+    process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
+    const baseResponder = responder;
+    // 422 validation → not retried, stops loop (instant, not 5s retry)
+    responder = (_url, body: Record<string, unknown> | undefined) => {
+      if (body && (body as any).id === 'cs-m1b:m1') return { status: 422 };
+      return { status: 201 };
+    };
+    await shadowChatSessions('stage1', [makeChatSession('cs-m1b', ['m1', 'm2'])]);
+    // 422 not skipped → cursor stops, telemetry not idempotency_conflict
+    expect(telemetryOutcomes().filter((o) => o === 'idempotency_conflict').length).toBe(0);
+    responder = baseResponder;
   });
 });

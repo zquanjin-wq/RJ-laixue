@@ -378,7 +378,14 @@ async function shadowOneChatSession(stageId: string, session: ChatSession): Prom
       'chat',
     );
     if (!r.ok) {
-      // 会话在服务端缺失（404）：清 created 标记，下次保存重建会话
+      // M1 止血：IDEMPOTENCY_CONFLICT（lecture 内容持续增长）→ 跳过该记录
+      // 游标前进，telemetry 已在 shadowRequest 内计为 idempotency_conflict（同 id 只一次）
+      if (r.status === 409) {
+        cursor.count = i + 1;
+        writeChatCursor(session.id, cursor);
+        continue;
+      }
+      // 会话在服务端缺失（404）或其他错误：清 created 标记，下次保存重建会话
       writeChatCursor(session.id, cursor);
       return;
     }
