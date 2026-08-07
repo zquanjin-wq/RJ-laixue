@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 import {
   COURSE_ASSET_BUCKET,
-  MATERIAL_MAX_BYTES,
-  MATERIAL_MAX_HUMAN,
   type CourseAssetKind,
 } from '@/lib/course-assets/shared';
 
