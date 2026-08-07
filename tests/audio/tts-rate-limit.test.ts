@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { throwIfTtsRateLimited, TTSRateLimitError } from '@/lib/audio/tts-providers';
+import type { TTSModelConfig } from '@/lib/audio/types';
 
 describe('throwIfTtsRateLimited', () => {
   it('throws a typed TTSRateLimitError on HTTP 429', () => {
@@ -51,9 +52,9 @@ describe('generateTTS — MiniMax 200 + application-level errors', () => {
     fetchSpy.mockReset();
   });
 
-  function buildMinimaxConfig() {
+  function buildMinimaxConfig(): TTSModelConfig {
     return {
-      providerId: 'minimax-tts',
+      providerId: 'minimax-tts' as TTSModelConfig['providerId'],
       modelId: 'speech-2.8-hd',
       voice: 'test-voice',
       speed: 1.0,

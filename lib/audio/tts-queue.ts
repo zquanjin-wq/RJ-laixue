@@ -59,17 +59,19 @@ function isRetryable(status: number): boolean {
 }
 
 async function extractRetryAfterSec(response: Response): Promise<number | undefined> {
-  // Prefer response header
-  const header = response.headers.get('Retry-After');
+  // Guard against mock Response objects lacking .headers (test compat)
+  const header = response.headers?.get?.('Retry-After');
   if (header) {
     const n = parseInt(header, 10);
     if (!isNaN(n) && n > 0) return n;
   }
-  // Fallback: parse body
+  // Fallback: parse body (clone may also be missing in mocks)
   try {
-    const body = await response.clone().json();
-    if (typeof body.retryAfterSec === 'number' && body.retryAfterSec > 0) {
-      return body.retryAfterSec;
+    if (typeof response.clone === 'function') {
+      const body = await response.clone().json();
+      if (typeof body.retryAfterSec === 'number' && body.retryAfterSec > 0) {
+        return body.retryAfterSec;
+      }
     }
   } catch {
     // body may not be JSON
