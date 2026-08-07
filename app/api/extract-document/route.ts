@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
       // operator must enable `PDF_MINERU_CLOUD_API_KEY` (or
       // `PDF_MINERU_BASE_URL`) on the server.
       return apiError(
-        'SERVICE_NOT_CONFIGURED',
+        'SERVER_MISCONFIG',
         422,
         `${requestedTypeLabel(mimeType)} extraction is not configured on this server. Please contact your administrator to enable document parsing.`,
       );
