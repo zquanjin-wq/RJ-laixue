@@ -3,6 +3,7 @@ import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
 import { uploadCourseBlob } from '@/lib/course-assets/client';
+import { enqueueTTSFetchTask } from '@/lib/audio/tts-queue';
 
 const log = createLogger('AudioPublish');
 
@@ -207,27 +208,28 @@ async function generateTTSForText(
 }> {
   const ttsConfig = await resolveTtsConfigForPublish(teacherVoiceConfig, sceneId);
 
-  const response = await fetch('/api/generate/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text,
-      audioId,
-      ttsProviderId: ttsConfig.providerId,
-      ttsModelId: ttsConfig.modelId,
-      ttsVoice: ttsConfig.voice,
-      ttsSpeed: 1.0,
-      ttsApiKey: ttsConfig.apiKey || undefined,
-      ttsBaseUrl: ttsConfig.baseUrl || undefined,
+  const queueResult = await enqueueTTSFetchTask(audioId, () =>
+    fetch('/api/generate/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        audioId,
+        ttsProviderId: ttsConfig.providerId,
+        ttsModelId: ttsConfig.modelId,
+        ttsVoice: ttsConfig.voice,
+        ttsSpeed: 1.0,
+        ttsApiKey: ttsConfig.apiKey || undefined,
+        ttsBaseUrl: ttsConfig.baseUrl || undefined,
+      }),
     }),
-  });
+  );
 
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => null);
-    throw new Error(
-      errBody?.message || errBody?.error || `TTS HTTP ${response.status}`,
-    );
+  if (!queueResult.success || !queueResult.response) {
+    throw new Error(queueResult.error || 'TTS queue failed');
   }
+
+  const response = queueResult.response;
 
   const json = await response.json();
 

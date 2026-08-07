@@ -21,6 +21,7 @@ import { resolveAgentVoiceOptions, pickNarratorAgent } from '@/lib/audio/agent-v
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
 import { lazyBoundedMap } from '@/lib/utils/concurrency';
+import { enqueueTTSFetchTask } from '@/lib/audio/tts-queue';
 import { createLogger } from '@/lib/logger';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import {
@@ -412,29 +413,33 @@ export async function generateAndStoreTTS(
   });
   const data = await withGenerationRetry(
     async () => {
-      const response = await fetch('/api/generate/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          audioId,
-          ttsProviderId: settings.ttsProviderId,
-          ttsModelId: ttsProviderConfig?.modelId,
-          ttsVoice: settings.ttsVoice,
-          ttsSpeed: settings.ttsSpeed,
-          ttsApiKey: ttsProviderConfig?.apiKey || undefined,
-          // Managed providers resolve their base URL server-side; only send the
-          // client's own base URL (custom providers).
-          ttsBaseUrl:
-            ttsProviderConfig?.baseUrl || ttsProviderConfig?.customDefaultBaseUrl || undefined,
-          ttsProviderOptions: providerOptions,
+      const queueResult = await enqueueTTSFetchTask(audioId, () =>
+        fetch('/api/generate/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            audioId,
+            ttsProviderId: settings.ttsProviderId,
+            ttsModelId: ttsProviderConfig?.modelId,
+            ttsVoice: settings.ttsVoice,
+            ttsSpeed: settings.ttsSpeed,
+            ttsApiKey: ttsProviderConfig?.apiKey || undefined,
+            ttsBaseUrl:
+              ttsProviderConfig?.baseUrl || ttsProviderConfig?.customDefaultBaseUrl || undefined,
+            ttsProviderOptions: providerOptions,
+          }),
+          signal,
         }),
-        signal,
-      });
+      );
 
-      const data = (await readJsonResponse(response)) as TTSApiResponse;
-      if (!response.ok) {
-        throw createHttpError(response, data, 'TTS request failed');
+      if (!queueResult.success || !queueResult.response) {
+        throw new Error(queueResult.error || 'TTS queue returned failure');
+      }
+
+      const data = (await readJsonResponse(queueResult.response)) as TTSApiResponse;
+      if (!queueResult.response.ok) {
+        throw createHttpError(queueResult.response, data, 'TTS request failed');
       }
       return data;
     },

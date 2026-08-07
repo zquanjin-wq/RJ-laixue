@@ -7,7 +7,7 @@
  * POST /api/generate/tts
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { generateTTS, TTSRateLimitError } from '@/lib/audio/tts-providers';
 import { recordGenerationUsage } from '@/lib/server/usage-storage';
 import {
@@ -28,18 +28,29 @@ const log = createLogger('TTS API');
 
 export const maxDuration = 30;
 
+/**
+ * Per-minute rate limit for the generate-tts endpoint.
+ *
+ * Must be set lower than the MiniMax TTS account RPM to avoid triggering
+ * upstream 1002 (rate limit exceeded). MiniMax account RPM is configured
+ * in MiniMax console; TTS_RATE_LIMIT_PER_MIN should be ≤ 80% of that value.
+ *
+ * Default 15 / min is conservative for shared accounts.
+ */
+const TTS_RATE_LIMIT_PER_MIN = parseInt(
+  process.env.TTS_RATE_LIMIT_PER_MIN || '15',
+  10,
+) || 15;
+
 export async function POST(req: NextRequest) {
   let ttsProviderId: string | undefined;
   let ttsVoice: string | undefined;
   let audioId: string | undefined;
   try {
-    // ── Auth + rate limit ────────────────────────────────────────
-    // TTS is cheap but called in parallel per scene (10-30 calls per
-    // classroom). 30 calls / minute gives a 5x safety margin over the
-    // expected peak burst.
+    // Auth + rate limit (configurable via TTS_RATE_LIMIT_PER_MIN env var)
     const auth = await requireAuthOrTeacher(['teacher', 'admin']);
     if (!auth.ok) return auth.response;
-    const rl = rateLimitByUser(auth.user.id, 'generate-tts', 30, 60_000);
+    const rl = rateLimitByUser(auth.user.id, 'generate-tts', TTS_RATE_LIMIT_PER_MIN, 60_000);
     if (!rl.ok) return rl.response;
 
     const body = await req.json();
@@ -147,7 +158,18 @@ export async function POST(req: NextRequest) {
       error,
     );
     if (error instanceof TTSRateLimitError) {
-      return apiError('RATE_LIMITED', 429, error.message);
+      return NextResponse.json(
+        {
+          success: false as const,
+          errorCode: 'RATE_LIMITED' as const,
+          error: error.message,
+          retryAfterSec: error.retryAfterSec,
+        },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(error.retryAfterSec) },
+        },
+      );
     }
     return apiError(
       'GENERATION_FAILED',
