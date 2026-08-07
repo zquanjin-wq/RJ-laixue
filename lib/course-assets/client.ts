@@ -6,6 +6,9 @@ import {
   MATERIAL_MIME_TYPES,
   type CourseAssetKind,
 } from './shared';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('CourseAssets');
 
 export { COURSE_ASSET_BUCKET, MATERIAL_MAX_BYTES, type CourseAssetKind } from './shared';
 
@@ -197,4 +200,70 @@ export async function uploadCourseTextMaterial(
     });
   if (error) throw new Error(`文本作业直传失败:${error.message}`);
   return { path: signed.path, size: blob.size };
+}
+
+// ── 并发上传池 ────────────────────────────────────────────────────────────────
+
+export interface ConcurrentUploadTask {
+  /** 唯一标识（用于失败汇报） */
+  id: string;
+  courseId: string;
+  kind: CourseAssetKind;
+  blob: Blob;
+}
+
+export interface ConcurrentUploadResult {
+  id: string;
+  success: boolean;
+  publicUrl?: string;
+  error?: string;
+}
+
+/**
+ * 并发上传多个 blob 到 course-assets bucket。
+ *
+ * 默认 6 路并发池，每路独立执行 sign-upload → PUT 链路。
+ * 单条失败最多重试 2 次，不阻断其他条目的上传。
+ *
+ * 与 storeImagesFromUrls 的并发池模式同构（worker pool + shared cursor）。
+ */
+export async function uploadCourseBlobsConcurrently(
+  tasks: ConcurrentUploadTask[],
+  concurrency: number = 6,
+  maxRetries: number = 2,
+): Promise<ConcurrentUploadResult[]> {
+  const results: ConcurrentUploadResult[] = new Array(tasks.length);
+  let cursor = 0;
+
+  async function uploadSingle(task: ConcurrentUploadTask, idx: number): Promise<void> {
+    let lastError = '';
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const publicUrl = await uploadCourseBlob(task.courseId, task.kind, task.blob);
+        results[idx] = { id: task.id, success: true, publicUrl };
+        return;
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        if (attempt < maxRetries) {
+          log.warn(`Upload retry ${attempt + 1}/${maxRetries}: ${task.id} (${lastError})`);
+          await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        }
+      }
+    }
+    results[idx] = { id: task.id, success: false, error: lastError };
+  }
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= tasks.length) return;
+      await uploadSingle(tasks[idx], idx);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, tasks.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  return results;
 }

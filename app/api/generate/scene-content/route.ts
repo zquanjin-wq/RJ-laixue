@@ -31,6 +31,17 @@ const log = createLogger('Scene Content API');
 
 export const maxDuration = 300;
 
+/**
+ * Per-minute rate limit for text LLM generation (scene-content / scene-actions).
+ *
+ * Default 150 / min leaves ~25% headroom below MiniMax M3 account RPM (200).
+ * Users on MiniMax free tier (20 RPM) should set this to ≤15 via env var.
+ */
+const TEXT_LLM_RATE_LIMIT_PER_MIN = parseInt(
+  process.env.TEXT_LLM_RATE_LIMIT_PER_MIN || '150',
+  10,
+) || 150;
+
 export async function POST(req: NextRequest) {
   let outlineTitle: string | undefined;
   let resolvedModelString: string | undefined;
@@ -41,7 +52,7 @@ export async function POST(req: NextRequest) {
     // flows while still blocking script abuse.
     const auth = await requireAuthOrTeacher(['teacher', 'admin']);
     if (!auth.ok) return auth.response;
-    const rl = rateLimitByUser(auth.user.id, 'generate-scene-content', 15, 30_000);
+    const rl = rateLimitByUser(auth.user.id, 'generate-scene-content', TEXT_LLM_RATE_LIMIT_PER_MIN, 60_000);
     if (!rl.ok) return rl.response;
 
     const body = await req.json();

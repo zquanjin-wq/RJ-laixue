@@ -33,17 +33,23 @@ const log = createLogger('Scene Actions API');
 
 export const maxDuration = 60;
 
+/**
+ * Shared rate limit with scene-content (TEXT_LLM_RATE_LIMIT_PER_MIN).
+ * See scene-content/route.ts for default reasoning.
+ */
+const TEXT_LLM_RATE_LIMIT_PER_MIN = parseInt(
+  process.env.TEXT_LLM_RATE_LIMIT_PER_MIN || '150',
+  10,
+) || 150;
+
 export async function POST(req: NextRequest) {
   let outlineTitle: string | undefined;
   let resolvedModelString: string | undefined;
   try {
     // ── Auth + rate limit ────────────────────────────────────────
-    // scene-actions is called once per scene after scene-content.
-    // 15 calls / 30s is the same ceiling as scene-content so a single
-    // classroom worth of scenes fits comfortably under the limit.
     const auth = await requireAuthOrTeacher(['teacher', 'admin']);
     if (!auth.ok) return auth.response;
-    const rl = rateLimitByUser(auth.user.id, 'generate-scene-actions', 15, 30_000);
+    const rl = rateLimitByUser(auth.user.id, 'generate-scene-actions', TEXT_LLM_RATE_LIMIT_PER_MIN, 60_000);
     if (!rl.ok) return rl.response;
 
     const body = await req.json();

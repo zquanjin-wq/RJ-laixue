@@ -2,7 +2,7 @@ import type { Action, SpeechAction } from '@/lib/types/action';
 import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
-import { uploadCourseBlob } from '@/lib/course-assets/client';
+import { uploadCourseBlobsConcurrently, type ConcurrentUploadTask } from '@/lib/course-assets/client';
 import { enqueueTTSFetchTask } from '@/lib/audio/tts-queue';
 
 const log = createLogger('AudioPublish');
@@ -356,6 +356,31 @@ export async function publishSceneAudioAssets(
   const failed: FailedAudioItem[] = [];
   const regenerated: RegeneratedAudioItem[] = [];
 
+  /**
+   * Compute a content hash for TTS idempotency: same (voice, speed, text)
+   * → same hash → skip re-generation. Uses simple djb2 for speed.
+   */
+  function ttsContentHash(voice: string, speed: number, text: string): string {
+    const key = `v:${voice}|s:${speed}|t:${text}`;
+    let hash = 5381;
+    for (let i = 0; i < key.length; i++) {
+      hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
+    }
+    return `tts_${(hash >>> 0).toString(16)}`;
+  }
+
+  // Batch-upload pool: collect blobs during the loop, flush at the end.
+  const pendingUploads: {
+    speechAction: SpeechAction & { audioId?: string; audioUrl?: string };
+    sceneId: string;
+    sceneOrder: number;
+    actionId: string;
+    audioId: string;
+    blob: Blob;
+    source: 'indexeddb' | 'regenerated';
+    textLength?: number;
+  }[] = [];
+
   for (const scene of nextScenes) {
     // Skip interactive scenes — they don't need audio for mobile podcast mode.
     if (isInteractiveScene(scene)) continue;
@@ -392,44 +417,23 @@ export async function publishSceneAudioAssets(
         const record = await db.audioFiles.get(audioId);
 
         if (record?.blob) {
-          try {
-            const audioUrl = await uploadAudioRecordToCloud({
-              stageId,
-              audioId,
-              record,
-            });
-
-            speechAction.audioUrl = audioUrl;
-
-            console.info('[MOBILE PUBLISH][Audio Uploaded]', JSON.stringify({
-              audioId,
-              sceneId,
-              source: 'indexeddb-blob',
-              timestamp: new Date().toISOString(),
-            }));
-
-            uploaded.push({
-              sceneId,
-              sceneOrder,
-              actionId,
-              audioId,
-              audioUrl,
-            });
-            continue;
-          } catch (error) {
-            log.warn(
-              `Upload failed for ${audioId}:`,
-              error instanceof Error ? error.message : String(error),
-            );
-            failed.push({
-              sceneId,
-              sceneOrder,
-              actionId,
-              audioId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            continue;
-          }
+          // Defer upload to batch pool (flushed at end of function).
+          pendingUploads.push({
+            speechAction,
+            sceneId,
+            sceneOrder,
+            actionId,
+            audioId,
+            blob: record.blob,
+            source: 'indexeddb',
+          });
+          console.info('[MOBILE PUBLISH][Audio Queued]', JSON.stringify({
+            audioId,
+            sceneId,
+            source: 'indexeddb-blob',
+            timestamp: new Date().toISOString(),
+          }));
+          continue;
         }
 
         // audioId exists but no blob in IndexedDB — fall through to Tier 3
@@ -469,6 +473,28 @@ export async function publishSceneAudioAssets(
 
       const regenAudioId = audioId || `pub_${sceneId.slice(0, 8)}_${Date.now()}`;
 
+      // Content-idempotent check: same (voice, speed, text) → reuse existing audio
+      const ttsVoice = teacherVoiceConfig?.voiceId ?? 'default';
+      const ttsSpeed = 1.0; // publish always uses speed 1.0
+      const contentHash = ttsContentHash(ttsVoice, ttsSpeed, narrationText);
+      const existingAudio = await db.audioFiles.get(contentHash);
+
+      if (existingAudio?.blob) {
+        speechAction.audioId = regenAudioId;
+        pendingUploads.push({
+          speechAction,
+          sceneId,
+          sceneOrder,
+          actionId,
+          audioId: regenAudioId,
+          blob: existingAudio.blob,
+          source: 'regenerated',
+          textLength: narrationText.length,
+        });
+        log.info(`TTS content-idempotent hit: hash=${contentHash}, reusing existing audio`);
+        continue;
+      }
+
       try {
         log.info(
           `Regenerating TTS for scene=${sceneId} action=${actionId} (${narrationText.length} chars)`,
@@ -481,43 +507,41 @@ export async function publishSceneAudioAssets(
           sceneId,
         );
 
-        const audioUrl = await uploadBlobToCloud({
-          stageId,
-          audioId: regenAudioId,
-          data,
-          format,
-        });
-
+        // Defer upload to batch pool (flushed at end of function).
         speechAction.audioId = regenAudioId;
-        speechAction.audioUrl = audioUrl;
-
-        console.info('[TTS OUTPUT][Scene Audio]', JSON.stringify({
-          sceneId,
-          audioUrl: audioUrl.slice(0, 80),
-          inputTextLength: narrationText.length,
-          source: 'individual-speech-action',
-          timestamp: new Date().toISOString(),
-        }));
-
-        console.info('[MOBILE PUBLISH][Audio Uploaded]', JSON.stringify({
-          audioId: regenAudioId,
-          sceneId,
-          source: 'tts-regenerated',
-          textLength: narrationText.length,
-          timestamp: new Date().toISOString(),
-        }));
-
-        regenerated.push({
+        pendingUploads.push({
+          speechAction,
           sceneId,
           sceneOrder,
           actionId,
           audioId: regenAudioId,
-          audioUrl,
+          blob: new Blob([data], { type: contentTypeForAudio(format) }),
+          source: 'regenerated',
           textLength: narrationText.length,
         });
 
+        // Store under content hash for future idempotent reuse
+        db.audioFiles.put({
+          id: contentHash,
+          blob: new Blob([data], { type: contentTypeForAudio(format) }),
+          mimeType: contentTypeForAudio(format),
+          size: data.byteLength,
+          createdAt: Date.now(),
+        } as any).catch((e) => {
+          // Best-effort: idempotent cache failures must not block publish
+          log.warn(`Failed to cache TTS idempotent entry for hash=${contentHash}:`, e);
+        });
+
+        console.info('[TTS OUTPUT][Scene Audio]', JSON.stringify({
+          sceneId,
+          audioId: regenAudioId,
+          inputTextLength: narrationText.length,
+          source: 'individual-speech-action-queued',
+          timestamp: new Date().toISOString(),
+        }));
+
         log.info(
-          `TTS regenerated & uploaded: ${regenAudioId} → ${audioUrl.slice(0, 60)}...`,
+          `TTS regenerated (queued for batch upload): ${regenAudioId}`,
         );
       } catch (error) {
         const errMsg =
@@ -655,6 +679,68 @@ export async function publishSceneAudioAssets(
     failed: failed.length,
     timestamp: new Date().toISOString(),
   }));
+
+  // ── Batch-upload all pending audio blobs (6-concurrency pool) ──
+  if (pendingUploads.length > 0) {
+    console.info('[MOBILE PUBLISH][Batch Upload Start]', JSON.stringify({
+      totalPending: pendingUploads.length,
+      timestamp: new Date().toISOString(),
+    }));
+
+    const tasks = pendingUploads.map((p) => ({
+      id: p.audioId,
+      courseId: stageId,
+      kind: 'audio' as const,
+      blob: p.blob,
+    }));
+
+    const poolResults = await uploadCourseBlobsConcurrently(tasks, 6, 2);
+
+    let batchUploaded = 0;
+    let batchFailed = 0;
+    for (let i = 0; i < pendingUploads.length; i++) {
+      const p = pendingUploads[i];
+      const r = poolResults[i];
+
+      if (r.success && r.publicUrl) {
+        p.speechAction.audioUrl = r.publicUrl;
+        uploaded.push({
+          sceneId: p.sceneId,
+          sceneOrder: p.sceneOrder,
+          actionId: p.actionId,
+          audioId: p.audioId,
+          audioUrl: r.publicUrl,
+        });
+        if (p.source === 'regenerated') {
+          regenerated.push({
+            sceneId: p.sceneId,
+            sceneOrder: p.sceneOrder,
+            actionId: p.actionId,
+            audioId: p.audioId,
+            audioUrl: r.publicUrl,
+            textLength: p.textLength ?? 0,
+          });
+        }
+        batchUploaded++;
+      } else {
+        failed.push({
+          sceneId: p.sceneId,
+          sceneOrder: p.sceneOrder,
+          actionId: p.actionId,
+          audioId: p.audioId,
+          error: r.error || '批量上传失败',
+        });
+        batchFailed++;
+      }
+    }
+    pendingUploads.length = 0;
+
+    console.info('[MOBILE PUBLISH][Batch Upload Done]', JSON.stringify({
+      uploaded: batchUploaded,
+      failed: batchFailed,
+      timestamp: new Date().toISOString(),
+    }));
+  }
 
   return {
     scenes: nextScenes,
