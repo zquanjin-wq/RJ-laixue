@@ -290,39 +290,100 @@ function GenerationPreviewContent() {
         }
         const pathCourseId = pathMatch[1];
 
-        const parseResponse = await fetch('/api/extract-document', {
+        // ── Async extraction: start → poll loop ──────────────────────────
+        // No request waits for MinerU parsing (>30s). start returns immediately;
+        // poll checks progress every 3-5s. Immune to Cloudflare 100s 524.
+
+        // 1) Start
+        const startResponse = await fetch('/api/extract-document/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            courseId: pathCourseId,
-            path: storagePath,
-          }),
+          body: JSON.stringify({ courseId: pathCourseId, path: storagePath }),
           signal,
         });
 
-        if (!parseResponse.ok) {
-          const contentType = parseResponse.headers.get('content-type') || '';
-          if (parseResponse.status === 413) {
+        if (!startResponse.ok) {
+          const contentType = startResponse.headers.get('content-type') || '';
+          if (startResponse.status === 413) {
             throw new Error('课程材料超过 49MB 上限,请压缩或拆分后再上传');
           }
-          // Non-JSON responses are platform-layer errors (Vercel replaces 200 with
-          // error page). 500→likely oversized response; other→fallback.
           if (!contentType.includes('application/json')) {
-            if (parseResponse.status === 500) {
-              throw new Error(
-                '解析结果过大或平台错误，请重试或拆分材料。如持续失败请联系管理员。',
-              );
+            if (startResponse.status === 500 || startResponse.status === 524) {
+              throw new Error('网络或平台超时，请重试');
             }
             throw new Error(t('generation.courseMaterialParseFailed'));
           }
-          const errorData = await parseResponse.json();
-          throw new Error(errorData.error || t('generation.courseMaterialParseFailed'));
+          const err = await startResponse.json();
+          throw new Error(err.error || t('generation.courseMaterialParseFailed'));
         }
 
-        const parseResult = await parseResponse.json();
-        if (!parseResult.success || !parseResult.data) {
+        const startResult = await startResponse.json();
+        if (!startResult.success || !startResult.data?.batchId) {
           throw new Error(t('generation.courseMaterialParseFailed'));
         }
+        const { batchId } = startResult.data;
+
+        // 2) Poll loop: every 3s until done/failed, with elapsed counter
+        let parseResult: any = null;
+        const pollStartMs = Date.now();
+        const POLL_INTERVAL_MS = 3_000;
+        const MAX_POLL_MS = 20 * 60 * 1_000; // 20 min
+
+        // Update progress text: show elapsed time
+        const updateProgress = (elapsedSecs: number) => {
+          setStatusMessage(
+            `${t('generation.analyzingCourseMaterial', { type: 'PDF' })}（已用 ${elapsedSecs} 秒）`,
+          );
+        };
+
+        while (!parseResult) {
+          if (signal?.aborted) throw new Error('AbortError');
+          if (Date.now() - pollStartMs > MAX_POLL_MS) {
+            throw new Error('解析超时，请重试');
+          }
+
+          const elapsedSecs = Math.floor((Date.now() - pollStartMs) / 1000);
+          updateProgress(elapsedSecs);
+
+          const pollResponse = await fetch('/api/extract-document/poll', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ batchId, courseId: pathCourseId, path: storagePath }),
+            signal,
+          });
+
+          if (!pollResponse.ok) {
+            const cType = pollResponse.headers.get('content-type') || '';
+            if (pollResponse.status === 504 || pollResponse.status === 524) {
+              // Transient timeout — retry next cycle
+              await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS / 2));
+              continue;
+            }
+            if (!cType.includes('application/json')) {
+              if (pollResponse.status === 500) {
+                throw new Error('解析结果过大或平台错误，请重试或拆分材料。如持续失败请联系管理员。');
+              }
+              throw new Error(t('generation.courseMaterialParseFailed'));
+            }
+            const err = await pollResponse.json();
+            throw new Error(err.error || t('generation.courseMaterialParseFailed'));
+          }
+
+          const pollResult = await pollResponse.json();
+          if (!pollResult.success) {
+            throw new Error(pollResult.error || t('generation.courseMaterialParseFailed'));
+          }
+
+          const pollData = pollResult.data;
+          if (pollData.status === 'done') {
+            parseResult = { success: true, data: pollData };
+          } else if (pollData.status === 'failed') {
+            throw new Error(pollData.error || 'MinerU 解析失败');
+          }
+          // processing — wait and try again
+        }
+
+        if (!parseResult) throw new Error(t('generation.courseMaterialParseFailed'));
 
         // 服务端已截断到 MAX_PDF_CONTENT_CHARS,这里只保留作本地二次截断
         let pdfText = parseResult.data.text as string;
@@ -382,21 +443,56 @@ function GenerationPreviewContent() {
             /^(?:courses|pending|pbl)\/([^\/]+)\/material\//,
           );
           if (!extraMatch) throw new Error('课程材料路径无效，请重新上传');
-          const extraResponse = await fetch('/api/extract-document', {
+
+          // ── Async extraction for extra materials ──
+          const extraStartRes = await fetch('/api/extract-document/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ courseId: extraMatch[1], path: material.storageKey }),
             signal,
           });
-          if (!extraResponse.ok) {
-            const errorData = await extraResponse.json().catch(() => null);
-            throw new Error(
-              `${material.fileName}：${errorData?.error || t('generation.courseMaterialParseFailed')}`,
-            );
+          if (!extraStartRes.ok) {
+            const err = await extraStartRes.json().catch(() => null);
+            throw new Error(`${material.fileName}：${err?.error || t('generation.courseMaterialParseFailed')}`);
           }
-          const extraResult = await extraResponse.json();
-          if (!extraResult.success || !extraResult.data)
+          const extraStart = await extraStartRes.json();
+          if (!extraStart.success || !extraStart.data?.batchId) {
             throw new Error(`${material.fileName}：${t('generation.courseMaterialParseFailed')}`);
+          }
+          const extraBatchId = extraStart.data.batchId;
+
+          let extraResult: any = null;
+          const extraPollStart = Date.now();
+          while (!extraResult) {
+            if (signal?.aborted) throw new Error('AbortError');
+            if (Date.now() - extraPollStart > MAX_POLL_MS) {
+              throw new Error(`${material.fileName}：解析超时，请重试`);
+            }
+            const extraPollRes = await fetch('/api/extract-document/poll', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ batchId: extraBatchId, courseId: extraMatch[1], path: material.storageKey }),
+              signal,
+            });
+            if (!extraPollRes.ok) {
+              if (extraPollRes.status === 504 || extraPollRes.status === 524) {
+                await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS / 2));
+                continue;
+              }
+              const err = await extraPollRes.json().catch(() => null);
+              throw new Error(`${material.fileName}：${err?.error || t('generation.courseMaterialParseFailed')}`);
+            }
+            const extraPoll = await extraPollRes.json();
+            if (!extraPoll.success) {
+              throw new Error(`${material.fileName}：${extraPoll.error || t('generation.courseMaterialParseFailed')}`);
+            }
+            if (extraPoll.data?.status === 'done') {
+              extraResult = { success: true, data: extraPoll.data };
+            } else if (extraPoll.data?.status === 'failed') {
+              throw new Error(`${material.fileName}：${extraPoll.data.error || 'MinerU 解析失败'}`);
+            }
+          }
+          if (!extraResult) throw new Error(`${material.fileName}：${t('generation.courseMaterialParseFailed')}`);
 
           const extraText = String(extraResult.data.text || '');
           const remaining = MAX_PDF_CONTENT_CHARS - pdfText.length;
