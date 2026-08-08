@@ -48,7 +48,7 @@ import { writeSubmittedAnswers } from '@/lib/quiz/persistence';
 type FetchCall = { url: string; method: string; body: Record<string, unknown> };
 
 const fetchCalls: FetchCall[] = [];
-let responder: (url: string, body: Record<string, unknown>) => { status: number };
+let responder: (url: string, body: Record<string, unknown>) => { status: number; responseBody?: Record<string, unknown> };
 
 function jsonResponse(status: number, payload: unknown = {}): Response {
   return new Response(JSON.stringify(payload), {
@@ -62,8 +62,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
   fetchCalls.push({ url, method: init?.method ?? 'GET', body });
   if (url === '/api/client-diagnostics') return jsonResponse(200, { success: true });
-  const { status } = responder(url, body);
-  return jsonResponse(status);
+  const { status, responseBody } = responder(url, body);
+  return jsonResponse(status, responseBody);
 });
 vi.stubGlobal('fetch', fetchMock);
 
@@ -392,7 +392,7 @@ describe('runtime shadow writer', () => {
 
   it('append 409 counts as idempotency_conflict and is not retried', async () => {
     process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
-    responder = (url) => ({ status: url.includes('/records') ? 409 : 201 });
+    responder = (url) => ({ status: url.includes('/records') ? 409 : 201, responseBody: url.includes('/records') ? { errorCode: 'IDEMPOTENCY_CONFLICT' } : undefined });
     await shadowChatSessions('stage1', [makeChatSession('cs1', ['m1'])]);
     expect(telemetryOutcomes()).toEqual(['ok', 'idempotency_conflict']);
     // M1: 冲突后游标前进（跳过中毒记录），下次保存不再重放该条
@@ -413,7 +413,7 @@ describe('runtime shadow writer', () => {
 
     // Step 1: inject 409 for lecture message → cursor skips it
     responder = (_url, body: Record<string, unknown> | undefined) => {
-      if (body && (body as any).id === lecRecordId) return { status: 409 };
+      if (body && (body as any).id === lecRecordId) return { status: 409, responseBody: { errorCode: 'IDEMPOTENCY_CONFLICT' } };
       return { status: 201 };
     };
 
@@ -456,6 +456,26 @@ describe('runtime shadow writer', () => {
     await shadowChatSessions('stage1', [makeChatSession('cs-m1b', ['m1', 'm2'])]);
     // 422 not skipped → cursor stops, telemetry not idempotency_conflict
     expect(telemetryOutcomes().filter((o) => o === 'idempotency_conflict').length).toBe(0);
+    responder = baseResponder;
+  });
+
+  it('M1: 409 INACTIVE_SESSION → not skipped (cursor stops)', async () => {
+    process.env.NEXT_PUBLIC_RUNTIME_SHADOW = '1';
+    const baseResponder = responder;
+    responder = (_url, body: Record<string, unknown> | undefined) => {
+      if (body && (body as any).id === 'cs-m1c:m1') {
+        return { status: 409, responseBody: { errorCode: 'INACTIVE_SESSION', error: 'session not active' } };
+      }
+      return { status: 201 };
+    };
+    await shadowChatSessions('stage1', [makeChatSession('cs-m1c', ['m1', 'm2'])]);
+    // INACTIVE_SESSION → cursor stops at m1 (NOT skipped), m2 not called
+    const appends = apiCalls().filter((c) => c.url.includes('/records'));
+    expect(appends.length).toBe(1);
+    expect(appends[0].body.id).toBe('cs-m1c:m1');
+    // Telemetry: shadowRequest still reports idempotency_conflict (409 non-create),
+    // but cursor does NOT advance (not IDEMPOTENCY_CONFLICT)
+    expect(telemetryOutcomes().filter((o) => o === 'idempotency_conflict').length).toBe(1);
     responder = baseResponder;
   });
 });

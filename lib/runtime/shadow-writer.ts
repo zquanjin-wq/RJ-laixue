@@ -159,6 +159,8 @@ interface ShadowRequestResult {
   ok: boolean;
   /** HTTP 状态码（有响应时）；调用方用于 404 等特殊处置。 */
   status?: number;
+  /** 409 响应体的 errorCode（IDEMPOTENCY_CONFLICT / INACTIVE_SESSION 等） */
+  errorCode?: string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -201,7 +203,12 @@ async function shadowRequest(opts: {
         return { ok: true, status: res.status };
       }
       if (res.status === 409) {
-        // create：会话已存在 → 幂等成功；append：同 id 不同内容 → 真异常，响亮计数不重试
+        // 解析 errorCode 以区分 IDEMPOTENCY_CONFLICT / INACTIVE_SESSION 等语义
+        let errorCode: string | undefined;
+        try {
+          const b = await res.clone().json().catch(() => ({}));
+          errorCode = b?.errorCode;
+        } catch { /* ignore */ }
         const outcome: RuntimeShadowOutcome = opts.treat409AsIdempotent
           ? 'ok_idempotent'
           : 'idempotency_conflict';
@@ -211,7 +218,7 @@ async function shadowRequest(opts: {
           kind: opts.kind,
           durationMs: Date.now() - started,
         });
-        return { ok: outcome === 'ok_idempotent', status: res.status };
+        return { ok: outcome === 'ok_idempotent', status: res.status, errorCode };
       }
       if (res.status === 400 || res.status === 422) {
         reportRuntimeShadowDiagnostic({
@@ -380,7 +387,7 @@ async function shadowOneChatSession(stageId: string, session: ChatSession): Prom
     if (!r.ok) {
       // M1 止血：IDEMPOTENCY_CONFLICT（lecture 内容持续增长）→ 跳过该记录
       // 游标前进，telemetry 已在 shadowRequest 内计为 idempotency_conflict（同 id 只一次）
-      if (r.status === 409) {
+      if (r.status === 409 && r.errorCode === 'IDEMPOTENCY_CONFLICT') {
         cursor.count = i + 1;
         writeChatCursor(session.id, cursor);
         continue;
