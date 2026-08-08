@@ -119,12 +119,17 @@ export interface TTSGenerationResult {
  * This class enables future retry/backoff logic without changing the throw sites.
  */
 export class TTSRateLimitError extends Error {
+  /** Suggested backoff seconds for clients (defaults to 5 when unknown). */
+  public readonly retryAfterSec: number;
+
   constructor(
     public readonly provider: string,
     message: string,
+    retryAfterSec?: number,
   ) {
     super(message);
     this.name = 'TTSRateLimitError';
+    this.retryAfterSec = retryAfterSec ?? 5;
   }
 }
 
@@ -742,6 +747,19 @@ async function generateMiniMaxTTS(
   }
 
   const data = await response.json();
+
+  // MiniMax returns HTTP 200 even on errors (e.g. rate limit 1002).
+  // Check the application-level status before assuming audio is present.
+  const baseResp = data?.base_resp as { status_code?: number; status_msg?: string } | undefined;
+  if (baseResp && baseResp.status_code !== 0) {
+    const code = baseResp.status_code ?? 0;
+    const msg = baseResp.status_msg || 'unknown error';
+    if (code === 1002 || (typeof msg === 'string' && msg.toLowerCase().includes('rate limit'))) {
+      throw new TTSRateLimitError('minimax-tts', `MiniMax TTS rate limited: ${msg} (code ${code})`);
+    }
+    throw new Error(`MiniMax TTS error: ${msg} (code ${code})`);
+  }
+
   const hexAudio = data?.data?.audio;
   if (!hexAudio || typeof hexAudio !== 'string') {
     throw new Error(`MiniMax TTS error: No audio returned. Response: ${JSON.stringify(data)}`);

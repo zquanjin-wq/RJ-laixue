@@ -106,8 +106,8 @@ export function parsedPdfToDocumentArtifact(
       ? pdfImages.map((image) => ({
           id: image.id,
           type: 'image',
-          mimeType: dataUrlMimeType(image.src),
-          data: image.src,
+          mimeType: dataUrlMimeType(image.src ?? ''),
+          data: image.src ?? '',
           pageNumber: image.pageNumber,
           description: image.description,
           width: image.width,

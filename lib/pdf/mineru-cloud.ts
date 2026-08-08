@@ -114,7 +114,7 @@ interface BatchExtractRow {
   err_msg?: string;
 }
 
-async function parseMinerUZip(zipUrl: string): Promise<ParsedPdfContent> {
+export async function parseMinerUZip(zipUrl: string): Promise<ParsedPdfContent> {
   log.info('[MinerU Cloud] Downloading result ZIP...');
 
   const zipRes = await fetchWithRetry(

@@ -81,6 +81,64 @@ export async function storeImages(
 }
 
 /**
+ * Store images from remote URLs (externalized images, post-extract-document fix).
+ * Downloads images in a concurrency pool and stores them in IndexedDB.
+ *
+ * This replaces the old base64-based storeImages path when the server has
+ * already uploaded images to Supabase Storage and only returns references.
+ *
+ * Returns storageIds in the same slot positions as the input array.
+ */
+export async function storeImagesFromUrls(
+  images: Array<{ id: string; url: string; pageNumber?: number }>,
+  concurrency: number = 6,
+): Promise<string[]> {
+  const sessionId = nanoid(10);
+  const results: string[] = new Array(images.length);
+  let cursor = 0;
+
+  async function downloadOne(): Promise<void> {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= images.length) return;
+
+      const img = images[idx];
+      try {
+        const response = await fetch(img.url);
+        if (!response.ok) {
+          log.error(`Failed to download image ${img.id}: HTTP ${response.status} ${response.statusText}`);
+          results[idx] = ''; // explicit empty — no hole in array
+          continue;
+        }
+        const blob = await response.blob();
+        const mimeType = blob.type || 'image/png';
+        const storageId = `session_${sessionId}_${img.id}`;
+
+        await db.imageFiles.put({
+          id: storageId,
+          blob,
+          filename: `${img.id}.png`,
+          mimeType,
+          size: blob.size,
+          createdAt: Date.now(),
+        });
+        results[idx] = storageId;
+        log.info(`Downloaded and stored ${img.id} → ${storageId} (${(blob.size / 1024).toFixed(1)} KB)`);
+      } catch (error) {
+        log.error(`Failed to store image ${img.id} from URL:`, error);
+        results[idx] = ''; // explicit empty — no hole in array
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, images.length);
+  await Promise.all(Array.from({ length: workerCount }, () => downloadOne()));
+
+  return results;
+}
+
+/**
  * Load images from IndexedDB and return as imageMapping
  * @param imageIds - Array of storage IDs (session_xxx_img_1 format)
  * @returns ImageMapping { img_1: "data:image/png;base64,..." }

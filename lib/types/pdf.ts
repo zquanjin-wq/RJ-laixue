@@ -48,11 +48,17 @@ export interface ParsedPdfContent {
     /** PdfImage array with page numbers (used in generation pipeline) */
     pdfImages?: Array<{
       id: string;
-      src: string;
+      src?: string;
       pageNumber: number;
       description?: string;
       width?: number;
       height?: number;
+      /** Supabase Storage path (replaces base64 src when externalized) */
+      storagePath?: string;
+      /** Public URL for direct download (derived from storagePath) */
+      publicUrl?: string;
+      /** True when the image upload failed and the image is unavailable */
+      missing?: boolean;
     }>;
     [key: string]: unknown;
   };

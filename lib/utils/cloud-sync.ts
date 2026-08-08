@@ -14,9 +14,69 @@ const log = createLogger('CloudSync');
 async function readApiJson<T>(response: Response): Promise<T> {
   const data = await response.json();
   if (!response.ok || !data.success) {
-    throw new Error(data.error || '璇锋眰澶辫触');
+    throw new Error(data.error || '请求失败');
   }
   return data.data as T;
+}
+
+/**
+ * Phase 0 helper for `saveStageToCloud`: ensure a course row exists in the
+ * cloud before any audio asset upload runs.
+ *
+ * Background: production's `/api/course-assets/sign-upload` (introduced in
+ * upstream commit 3d80b985, 2026-07-28) requires the course row to already
+ * exist in the `courses` table — otherwise it returns 404 "课程不存在".
+ * Saving used to upsert the course row at the very end (Phase 3 in this
+ * module), so a brand-new course's first save hit a chicken-and-egg:
+ * every audio upload → 404 → 166 failed → 18 missing-audio-url → save
+ * blocked. By pre-creating an empty row here, the first sign-upload call
+ * finds the row in place.
+ *
+ * `POST /api/courses` is itself an upsert, so calling it on an already-saved
+ * course is a no-op safe re-run. Errors here are non-fatal: we log and
+ * continue, so the user still sees the original failure mode if the cloud
+ * itself is unreachable.
+ */
+async function ensureCourseRowOnCloud(
+  id: string,
+  title: string,
+  topic: string,
+  stage: unknown,
+  scenes: unknown,
+  outlines: unknown,
+): Promise<void> {
+  try {
+    const probe = await fetch(
+      `/api/courses/${encodeURIComponent(id)}`,
+      { method: 'GET' },
+    );
+    if (probe.status !== 404) {
+      // 200 → row exists; 401/403/etc → caller cannot self-create, but
+      // /api/courses POST has its own ownership gate, so let it speak.
+      return;
+    }
+    log.info('Phase 0: course row missing on cloud — upserting full row', { id });
+    const create = await fetch('/api/courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        title,
+        topic,
+        // Full payload — matches the historical Phase 3 save so an interrupted
+        // save leaves a populated (if slightly stale) row on the cloud,
+        // not a blank stub.
+        data: { stage, scenes, outlines },
+      }),
+    });
+    await readApiJson(create);
+    log.info('Phase 0: course row upserted', { id });
+  } catch (error) {
+    log.warn('Phase 0: probe/upsert failed (continuing with Phase 1)', {
+      id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 // ============================================================
 // 浠?IndexedDB 璇诲彇瀹屾暣璇剧▼鏁版嵁
@@ -87,6 +147,24 @@ async function collectStageData(stageId: string) {
 export async function saveStageToCloud(stageId: string) {
   const { id, title, topic, stage, scenes, outlines } =
     await collectStageData(stageId);
+
+  // ── Phase 0: Ensure the course row exists on the cloud BEFORE we publish
+  // any audio. Production's sign-upload endpoint (post upstream commit
+  // 3d80b985, 2026-07-28) requires the course row to already exist; it
+  // returns 404 with "课程不存在" otherwise. saveStageToCloud historically
+  // POSTed the row at the END (Phase 3), so a brand-new course's first save
+  // would 166 audio uploads and 18 missing-audio-url validations. Upserting
+  // the full row here keeps the order correct: course row → audio → final
+  // POST. /api/courses POST is itself an upsert so this is safe to re-run on
+  // re-saves of an existing course.
+  //
+  // Why full payload instead of an empty stub? If save fails between Phase 0
+  // and Phase 3 (TTS rate limit, user closes tab, network drop), the row
+  // already on the cloud should match what an interrupted older save would
+  // have produced — i.e. fully populated, just stale. An empty stub would
+  // surface in "我的创作" as a blank course and confuse anyone opening the
+  // share link. Mirrors the pre-existing "save fails halfway" experience.
+  await ensureCourseRowOnCloud(id, title, topic, stage, scenes, outlines);
 
   // ── Phase 1: Publish audio assets (3-tier: skip / upload / regenerate) ──
   // Extract teacherVoiceConfig from stage so Tier 3 TTS regeneration uses the

@@ -38,8 +38,8 @@ import { GenerationToolbar } from '@/components/generation/generation-toolbar';
 import { AgentBar } from '@/components/agent/agent-bar';
 import { useTheme } from '@/lib/hooks/use-theme';
 import { nanoid } from 'nanoid';
-import { storePdfBlob } from '@/lib/utils/image-storage';
 import { normalizeDocumentMimeType } from '@/lib/document/mime';
+import { uploadCourseMaterial } from '@/lib/course-assets/client';
 import type { UserRequirements } from '@/lib/types/generation';
 import { useSettingsStore } from '@/lib/store/settings';
 import { hasUsableLLMProvider } from '@/lib/store/settings-validation';
@@ -76,7 +76,7 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 const PPTX_IMPORT_ENABLED = process.env.NEXT_PUBLIC_ENABLE_PPTX_IMPORT === 'true';
 
 interface FormState {
-  pdfFile: File | null;
+  pdfFiles: File[];
   requirement: string;
   webSearch: boolean;
   interactiveMode: boolean;
@@ -84,7 +84,7 @@ interface FormState {
 }
 
 const initialFormState: FormState = {
-  pdfFile: null,
+  pdfFiles: [],
   requirement: '',
   webSearch: false,
   interactiveMode: false,
@@ -97,6 +97,8 @@ function HomePage() {
   const router = useRouter();
   const showVocationalTestUi = shouldShowVocationalTestUi();
   const [form, setForm] = useState<FormState>(initialFormState);
+  const [isPreparingGeneration, setIsPreparingGeneration] = useState(false);
+  const isPreparingGenerationRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
     import('@/lib/types/settings').SettingsSection | undefined
@@ -286,6 +288,9 @@ function HomePage() {
   };
 
   const handleGenerate = async () => {
+    // A material upload happens before navigation. Guard synchronously as well
+    // as visually: React state alone leaves a small window for double-clicks.
+    if (isPreparingGenerationRef.current) return;
     // No model/provider guard here: generation is gated by `canGenerate`
     // (requires a usable provider), and under the #580 invariant a usable
     // provider always has a concrete model. State A (no usable provider)
@@ -295,6 +300,8 @@ function HomePage() {
       return;
     }
 
+    isPreparingGenerationRef.current = true;
+    setIsPreparingGeneration(true);
     setError(null);
 
     try {
@@ -308,28 +315,40 @@ function HomePage() {
         ...(form.vocationalTestMode ? { taskEngineMode: true } : {}),
       };
 
-      let pdfStorageKey: string | undefined;
-      let pdfFileName: string | undefined;
-      let documentMimeType: string | undefined;
-      let pdfProviderId: string | undefined;
-      let pdfProviderConfig: { apiKey?: string; baseUrl?: string } | undefined;
+      let materialFiles:
+        | Array<{ storageKey: string; fileName: string; documentMimeType: string; size: number }>
+        | undefined;
 
-      if (form.pdfFile) {
-        pdfStorageKey = await storePdfBlob(form.pdfFile);
-        pdfFileName = form.pdfFile.name;
-        documentMimeType = normalizeDocumentMimeType({
-          mimeType: form.pdfFile.type,
-          fileName: form.pdfFile.name,
-        });
-
-        const settings = useSettingsStore.getState();
-        pdfProviderId = settings.pdfProviderId;
-        const providerCfg = settings.pdfProvidersConfig?.[settings.pdfProviderId];
-        if (providerCfg) {
-          pdfProviderConfig = {
-            apiKey: providerCfg.apiKey,
-            baseUrl: providerCfg.baseUrl,
-          };
+      if (form.pdfFiles.length > 0) {
+        // 直传 Supabase Storage,文件不经过 Vercel Serverless Function,
+        // 解决 4.5MB 上传硬顶。先临时用一个 nanoid 占位 courseId,
+        // 等课程真正创建后路径会自动通过 upsert 关联(courseId 在 sign-upload 路由里只用作目录前缀)。
+        try {
+          // 上传需要 courseId,这里用一个临时 nanoid 作为目录前缀,
+          // 后续会用真实 courseId 重写路径(extract-document 路由会重新拉取)
+          const tempCourseId = `pending-${nanoid(12)}`;
+          materialFiles = await Promise.all(
+            form.pdfFiles.map(async (file) => {
+              const uploaded = await uploadCourseMaterial(tempCourseId, file);
+              return {
+                storageKey: uploaded.path,
+                fileName: file.name,
+                documentMimeType: normalizeDocumentMimeType({
+                  mimeType: file.type,
+                  fileName: file.name,
+                }),
+                size: file.size,
+              };
+            }),
+          );
+        } catch (uploadErr) {
+          log.error('Course material direct upload failed:', uploadErr);
+          setError(
+            uploadErr instanceof Error
+              ? `课程材料上传失败:${uploadErr.message}`
+              : '课程材料上传失败',
+          );
+          return;
         }
       }
 
@@ -339,11 +358,7 @@ function HomePage() {
         pdfText: '',
         pdfImages: [],
         imageStorageIds: [],
-        pdfStorageKey,
-        pdfFileName,
-        documentMimeType,
-        pdfProviderId,
-        pdfProviderConfig,
+        materialFiles,
         sceneOutlines: null,
         currentStep: 'generating' as const,
       };
@@ -353,6 +368,9 @@ function HomePage() {
     } catch (err) {
       log.error('Error preparing generation:', err);
       setError(err instanceof Error ? err.message : t('upload.generateFailed'));
+    } finally {
+      isPreparingGenerationRef.current = false;
+      setIsPreparingGeneration(false);
     }
   };
 
@@ -368,7 +386,7 @@ function HomePage() {
     return date.toLocaleDateString();
   };
 
-  const canGenerate = !!form.requirement.trim() && hasUsableProvider;
+  const canGenerate = !!form.requirement.trim() && hasUsableProvider && !isPreparingGeneration;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -570,8 +588,8 @@ function HomePage() {
                     setSettingsSection(section);
                     setSettingsOpen(true);
                   }}
-                  pdfFile={form.pdfFile}
-                  onPdfFileChange={(f) => updateForm('pdfFile', f)}
+                  pdfFiles={form.pdfFiles}
+                  onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
                   onPdfError={setError}
                 />
               </div>
@@ -624,13 +642,19 @@ function HomePage() {
                 onClick={handleGenerate}
                 disabled={!canGenerate}
                 className={cn(
-                  'shrink-0 h-8 rounded-lg flex items-center justify-center gap-1.5 transition-all px-3',
+                  'shrink-0 min-h-11 rounded-lg flex items-center justify-center gap-1.5 transition-all px-4',
                   canGenerate
                     ? 'bg-primary text-primary-foreground hover:opacity-90 shadow-sm cursor-pointer'
                     : 'bg-muted text-muted-foreground/40 cursor-not-allowed',
                 )}
               >
-                <span className="text-xs font-medium">{t('toolbar.enterClassroom')}</span>
+                <span className="text-xs font-medium">
+                  {isPreparingGeneration
+                    ? form.pdfFiles.length > 0
+                      ? '正在上传素材…'
+                      : '正在进入课堂…'
+                    : t('toolbar.enterClassroom')}
+                </span>
                 <ArrowUp className="size-3.5" />
               </button>
             </div>
@@ -906,7 +930,7 @@ function HomePage() {
           </AnimatePresence>
         </motion.div>
       )}
-  {/* ─── Cloud Courses ─── */}
+      {/* ─── Cloud Courses ─── */}
       <CloudCourses />
       {/* Footer — flows with content, at the very end */}
       <div className="mt-auto pt-12 pb-4 text-center text-xs text-muted-foreground/40">
@@ -1348,10 +1372,7 @@ function ClassroomCard({
                   // is set. The `?editor=1` query string is a convention
                   // we propagate to the EditChromeRoot — it auto-enables
                   // the edit-mode toggle when the MAIC Editor flag is on.
-                  window.open(
-                    `/classroom/${classroom.id}?editor=1`,
-                    '_blank',
-                  );
+                  window.open(`/classroom/${classroom.id}?editor=1`, '_blank');
                 }}
               >
                 <Pencil className="size-3.5" />

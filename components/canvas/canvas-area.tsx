@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play } from 'lucide-react';
+import { Loader2, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SceneRenderer } from '@/components/stage/scene-renderer';
 import { SceneProvider } from '@/lib/contexts/scene-context';
@@ -12,7 +12,6 @@ import type { CanvasToolbarProps } from '@/components/canvas/canvas-toolbar';
 import type { Scene, StageMode } from '@/lib/types/stage';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { ClassroomCompletePageConnected } from '@/components/scene-renderers/classroom-complete';
-import { GenerationProgress } from '@/components/generation/GenerationProgress';
 
 interface CanvasAreaProps extends CanvasToolbarProps {
   readonly currentScene: Scene | null;
@@ -175,7 +174,12 @@ export function CanvasArea({
                     )}
                   </div>
                 ) : (
-                  <GenerationProgress onRetry={onRetryOutline} />
+                  <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
+                    <Loader2 className="w-8 h-8 animate-spin" />
+                    <span className="text-sm font-medium">
+                      {t('stage.generating')}
+                    </span>
+                  </div>
                 )}
               </motion.div>
             )}

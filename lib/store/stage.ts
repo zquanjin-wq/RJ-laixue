@@ -95,6 +95,8 @@ interface StageState {
   generationStatus: 'idle' | 'generating' | 'paused' | 'completed' | 'error';
   currentGeneratingOrder: number;
   failedOutlines: SceneOutline[];
+  /** Background TTS failure audioIds collected during async generation */
+  ttsBackgroundFailures: string[];
 
   // Actions
   setStage: (stage: Stage) => void;
@@ -146,6 +148,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
   generationStatus: 'idle' as const,
   currentGeneratingOrder: -1,
   failedOutlines: [],
+  ttsBackgroundFailures: [],
 
   // Actions
   setStage: (stage) => {

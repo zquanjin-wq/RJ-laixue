@@ -16,8 +16,6 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
 import { isLLMProviderConfigured } from '@/lib/store/settings-validation';
-import { PDF_PROVIDERS } from '@/lib/pdf/constants';
-import type { PDFProviderId } from '@/lib/pdf/types';
 import { WEB_SEARCH_PROVIDERS, getWebSearchProviderDisplayName } from '@/lib/web-search/constants';
 import type { WebSearchProviderId } from '@/lib/web-search/types';
 import type { ProviderId } from '@/lib/ai/providers';
@@ -37,10 +35,15 @@ import {
 import type { SettingsSection } from '@/lib/types/settings';
 import { MediaPopover } from '@/components/generation/media-popover';
 import { COURSE_MATERIAL_ACCEPT, isSupportedCourseMaterial } from '@/lib/document/mime';
+import {
+  MATERIAL_MAX_BYTES,
+  MATERIAL_MAX_HUMAN,
+  MAX_COURSE_MATERIAL_FILES,
+} from '@/lib/course-assets/shared';
 
 // ─── Constants ───────────────────────────────────────────────
-const MAX_COURSE_MATERIAL_SIZE_MB = 50;
-const MAX_COURSE_MATERIAL_SIZE_BYTES = MAX_COURSE_MATERIAL_SIZE_MB * 1024 * 1024;
+// 业务上限与服务端 / 文案保持完全一致 — 见 lib/course-assets/shared.ts
+const MAX_COURSE_MATERIAL_SIZE_BYTES = MATERIAL_MAX_BYTES;
 
 // ─── Types ───────────────────────────────────────────────────
 export interface GenerationToolbarProps {
@@ -48,8 +51,8 @@ export interface GenerationToolbarProps {
   onWebSearchChange: (v: boolean) => void;
   onSettingsOpen: (section?: SettingsSection) => void;
   // PDF
-  pdfFile: File | null;
-  onPdfFileChange: (file: File | null) => void;
+  pdfFiles: File[];
+  onPdfFilesChange: (files: File[]) => void;
   onPdfError: (error: string | null) => void;
 }
 
@@ -58,8 +61,8 @@ export function GenerationToolbar({
   webSearch,
   onWebSearchChange,
   onSettingsOpen,
-  pdfFile,
-  onPdfFileChange,
+  pdfFiles,
+  onPdfFilesChange,
   onPdfError,
 }: GenerationToolbarProps) {
   const { t } = useI18n();
@@ -70,9 +73,6 @@ export function GenerationToolbar({
   const setModel = useSettingsStore((s) => s.setModel);
   const thinkingConfigs = useSettingsStore((s) => s.thinkingConfigs);
   const setThinkingConfig = useSettingsStore((s) => s.setThinkingConfig);
-  const pdfProviderId = useSettingsStore((s) => s.pdfProviderId);
-  const pdfProvidersConfig = useSettingsStore((s) => s.pdfProvidersConfig);
-  const setPDFProvider = useSettingsStore((s) => s.setPDFProvider);
   const webSearchProviderId = useSettingsStore((s) => s.webSearchProviderId);
   const webSearchProvidersConfig = useSettingsStore((s) => s.webSearchProvidersConfig);
   const setWebSearchProvider = useSettingsStore((s) => s.setWebSearchProvider);
@@ -115,17 +115,24 @@ export function GenerationToolbar({
     thinkingConfigs[getThinkingConfigKey(currentProviderId, currentModelId)];
 
   // Course material handler
-  const handleFileSelect = (file: File) => {
-    if (!isSupportedCourseMaterial({ mimeType: file.type, fileName: file.name })) {
-      onPdfError(t('upload.unsupportedCourseMaterial'));
+  const handleFileSelect = (files: File[]) => {
+    const combined = [...pdfFiles, ...files];
+    if (combined.length > MAX_COURSE_MATERIAL_FILES) {
+      onPdfError(`一次最多上传 ${MAX_COURSE_MATERIAL_FILES} 个课程素材`);
       return;
     }
-    if (file.size > MAX_COURSE_MATERIAL_SIZE_BYTES) {
-      onPdfError(t('upload.fileTooLarge'));
-      return;
+    for (const file of files) {
+      if (!isSupportedCourseMaterial({ mimeType: file.type, fileName: file.name })) {
+        onPdfError(t('upload.unsupportedCourseMaterial'));
+        return;
+      }
+      if (file.size > MAX_COURSE_MATERIAL_SIZE_BYTES) {
+        onPdfError(t('upload.fileTooLarge'));
+        return;
+      }
     }
     onPdfError(null);
-    onPdfFileChange(file);
+    onPdfFilesChange(combined);
   };
 
   // ─── Pill button helper ─────────────────────────────
@@ -189,16 +196,18 @@ export function GenerationToolbar({
         {/* ── Course material (extractor + upload) combined Popover ── */}
         <Popover>
           <PopoverTrigger asChild>
-            {pdfFile ? (
+            {pdfFiles.length > 0 ? (
               <button className={pillActive}>
                 <Paperclip className="size-3.5" />
-                <span className="max-w-[100px] truncate">{pdfFile.name}</span>
+                <span className="max-w-[100px] truncate">
+                  {pdfFiles.length === 1 ? pdfFiles[0].name : `已选 ${pdfFiles.length} 个素材`}
+                </span>
                 <span
                   role="button"
                   className="size-4 rounded-full inline-flex items-center justify-center hover:bg-violet-200 dark:hover:bg-violet-800 transition-colors"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onPdfFileChange(null);
+                    onPdfFilesChange([]);
                   }}
                 >
                   <X className="size-2.5" />
@@ -211,77 +220,58 @@ export function GenerationToolbar({
             )}
           </PopoverTrigger>
           <PopoverContent align="start" className="w-72 p-0">
-            {/* Extractor selector */}
-            <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-              <span className="text-xs font-medium text-muted-foreground shrink-0">
-                {t('toolbar.documentExtractor')}
-              </span>
-              <Select
-                value={pdfProviderId}
-                onValueChange={(v) => setPDFProvider(v as PDFProviderId)}
-              >
-                <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.values(PDF_PROVIDERS).map((provider) => {
-                    const cfg = pdfProvidersConfig[provider.id];
-                    const available =
-                      !provider.requiresApiKey || !!cfg?.apiKey || !!cfg?.isServerConfigured;
-                    return (
-                      <SelectItem key={provider.id} value={provider.id} disabled={!available}>
-                        <div
-                          className={cn('flex items-center gap-1.5', !available && 'opacity-50')}
-                        >
-                          {provider.icon && (
-                            <img src={provider.icon} alt={provider.name} className="w-3.5 h-3.5" />
-                          )}
-                          {provider.name}
-                          {cfg?.isServerConfigured && (
-                            <span className="text-[9px] px-1 py-0 rounded border text-muted-foreground">
-                              {t('settings.serverConfigured')}
-                            </span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-
             {/* Upload area / file info */}
-            <div className="px-3 pb-3">
+            <div className="px-3 py-3">
               <input
                 type="file"
                 ref={fileInputRef}
                 className="hidden"
                 accept={COURSE_MATERIAL_ACCEPT}
+                multiple
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleFileSelect(f);
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length > 0) handleFileSelect(files);
                   e.target.value = '';
                 }}
               />
-              {pdfFile ? (
+              {pdfFiles.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="size-8 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center shrink-0">
-                      <FileText className="size-4 text-violet-600 dark:text-violet-400" />
+                  <p className="text-xs text-muted-foreground">
+                    系统将自动使用已配置的 MinerU；未配置时使用 unpdf。
+                  </p>
+                  {pdfFiles.map((file, index) => (
+                    <div
+                      key={`${file.name}-${file.lastModified}-${index}`}
+                      className="flex items-center gap-2"
+                    >
+                      <div className="size-8 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center shrink-0">
+                        <FileText className="size-4 text-violet-600 dark:text-violet-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(file.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onPdfFilesChange(pdfFiles.filter((_, i) => i !== index))}
+                        className="text-muted-foreground hover:text-destructive"
+                        aria-label={`移除 ${file.name}`}
+                      >
+                        <X className="size-3.5" />
+                      </button>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{pdfFile.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => onPdfFileChange(null)}
-                    className="w-full text-xs text-destructive hover:underline text-left"
-                  >
-                    {t('toolbar.removeCourseMaterial')}
-                  </button>
+                  ))}
+                  {pdfFiles.length < MAX_COURSE_MATERIAL_FILES && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full text-xs text-violet-600 hover:underline text-left"
+                    >
+                      继续添加（最多 {MAX_COURSE_MATERIAL_FILES} 个）
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div
@@ -300,8 +290,8 @@ export function GenerationToolbar({
                   onDrop={(e) => {
                     e.preventDefault();
                     setIsDragging(false);
-                    const f = e.dataTransfer.files?.[0];
-                    if (f) handleFileSelect(f);
+                    const files = Array.from(e.dataTransfer.files ?? []);
+                    if (files.length > 0) handleFileSelect(files);
                   }}
                 >
                   <Paperclip className="size-5 text-muted-foreground/50 mb-1.5" />

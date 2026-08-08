@@ -27,9 +27,9 @@ import { FOREGROUND_SCENE_RETRY_OPTIONS } from './foreground-retry';
 import {
   loadImageMapping,
   loadImageMappingCompressed,
-  loadPdfBlob,
   cleanupOldImages,
   storeImages,
+  storeImagesFromUrls,
 } from '@/lib/utils/image-storage';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
@@ -249,7 +249,9 @@ function GenerationPreviewContent() {
       let activeSteps = getActiveSteps(currentSession);
 
       // Determine if we need the document analysis step
-      const hasPdfToAnalyze = !!currentSession.pdfStorageKey && !currentSession.pdfText;
+      const hasPdfToAnalyze =
+        (!!currentSession.pdfStorageKey || (currentSession.materialFiles?.length ?? 0) > 0) &&
+        !currentSession.pdfText;
       // If no document to analyze, skip to the next available step
       if (!hasPdfToAnalyze) {
         const firstNonPdfIdx = activeSteps.findIndex((s) => s.id !== 'pdf-analysis');
@@ -259,80 +261,158 @@ function GenerationPreviewContent() {
       // Step 0: Extract uploaded course material if needed
       if (hasPdfToAnalyze) {
         log.debug('=== Generation Preview: Extracting course material ===');
-        const pdfBlob = await loadPdfBlob(currentSession.pdfStorageKey!);
-        if (!pdfBlob) {
-          throw new Error(t('generation.courseMaterialLoadFailed'));
+        // 4.5MB 上传限制修复:文件已在选文件阶段直传到 Supabase Storage,
+        // 现在只把 storage path 传给 /api/extract-document,
+        // 服务端从 Storage 内网拉取(不受 4.5MB 限制)。
+        const materials =
+          currentSession.materialFiles?.map((file) => ({
+            storageKey: file.storageKey,
+            fileName: file.fileName,
+          })) ??
+          (currentSession.pdfStorageKey
+            ? [
+                {
+                  storageKey: currentSession.pdfStorageKey,
+                  fileName: currentSession.pdfFileName ?? 'document',
+                },
+              ]
+            : []);
+        const storagePath = materials[0]?.storageKey;
+        if (!storagePath) throw new Error('课程材料路径无效，请重新上传');
+        // 路径形如:
+        //   pending/{userId}/material/{hash}.{ext}  — 老师上传到正式创建前
+        //   courses/{courseId}/material/{hash}.{ext} — 已有 course 上下文
+        //   pbl/{projectId}/material/{hash}.{ext}    — 学生 PBL 提交
+        // 任一前缀都把对应的"id 段"作为 courseId 传给服务端做越权检查。
+        const pathMatch = storagePath.match(/^(?:courses|pending|pbl)\/([^\/]+)\/material\//);
+        if (!pathMatch) {
+          throw new Error('课程材料路径无效,请重新上传');
         }
+        const pathCourseId = pathMatch[1];
 
-        // Ensure pdfBlob is a valid Blob with content
-        if (!(pdfBlob instanceof Blob) || pdfBlob.size === 0) {
-          log.error('Invalid course material blob:', {
-            type: typeof pdfBlob,
-            size: pdfBlob instanceof Blob ? pdfBlob.size : 'N/A',
-          });
-          throw new Error(t('generation.courseMaterialLoadFailed'));
-        }
+        // ── Async extraction: start → poll loop ──────────────────────────
+        // No request waits for MinerU parsing (>30s). start returns immediately;
+        // poll checks progress every 3-5s. Immune to Cloudflare 100s 524.
 
-        // Wrap as a File to guarantee multipart/form-data with correct content-type
-        const pdfFile = new File([pdfBlob], currentSession.pdfFileName || 'document.pdf', {
-          type: currentSession.documentMimeType || pdfBlob.type || 'application/pdf',
-        });
-
-        const parseFormData = new FormData();
-        parseFormData.append('file', pdfFile);
-
-        if (currentSession.pdfProviderId) {
-          parseFormData.append('providerId', currentSession.pdfProviderId);
-        }
-        if (currentSession.pdfProviderConfig?.apiKey?.trim()) {
-          parseFormData.append('apiKey', currentSession.pdfProviderConfig.apiKey);
-        }
-        if (currentSession.pdfProviderConfig?.baseUrl?.trim()) {
-          parseFormData.append('baseUrl', currentSession.pdfProviderConfig.baseUrl);
-        }
-
-        const parseResponse = await fetch('/api/extract-document', {
+        // 1) Start
+        const startResponse = await fetch('/api/extract-document/start', {
           method: 'POST',
-          body: parseFormData,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ courseId: pathCourseId, path: storagePath }),
           signal,
         });
 
-        if (!parseResponse.ok) {
-          // Vercel/Next.js framework layer returns plain-text error bodies for
-          // 413 (Request Entity Too Large) and similar gateway-level failures,
-          // which JSON.parse() cannot handle. Inspect status first and only
-          // attempt JSON parsing when the body actually looks like JSON.
-          if (parseResponse.status === 413) {
-            throw new Error('课程材料过大（超过 4.5MB 限制），请压缩 PDF 或拆分后再上传');
+        if (!startResponse.ok) {
+          const contentType = startResponse.headers.get('content-type') || '';
+          if (startResponse.status === 413) {
+            throw new Error('课程材料超过 49MB 上限,请压缩或拆分后再上传');
           }
-          const contentType = parseResponse.headers.get('content-type') || '';
           if (!contentType.includes('application/json')) {
+            if (startResponse.status === 500 || startResponse.status === 524) {
+              throw new Error('网络或平台超时，请重试');
+            }
             throw new Error(t('generation.courseMaterialParseFailed'));
           }
-          const errorData = await parseResponse.json();
-          throw new Error(errorData.error || t('generation.courseMaterialParseFailed'));
+          const err = await startResponse.json();
+          throw new Error(err.error || t('generation.courseMaterialParseFailed'));
         }
 
-        const parseResult = await parseResponse.json();
-        if (!parseResult.success || !parseResult.data) {
+        const startResult = await startResponse.json();
+        if (!startResult.success || !startResult.data?.batchId) {
           throw new Error(t('generation.courseMaterialParseFailed'));
         }
+        const { batchId } = startResult.data;
 
+        // 2) Poll loop: every 3s until done/failed, with elapsed counter
+        let parseResult: any = null;
+        const pollStartMs = Date.now();
+        const POLL_INTERVAL_MS = 3_000;
+        const MAX_POLL_MS = 20 * 60 * 1_000; // 20 min
+
+        // Update progress text: show elapsed time
+        const updateProgress = (elapsedSecs: number) => {
+          setStatusMessage(
+            `${t('generation.analyzingCourseMaterial', { type: 'PDF' })}（已用 ${elapsedSecs} 秒）`,
+          );
+        };
+
+        while (!parseResult) {
+          if (Date.now() - pollStartMs > MAX_POLL_MS) {
+            throw new Error('解析超时，请重试');
+          }
+
+          const elapsedSecs = Math.floor((Date.now() - pollStartMs) / 1000);
+          updateProgress(elapsedSecs);
+
+          const pollResponse = await fetch('/api/extract-document/poll', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ batchId, courseId: pathCourseId, path: storagePath }),
+            signal,
+          });
+
+          if (!pollResponse.ok) {
+            const cType = pollResponse.headers.get('content-type') || '';
+            if (pollResponse.status === 504 || pollResponse.status === 524) {
+              // Transient timeout — retry next cycle
+              await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS / 2));
+              continue;
+            }
+            if (!cType.includes('application/json')) {
+              if (pollResponse.status === 500) {
+                throw new Error('解析结果过大或平台错误，请重试或拆分材料。如持续失败请联系管理员。');
+              }
+              throw new Error(t('generation.courseMaterialParseFailed'));
+            }
+            const err = await pollResponse.json();
+            throw new Error(err.error || t('generation.courseMaterialParseFailed'));
+          }
+
+          const pollResult = await pollResponse.json();
+          if (!pollResult.success) {
+            throw new Error(pollResult.error || t('generation.courseMaterialParseFailed'));
+          }
+
+          const pollData = pollResult.data;
+          if (pollData.status === 'done') {
+            parseResult = { success: true, data: pollData };
+          } else if (pollData.status === 'failed') {
+            throw new Error(pollData.error || 'MinerU 解析失败');
+          }
+          // processing — wait interval then poll again
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        }
+
+        if (!parseResult) throw new Error(t('generation.courseMaterialParseFailed'));
+
+        // 服务端已截断到 MAX_PDF_CONTENT_CHARS,这里只保留作本地二次截断
         let pdfText = parseResult.data.text as string;
-
-        // Truncate if needed
         if (pdfText.length > MAX_PDF_CONTENT_CHARS) {
           pdfText = pdfText.substring(0, MAX_PDF_CONTENT_CHARS);
         }
 
         // Create image metadata and store images
         // Prefer metadata.pdfImages (both parsers now return this)
+        interface MaterialImage {
+          id: string;
+          src: string;
+          publicUrl?: string;
+          storagePath?: string;
+          missing?: boolean;
+          pageNumber: number;
+          description?: string;
+          width?: number;
+          height?: number;
+        }
         const rawPdfImages = parseResult.data.metadata?.pdfImages;
-        const images = rawPdfImages
+        const images: MaterialImage[] = rawPdfImages
           ? rawPdfImages.map(
               (img: {
                 id: string;
                 src?: string;
+                publicUrl?: string;
+                storagePath?: string;
+                missing?: boolean;
                 pageNumber?: number;
                 description?: string;
                 width?: number;
@@ -340,6 +420,9 @@ function GenerationPreviewContent() {
               }) => ({
                 id: img.id,
                 src: img.src || '',
+                publicUrl: img.publicUrl,
+                storagePath: img.storagePath,
+                missing: img.missing,
                 pageNumber: img.pageNumber || 1,
                 description: img.description,
                 width: img.width,
@@ -352,29 +435,163 @@ function GenerationPreviewContent() {
               pageNumber: 1,
             }));
 
-        const imageStorageIds = await storeImages(images);
+        // Parse the remaining materials in order and combine their usable text/images.
+        // The overall prompt budget remains capped even when five materials are selected.
+        let textWasTruncated = (parseResult.data.text as string).length > MAX_PDF_CONTENT_CHARS;
+        for (const [materialIndex, material] of materials.slice(1).entries()) {
+          const extraMatch = material.storageKey.match(
+            /^(?:courses|pending|pbl)\/([^\/]+)\/material\//,
+          );
+          if (!extraMatch) throw new Error('课程材料路径无效，请重新上传');
 
-        const pdfImages: PdfImage[] = images.map(
-          (
-            img: {
-              id: string;
-              src: string;
-              pageNumber: number;
-              description?: string;
-              width?: number;
-              height?: number;
-            },
-            i: number,
-          ) => ({
-            id: img.id,
-            src: '',
-            pageNumber: img.pageNumber,
-            description: img.description,
-            width: img.width,
-            height: img.height,
-            storageId: imageStorageIds[i],
-          }),
+          // ── Async extraction for extra materials ──
+          const extraStartRes = await fetch('/api/extract-document/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ courseId: extraMatch[1], path: material.storageKey }),
+            signal,
+          });
+          if (!extraStartRes.ok) {
+            const err = await extraStartRes.json().catch(() => null);
+            throw new Error(`${material.fileName}：${err?.error || t('generation.courseMaterialParseFailed')}`);
+          }
+          const extraStart = await extraStartRes.json();
+          if (!extraStart.success || !extraStart.data?.batchId) {
+            throw new Error(`${material.fileName}：${t('generation.courseMaterialParseFailed')}`);
+          }
+          const extraBatchId = extraStart.data.batchId;
+
+          let extraResult: any = null;
+          const extraPollStart = Date.now();
+          while (!extraResult) {
+            if (Date.now() - extraPollStart > MAX_POLL_MS) {
+              throw new Error(`${material.fileName}：解析超时，请重试`);
+            }
+            const extraPollRes = await fetch('/api/extract-document/poll', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ batchId: extraBatchId, courseId: extraMatch[1], path: material.storageKey }),
+              signal,
+            });
+            if (!extraPollRes.ok) {
+              if (extraPollRes.status === 504 || extraPollRes.status === 524) {
+                await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS / 2));
+                continue;
+              }
+              const err = await extraPollRes.json().catch(() => null);
+              throw new Error(`${material.fileName}：${err?.error || t('generation.courseMaterialParseFailed')}`);
+            }
+            const extraPoll = await extraPollRes.json();
+            if (!extraPoll.success) {
+              throw new Error(`${material.fileName}：${extraPoll.error || t('generation.courseMaterialParseFailed')}`);
+            }
+            if (extraPoll.data?.status === 'done') {
+              extraResult = { success: true, data: extraPoll.data };
+            } else if (extraPoll.data?.status === 'failed') {
+              throw new Error(`${material.fileName}：${extraPoll.data.error || 'MinerU 解析失败'}`);
+            }
+            // processing — wait interval then poll again
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+          }
+          if (!extraResult) throw new Error(`${material.fileName}：${t('generation.courseMaterialParseFailed')}`);
+
+          const extraText = String(extraResult.data.text || '');
+          const remaining = MAX_PDF_CONTENT_CHARS - pdfText.length;
+          const heading = `\n\n【${material.fileName}】\n`;
+          const available = remaining - heading.length;
+          if (available <= 0 || extraText.length > available) textWasTruncated = true;
+          if (available > 0) {
+            pdfText += `${heading}${extraText.slice(0, available)}`;
+          }
+          const rawExtraImages = extraResult.data.metadata?.pdfImages;
+          const extraImages = rawExtraImages
+            ? rawExtraImages.map(
+                (img: {
+                  id: string;
+                  src?: string;
+                  publicUrl?: string;
+                  storagePath?: string;
+                  missing?: boolean;
+                  pageNumber?: number;
+                  description?: string;
+                  width?: number;
+                  height?: number;
+                }) => ({
+                  id: `${materialIndex + 1}-${img.id}`,
+                  src: img.src || '',
+                  publicUrl: img.publicUrl,
+                  storagePath: img.storagePath,
+                  missing: img.missing,
+                  pageNumber: img.pageNumber || 1,
+                  description: img.description,
+                  width: img.width,
+                  height: img.height,
+                }),
+              )
+            : (extraResult.data.images as string[]).map((src: string, i: number) => ({
+                id: `${materialIndex + 1}-img_${i + 1}`,
+                src,
+                pageNumber: 1,
+              }));
+          images.push(...extraImages);
+        }
+
+        // Store images: unified pipeline handles both externalized (publicUrl)
+        // and legacy base64 images. Align by imgId (Map), NOT by array index.
+        // A missing/failed image leaves no entry in the map; PdfImage.storageId
+        // is optional, so undefined → no storage reference → correct behavior.
+        const storageIdMap = new Map<string, string>();
+
+        // 1) Externalized images: download from publicUrl → IndexedDB
+        const extImages = images.filter((img) => img.publicUrl);
+        if (extImages.length > 0) {
+          const extIds = await storeImagesFromUrls(
+            extImages.map((img) => ({
+              id: img.id,
+              url: img.publicUrl!,
+              pageNumber: img.pageNumber,
+            })),
+          );
+          extImages.forEach((img, i) => {
+            if (extIds[i]) storageIdMap.set(img.id, extIds[i]);
+          });
+        }
+
+        // 2) Legacy base64 images: store directly from data URI
+        const b64Images = images.filter(
+          (img) => !img.publicUrl && img.src?.startsWith('data:'),
         );
+        if (b64Images.length > 0) {
+          const b64Ids = await storeImages(
+            b64Images.map((img) => ({
+              id: img.id,
+              src: img.src,
+              pageNumber: img.pageNumber,
+            })),
+          );
+          // storeImages returns a dense array of successful ids only
+          // (may be shorter than input if some fail). Iterate by input.
+          b64Images.forEach((img, i) => {
+            if (i < b64Ids.length) storageIdMap.set(img.id, b64Ids[i]);
+          });
+        }
+
+        // 3) Build PdfImage[]: lookup storageId by imgId from the map
+        const pdfImages: PdfImage[] = images.map((img) => ({
+          id: img.id,
+          src: '',
+          pageNumber: img.pageNumber,
+          description: img.description,
+          width: img.width,
+          height: img.height,
+          storageId: storageIdMap.get(img.id),
+        }));
+
+        // Derive imageStorageIds from the map (maintains existing session shape).
+        // Filter out undefined entries (failed/missing images) to match string[] contract.
+        const imageStorageIds = images
+          .map((img) => storageIdMap.get(img.id))
+          .filter((id): id is string => !!id);
 
         // Update session with extracted document data
         const updatedSession = {
@@ -383,13 +600,14 @@ function GenerationPreviewContent() {
           pdfImages,
           imageStorageIds,
           pdfStorageKey: undefined, // Clear so we don't re-parse
+          materialFiles: undefined,
         };
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
 
         // Truncation warnings
         const warnings: string[] = [];
-        if ((parseResult.data.text as string).length > MAX_PDF_CONTENT_CHARS) {
+        if (textWasTruncated) {
           warnings.push(t('generation.textTruncated', { n: MAX_PDF_CONTENT_CHARS }));
         }
         if (images.length > MAX_VISION_IMAGES) {
@@ -486,7 +704,9 @@ function GenerationPreviewContent() {
         // Fallback to the provider's built-in defaultModelId when the user's
         // current selection did not pin a specific model (e.g. settings store
         // only carries providerId+voiceId without a modelId).
-        const providerDefaults = (TTS_PROVIDERS as Record<string, { defaultModelId?: string } | undefined>)[s.ttsProviderId];
+        const providerDefaults = (
+          TTS_PROVIDERS as Record<string, { defaultModelId?: string } | undefined>
+        )[s.ttsProviderId];
         const fallbackModelId = providerDefaults?.defaultModelId;
         const teacherVoiceConfig = {
           providerId: s.ttsProviderId,
@@ -960,8 +1180,9 @@ function GenerationPreviewContent() {
         );
 
         let ttsFailCount = 0;
+        const sceneOrder = firstScene.order ?? 0;
         for (const action of speechActions) {
-          const audioId = `tts_${action.id}`;
+          const audioId = `tts_s${sceneOrder}_${action.id}`;
           action.audioId = audioId;
           try {
             await generateAndStoreTTS(
