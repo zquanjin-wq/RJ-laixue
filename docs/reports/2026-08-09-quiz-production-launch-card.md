@@ -40,7 +40,7 @@ Vercel Dashboard → Deployments → 选择 Production 项目 → Redeploy，**�
 | 1 | 学员进入课堂，答题 | 本地 persisted | localStorage quiz-submit envelope |
 | 2 | 提交答案 | outbox pending → sending → succeededEntries 凭据 | Dexie runtimeOutbox + succeededEntries |
 | 3 | AI 批改完成 | reviewed 写入 | Vercel Logs `POST …/records` 201 |
-| 4 | 查看批改结果 | 本地 reviewed 字段更新 | localStorage envelope 更新 |
+| 4 | 查看批改结果 | 本地批改结果更新 | localStorage `quizResults:<sceneId>` 更新 |
 | 5 | 重试（retry） | archived 写入 | Vercel Logs `PATCH …/status` 200 |
 | 6 | 刷新页面 | 本地恢复，不重新入队 | Dexie runtimeOutbox 无新增 |
 
@@ -78,5 +78,5 @@ Vercel Dashboard → Deployments → 选择 Production 项目 → Redeploy，**�
 ---
 
 **状态**: ⚠️ DRAFT — NOT AUTHORIZED
-**审阅**: Kimi（Codex）
+**审阅**: Codex
 **生效条件**: 阶段 A 观察期通过 + Kimi 签字 + 负责人授权

@@ -1,7 +1,7 @@
 # RuntimeStore 生产 Shadow 七天观察期报告
 
 **观察周期**: 2026-08-09 00:00 UTC+8 ~ 2026-08-16 00:00 UTC+8（七个完整观察日：08-09 至 08-15；08-16 出最终报告）
-**观察执行**: WorkBuddy（数据整理）/ **决策与签字**: 负责人拍板、Kimi（Codex）验收
+**观察执行**: WorkBuddy（数据整理）/ **决策与签字**: 负责人拍板、Codex 验收
 **前置**: R2 Chat 影子写 ✅、R3.1 Playback outbox ✅ 均已生产开启；R3.2 Quiz outbox 生产未开启
 **状态**: 🔄 观察中
 
@@ -24,7 +24,7 @@
 ## 2. 每日观察表
 
 > 数据来源：人工导出的脱敏 Vercel Logs（`/api/runtime/v1/*` + `/api/client-diagnostics` 路径）。
-> 分析脚本：`scripts/runtime-observation-summary.ts`（各列自动填充，本表手动填写）。
+> 分析脚本：`scripts/runtime-observation-summary.ts`（输出汇总到 stdout；本表由 WorkBuddy 人工回填）。
 
 ### Day 1 — 2026-08-09（六）
 
@@ -91,7 +91,11 @@
 
 ## 4. 回滚条件
 
-以下任一条件触发，**立即关闭 Runtime 生产影子（`NEXT_PUBLIC_RUNTIME_SHADOW=0`，重新部署）**，本地课堂不受影响：
+以下任一条件触发，**立即执行回滚**：
+1. Vercel Dashboard → Settings → Environment Variables → 删除/关闭 `NEXT_PUBLIC_RUNTIME_SHADOW`（设为 `0` 或删除）
+2. Deployments → Redeploy → **取消勾选 "Use existing Build Cache"**
+3. 保存当日 Vercel Logs 异常窗口证据（作为事后调查材料）
+4. 本地课堂不受影响——回滚后 Chat/Playback/Quiz 立即回归纯本地模式
 
 | # | 条件 | 判定来源 |
 |---|------|----------|
@@ -141,7 +145,7 @@
 | 角色 | 签字 | 日期 |
 |------|:--:|------|
 | 负责人（决策与拍板） | ⬜ | — |
-| Kimi（Codex 验收） | ⬜ | — |
+| Codex（验收） | ⬜ | — |
 | WorkBuddy（数据整理，不签字） | — | — |
 
 ---

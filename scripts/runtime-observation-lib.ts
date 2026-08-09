@@ -82,21 +82,37 @@ function extractSessionId(path: string): string {
   return m ? decodeURIComponent(m[1]) : 'unknown';
 }
 
-/** 从请求体提取 runtime kind（生成时附在 body 上） */
-function extractKind(body: unknown): string {
+/** 从请求体/路径推断 runtime kind。缺证据时返回 'unknown'，禁止默认猜 Playback。 */
+function extractKind(body: unknown, sessionId: string): string {
   if (typeof body === 'object' && body !== null) {
     const b = body as Record<string, unknown>;
     if (typeof b.kind === 'string') return b.kind;
-  }
-  // 根据现有字段判断——兼容日志格式不一致
-  if (typeof body === 'object' && body !== null) {
-    const b = body as Record<string, unknown>;
     if (typeof b.attemptId === 'string') return 'quizAttempt';
   }
-  return 'playback'; // Playback 是主要流量，默认向前
+  // 从 sessionId 前缀推断：
+  // pb:<stageId> or pb:<stageId>:<visitId> → playback
+  // qa:<attemptId> → quizAttempt
+  if (sessionId.startsWith('pb:')) return 'playback';
+  if (sessionId.startsWith('qa:')) return 'quizAttempt';
+  // Chat session IDs are UUIDs; Vercel logs don't always carry requestBody.
+  // Chat sessions have IDs that look like UUID patterns (long hex). But we
+  // cannot reliably distinguish Chat from other UUID-pattern session IDs
+  // without kind field in body. Return unknown.
+  return 'unknown';
 }
 
-/** 简单 payload 哈希用于比较同 recordId 的不同请求体 */
+/** Canonical JSON hash — sort keys, stable across property ordering. */
+function canonicalJSON(obj: unknown): string {
+  if (typeof obj !== 'object' || obj === null) return JSON.stringify(obj);
+  if (Array.isArray(obj)) return `[${obj.map(canonicalJSON).join(',')}]`;
+  const sorted = Object.keys(obj as Record<string, unknown>).sort();
+  return `{${sorted.map((k) => `${JSON.stringify(k)}:${canonicalJSON((obj as Record<string, unknown>)[k])}`).join(',')}}`;
+}
+
+function payloadHash(obj: unknown): number {
+  return simpleHash(canonicalJSON(obj));
+}
+
 function simpleHash(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) {
@@ -160,7 +176,8 @@ export async function summarizeLogs(filePath: string): Promise<SummaryReport> {
     // Runtime API
     report.runtimeRequests++;
     const op = extractOp(entry.path);
-    const kind = extractKind(entry.requestBody);
+    const sessionId = extractSessionId(entry.path);
+    const kind = extractKind(entry.requestBody, sessionId);
     const sc = entry.statusCode;
 
     // op × kind × statusCode
@@ -184,7 +201,7 @@ export async function summarizeLogs(filePath: string): Promise<SummaryReport> {
           recordIdMap.set(recordId, { hashes: new Set(), events: [] });
         }
         const rec = recordIdMap.get(recordId)!;
-        const hash = simpleHash(JSON.stringify(body));
+        const hash = payloadHash(body);
         rec.hashes.add(hash);
         rec.events.push({ sessionId: extractSessionId(entry.path), timestamp: entry.timestamp });
       }

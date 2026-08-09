@@ -27,4 +27,8 @@
 
 ## 结论
 
-**覆盖充分**。无 P0 缺口。`max_retries` 与跨-kind 隔离依赖生产观察期实证，不需要新增单元测试。
+**覆盖充分。** 2 个缺口记录在案：
+- `max_retries` deadReason → fake timers + state injection 纳入后续 C1 补充卡
+- diagnostics deadReason 未上报 → 生产日志与 dead 统计口径保持一致，均不观测，直到 contract 落地
+
+现有 139 回归用例（不含 observation standalone）覆盖所有生产观察维度。无 P0 测试缺口。

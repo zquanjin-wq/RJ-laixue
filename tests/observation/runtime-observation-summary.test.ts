@@ -88,19 +88,58 @@ describe('summarizeLogs', () => {
     fs.unlinkSync(filePath);
   });
 
-  it('handles missing requestBody gracefully', async () => {
+  it('throws for missing file', async () => {
+    await expect(summarizeLogs('/nonexistent/path.jsonl')).rejects.toThrow('File not found');
+  });
+
+  it('handles missing requestBody — kind unknown, not defaulted to playback', async () => {
     const filePath = writeTempFile([
       JSON.stringify({ timestamp: '2026-08-09T01:00:00Z', path: '/api/runtime/v1/sessions/s1/records', statusCode: 201 }),
     ]);
     const report = await summarizeLogs(filePath);
     expect(report.runtimeRequests).toBe(1);
-    // Default to 'playback' kind when body is missing
-    expect(report.opKindStatus['append_record']?.['playback']?.[201]).toBe(1);
+    // No body → kind unknown, not guessed as playback
+    expect(report.opKindStatus['append_record']?.['unknown']?.[201]).toBe(1);
+    expect(report.opKindStatus['append_record']?.['playback']).toBeUndefined();
     fs.unlinkSync(filePath);
   });
 
-  it('throws for missing file', async () => {
-    await expect(summarizeLogs('/nonexistent/path.jsonl')).rejects.toThrow('File not found');
+  it('infers kind from sessionId prefix when body is missing', async () => {
+    const filePath = writeTempFile([
+      JSON.stringify({ timestamp: '2026-08-09T01:00:00Z', path: '/api/runtime/v1/sessions/pb:stage1/records', statusCode: 201 }),
+      JSON.stringify({ timestamp: '2026-08-09T01:01:00Z', path: '/api/runtime/v1/sessions/qa:att1/status', statusCode: 200 }),
+      JSON.stringify({ timestamp: '2026-08-09T01:02:00Z', path: '/api/runtime/v1/sessions/uuid-session/records', statusCode: 201 }),
+    ]);
+    const report = await summarizeLogs(filePath);
+    expect(report.opKindStatus['append_record']?.['playback']?.[201]).toBe(1);
+    expect(report.opKindStatus['set_status']?.['quizAttempt']?.[200]).toBe(1);
+    // UUID session without body → unknown
+    expect(report.opKindStatus['append_record']?.['unknown']?.[201]).toBe(1);
+    fs.unlinkSync(filePath);
+  });
+
+  it('canonical hash ignores property ordering', async () => {
+    const filePath = writeTempFile([
+      JSON.stringify({ timestamp: '2026-08-09T01:00:00Z', path: '/api/runtime/v1/sessions/s1/records', statusCode: 201, requestBody: { id: 's1:h', kind: 'playback', payload: { content: 'X', sceneId: 's1' } } }),
+      JSON.stringify({ timestamp: '2026-08-09T01:01:00Z', path: '/api/runtime/v1/sessions/s1/records', statusCode: 201, requestBody: { id: 's1:h', kind: 'playback', payload: { sceneId: 's1', content: 'X' } } }),
+    ]);
+    const report = await summarizeLogs(filePath);
+    // Same content, different property order → NOT drift
+    expect(report.duplicateRecordIds.length).toBe(1);
+    expect(report.duplicateRecordIds[0].distinctPayloadHashes).toBe(1);
+    fs.unlinkSync(filePath);
+  });
+
+  it('diagnostics without structured body → outcome unknown', async () => {
+    const filePath = writeTempFile([
+      JSON.stringify({ timestamp: '2026-08-09T01:00:00Z', path: '/api/client-diagnostics', statusCode: 200, message: 'runtime_shadow {"outcome":"ok"}' }),
+    ]);
+    const report = await summarizeLogs(filePath);
+    // Real Vercel logs often put structured data in message, not requestBody.
+    // This script currently handles 'unknown' for unstructured diagnostics.
+    expect(report.diagnosticsRequests).toBe(1);
+    expect(report.telemetryOutcomes['unknown']).toBe(1);
+    fs.unlinkSync(filePath);
   });
 
   it('formatReport includes notObservable section', async () => {
