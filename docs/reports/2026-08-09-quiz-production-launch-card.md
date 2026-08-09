@@ -27,9 +27,9 @@ NEXT_PUBLIC_RUNTIME_SHADOW_QUIZ=1
 
 不修改任何其他变量。
 
-### B2：无缓存部署
+### B2：无缓存 Redeploy
 
-Vercel Production 部署 → 清除边缘缓存。
+Vercel Dashboard → Deployments → 选择 Production 项目 → Redeploy，**取消勾选 "Use existing Build Cache"**。
 
 ### B3：真实流程 E2E
 
@@ -37,10 +37,10 @@ Vercel Production 部署 → 清除边缘缓存。
 
 | # | 操作 | 期望 | 验证方式 |
 |---|------|------|----------|
-| 1 | 学员进入课堂，答题 | 本地 persisted | 浏览器 DevTools → Application → Dexie → quizAttempts |
+| 1 | 学员进入课堂，答题 | 本地 persisted | localStorage quiz-submit envelope |
 | 2 | 提交答案 | outbox pending → sending → succeededEntries 凭据 | Dexie runtimeOutbox + succeededEntries |
-| 3 | AI 批改完成 | reviewed 写入 | Vercel Logs `POST …/records` 200 |
-| 4 | 查看批改结果 | 本地 reviewed 字段更新 | Dexie quizAttempts |
+| 3 | AI 批改完成 | reviewed 写入 | Vercel Logs `POST …/records` 201 |
+| 4 | 查看批改结果 | 本地 reviewed 字段更新 | localStorage envelope 更新 |
 | 5 | 重试（retry） | archived 写入 | Vercel Logs `PATCH …/status` 200 |
 | 6 | 刷新页面 | 本地恢复，不重新入队 | Dexie runtimeOutbox 无新增 |
 
@@ -50,7 +50,7 @@ Vercel Production 部署 → 清除边缘缓存。
 - [ ] runtimeChainHeads 尾 entry 正确
 - [ ] succeededEntries 凭据无遗漏
 - [ ] dependsOnEntryId 链无断裂
-- [ ] 已完成 attempt 不重新入队
+- [ ] 已完成 attempt 不重新入队（重复 submit → 幂等）
 
 ### B5：单独观察 3-7 天
 

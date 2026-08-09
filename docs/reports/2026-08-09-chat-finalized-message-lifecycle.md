@@ -87,6 +87,16 @@ saveChatSessions:
 3. Lecture 消息拆分为多条（M2 正解），每条独立录 ID 和不可变内容
 4. 定义完整 payload contract（model/provider/scene/引用/完成原因/中断原因）
 
+### 附加风险：并发 shadow 游标竞态
+
+即使 finalized 信号落地，仍存在「多个 fire-and-forget `shadowChatSessions(stageId, sessions)` 并发调用」的风险：
+- 两个保存操作几乎同时读取相同的游标（`count` 值）
+- 各自对 lecture 消息基于中间内容（T₁/T₂）计算 recordId → `session:lecture-msg-<ts>`
+- 两者并发 append 同一 recordId 但含不同 payload → 两次 409 IDEMPOTENCY_CONFLICT
+- 单次保存重放无害（cursor.skip 后不重复），但并发不一致会额外产生 409 噪音
+
+需要 Cha outbox 时一并解决游标串行化：写入游标的语义等价——仅完成一次 `appendRecord` 并落地 record-server-confirmed 状态后再更新游标。
+
 **当前警告**：在 finalized-message 信号落地前，Chat 不应进入 outbox 或 dual-read。继续使用 direct shadow + M1 IDEMPOTENCY_CONFLICT skip 保底。
 
 ---

@@ -1,85 +1,91 @@
-# R3.x dual-read 分阶段任务分解
+# R3.x 分阶段任务分解（v1.1 SIGNED 控制面）
 
 **日期**: 2026-08-09
+**上位文档**: R3 v1.1 签字设计（服务端权威 phase 控制）——本文唯一权威
 **前置**: 阶段 A（生产 shadow 观察期）通过
-**当前范围**: Playback + Quiz 首轮；**Chat 明确排除**
+**当前范围**: Playback + Quiz 首轮；**Chat 明确排除——维持 shadow**
 **状态**: DRAFT — 规划阶段，未授权实施
+
+---
+
+## 控制面原则（源于 SIGNED v1.1）
+
+| 原则 | 含义 |
+|------|------|
+| 服务端权威 | `GET /api/runtime/v1/config` 下发 `{ configVersion, effectivePhase, expiresAt }` |
+| 客户端不自行决定阶段 | 客户端只缓存服务端响应，到期重新请求；禁止客户端 `NEXT_PUBLIC_*` 环境变量切换读源 |
+| Chat 强制 shadow | 阶段 A–F 全程，Chat 不进入 dual-read 或 server-primary |
+| 本地始终上屏 | dual-read 期间不改业务读源；服务端只在后台读取与比较 |
+| 服务端控制回退 | 降级决策由服务端 config 切换 phase 实现，客户端不内置阈值 |
 
 ---
 
 ## 阶段总览
 
-| 阶段 | 名称 | 范围 | 前提 |
-|:--:|------|------|------|
-| A | 生产 shadow 观察闭环 | Playback + Chat（已开启） | 🔄 进行中 |
-| B | Quiz 生产受控上线 | Quiz（已签字，未开启） | A 通过 |
-| C | 自动化运行监控 | 全 kind | B 通过 |
-| D | Chat 可靠写模型 | Chat（另案，不在本分解） | 独立卡片 |
-| **E** | **R3.x dual-read** | **Playback + Quiz 首轮** | **A+B+C 全通过** |
-| F | 跨设备恢复 | 全 kind | E 稳定 |
-| G | 学习智能层 | 全 kind | F 通过 |
+| 阶段 | 名称 | phase 值 | 前提 |
+|:--:|------|----------|------|
+| A | 生产 shadow 观察闭环 | `shadow` | 🔄 进行中 |
+| B | Quiz 生产受控上线 | `shadow`（Quiz 子开关） | A 通过 |
+| C | 自动化运行监控 | `shadow` | B 通过 |
+| D | Chat 可靠写模型 | `shadow` | 独立卡片 |
+| **E** | **R3.x dual-read** | **`dual-read-compare`** | **A+B+C 全通过** |
+| F | server-preferred | `server-preferred` | E 稳定 |
+| G | server-primary | `server-primary` | F 通过 |
 
 ---
 
-## 阶段 E 详细分解（Playback + Quiz first）
+## 阶段 E 详细分解（`dual-read-compare` phase）
 
-### E1：Playback 双读基础设施
-
-| # | 任务 | 产出 |
-|---|------|------|
-| E1.1 | Dual-read 开关与配置：`NEXT_PUBLIC_RUNTIME_DUAL_READ_PLAYBACK=1` 控制读源，默认仍 `local` | 配置 schema |
-| E1.2 | 服务端 Playback session 读取 API：按 `stageId + tabOwnerId` 查询最近未完成 visit，返回 `{ visitId, sessionId, status, sceneIndex, actionIndex, ... }` | `/api/runtime/v1/sessions/recent-active` GET |
-| E1.3 | 服务端 Playback records 读取 API：按 `sessionId` 返回 records 数组，按 `createdAt` 排序 | `/api/runtime/v1/sessions/{id}/records` GET |
-| E1.4 | 客户端 `ReadPlaybackFromServer` 函数：读取服务端数据，构造 `PlaybackSnapshot`；失败时 `throw`，调用方 fallback 到本地 | `lib/runtime/playback-server-read.ts` |
-| E1.5 | Dual-read compare：本地快照 vs 服务端快照，比较 `capturedAt + eventId` 判定新旧 | `lib/runtime/playback-dual-compare.ts` |
-| E1.6 | 差异上报：比较结果（`match` / `server_newer` / `local_newer` / `error`）上报 `client-diagnostics`，暂不上屏 | diagnostic payload |
-| E1.7 | 自动回退：server error 或 compare mismatch 超过阈值（> 10%）→ 自动降级到 `local` 读源 | 降级状态机 |
-
-### E2：Quiz 双读基础设施
+### 服务端
 
 | # | 任务 | 产出 |
 |---|------|------|
-| E2.1 | Dual-read 开关：`NEXT_PUBLIC_RUNTIME_DUAL_READ_QUIZ=1` | 配置 |
-| E2.2 | 服务端 Quiz attempt/session 查询：按 `attemptId` 查 session + all records | API |
-| E2.3 | 客户端 `ReadQuizFromServer` | 函数 |
-| E2.4 | Dual-read compare：按 attempt/phase contract 比对 | 函数 |
-| E2.5 | 差异上报 + 自动回退（同 E1.7） | 集成 |
+| E-S1 | Runtime config API：`GET /api/runtime/v1/config`，返回 `{ configVersion, effectivePhase, effectiveAt, expiresAt, supportedKinds: ['playback','quizAttempt'] }`；Chat 不在 supportedKinds 中 | API endpoint |
+| E-S2 | Phase 切换管理：由负责人通过 Supabase RPC 或 config 表行切换 phase + configVersion，客户端自动识别 | RPC/admin function |
 
-### E3：Dual-read 验收门禁
+### 客户端
+
+| # | 任务 | 产出 |
+|---|------|------|
+| E-C1 | Config cache：本地缓存服务端 config，每次页面加载请求一次，按 `expiresAt` 刷新；失败时保持上次有效 config | `lib/runtime/config-cache.ts` |
+| E-C2 | Playback 服务端读取：按 `stageId` 查服务端 visit + records（仅 GET，不写） | `lib/runtime/playback-server-read.ts` |
+| E-C3 | Playback dual compare：本地快照 vs 服务端，比较 `capturedAt + eventId` → `match / server_newer / local_newer / error` | `lib/runtime/playback-dual-compare.ts` |
+| E-C4 | Quiz 服务端读取 + compare（同 E-C2/C3，按 attempt/phase contract） | 同上模式 |
+| E-C5 | Diagnostics 上报：compare 结果上报 `client-diagnostics`（kind × compareResult）；不上屏、不修改本地数据 | diagnostic payload |
+| E-C6 | 本地始终优先：服务端读取失败不阻断；compare 差异仅记录 | safe-fallback |
+
+### 门禁
 
 | # | 场景 | 期望 |
 |---|------|------|
-| E3-1 | 本地有数据、服务端有新数据 | `server_newer` 上报，不上屏服务端数据 |
-| E3-2 | 本地无数据、服务端有数据 | `server_only` 上报，不上屏（仍用本地空） |
-| E3-3 | 本地与服务端一致 | `match` 上报 |
-| E3-4 | 服务端读取失败（网络/5xx/404） | `error` 上报，继续使用本地数据（零影响） |
-| E3-5 | 差异率超过 10% | 自动降级到 local，上报 `degraded_threshold` |
-| E3-6 | Quiz 严格链五段全对齐 | 所有 phase match |
-| E3-7 | Playback completed 后新周期 session 正确识别 | session ID 含 visitId |
+| G1 | 服务端返回有效 config,phase=`dual-read-compare` | 客户端执行 compare，不上屏 |
+| G2 | 服务端返回 phase=`shadow` | 客户端回到纯 shadow，不 compare |
+| G3 | 服务端 5xx / 网络错误 | 客户端使用上次缓存 config，不降级 |
+| G4 | config 过期（超过 `expiresAt` 未刷新） | 客户端退到 phase=`shadow` 安全默认 |
+| G5 | Playback completed 后新周期 | session ID 含 visitId，compare 正确识别 |
+| G6 | Quiz 五段严格链 compare | 全部 match |
 
 ---
 
-## 关键原则
+## 阶段 F/G 前置条件（不在本分解范围）
 
-1. **本地结果始终上屏**——dual-read 期间不改业务读源
-2. **服务端只做后台读取和对比**——不影响用户交互
-3. **Playback 按 `capturedAt + eventId` 判断新旧**——不依赖单一时间戳
-4. **Quiz 按 `attempt/phase` contract 比对**——不按任意字段
-5. **超阈值自动回退到 shadow**——不要求人工介入
-6. **Chat 全程排除**——在 finalized-message 信号落地前不进入
+- 阶段 E `dual-read-compare` 稳定（compare 无持续 mismatching > 5%）
+- Chat 可靠写模型（阶段 D）**签字并生效**
+- 负责人签署 server-preferred 切换授权卡
 
 ---
 
 ## 不授权
 
-- ❌ 实施阶段 E 任何代码——等待 A+B+C 全通过
-- ❌ 修改任何读源——当前始终 local
-- ❌ Chat dual-read
-- ❌ server-preferred / server-primary 读源
+- ❌ 阶段 E/F/G 实施代码
+- ❌ 任何 client-side `NEXT_PUBLIC_DUAL_READ_*` 环境变量
+- ❌ Chat dual-read / server-preferred / server-primary
+- ❌ 客户端自主降级逻辑（10% 阈值等——均属服务端 phase 切换职责）
+- ❌ SQL / RPC / RLS 修改
 - ❌ 跨设备恢复
 
 ---
 
 **状态**: DRAFT — 规划阶段
 **审阅**: Kimi（Codex）
-**下一步**: 观察期结束后签署阶段 A → B 上线卡
+**依据**: R3 v1.1 SIGNED 设计

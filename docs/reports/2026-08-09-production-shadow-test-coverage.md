@@ -21,9 +21,9 @@
 
 | 缺口 | 风险 | 处置 |
 |------|------|------|
-| `max_retries` deadReason 无直接单测 | 低——需 7 次退避+重试间隔，不适合单元测试。集成/E2E 覆盖。 | 记录，不阻塞 |
-| 跨 kind 互不干扰（Playback outbox vs Chat shadow 同跑） | 低——Playback 用 outbox、Chat 用 shadow，当前开关隔离。 | 记录，生产观察期人工验证 |
-| client-diagnostics deadReason 上报字段 | 中——诊断契约尚未设计，deadReason 仅在 Dexie 落库、未上报。 | 等 diagnostics 契约卡（另案） |
+| `max_retries` deadReason 直达路径无单测 | 中——current implementation requires 7 attempts + real backoff delays; can be tested via fake timers + direct state injection (vi.advanceTimersByTime, manually set attempts=6, mock 409 response) | 计划纳入下一轮 C1 补充卡 |
+| client-diagnostics 当前不上报 deadReason | 中——deadReason 仅在 Dexie 落库；生产 Vercel Logs 无法观测 dead/superseded 计数 | diagnostics 数据与生产日志口径统一：两者均不统计 dead/superseded，直到 diagnostics 契约落地（另案） |
+| 跨 kind 并发无隔离测试 | 低 | 记录，生产观察期实证 |
 
 ## 结论
 
