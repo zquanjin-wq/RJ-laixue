@@ -113,6 +113,20 @@ interface SceneActionsResult {
   error?: string;
 }
 
+export function getPreviousSpeechesForOutline(scenes: Scene[], outlineOrder: number): string[] {
+  const previousScene = scenes
+    .filter((scene) => scene.order < outlineOrder)
+    .reduce<
+      Scene | undefined
+    >((latest, scene) => (!latest || scene.order > latest.order ? scene : latest), undefined);
+
+  return previousScene
+    ? ((previousScene.actions || []) as Action[])
+        .filter((action): action is SpeechAction => action.type === 'speech')
+        .map((action) => action.text)
+    : [];
+}
+
 type ClientRetryOptions<T> = Partial<
   Omit<GenerationRetryOptions<T>, 'label' | 'shouldRetryResult' | 'signal'>
 >;
@@ -569,6 +583,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
   const abortRef = useRef(false);
   const generatingRef = useRef(false);
   const mediaAbortRef = useRef<AbortController | null>(null);
+  const retryingOutlineIdsRef = useRef(new Set<string>());
   const fetchAbortRef = useRef<AbortController | null>(null);
   const lastParamsRef = useRef<GenerationParams | null>(null);
   const generateRemainingRef = useRef<((params: GenerationParams) => Promise<void>) | null>(null);
@@ -1029,7 +1044,8 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       const state = store.getState();
       const outline = state.failedOutlines.find((o) => o.id === outlineId);
       const params = lastParamsRef.current;
-      if (!outline || !state.stage || !params) return;
+      if (!outline || !state.stage || !params || retryingOutlineIdsRef.current.has(outlineId))
+        return;
 
       // Regen-lock (#571): never silently replace a scene that is open in
       // edit mode. Failed outlines have no completed scene yet so this is
@@ -1046,6 +1062,8 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       ) {
         return;
       }
+
+      retryingOutlineIdsRef.current.add(outlineId);
 
       const removeGeneratingOutline = () => {
         const current = store.getState().generatingOutlines;
@@ -1102,13 +1120,10 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         }
 
         // Step 2: Actions
-        const sortedScenes = [...store.getState().scenes].sort((a, b) => a.order - b.order);
-        const lastScene = sortedScenes[sortedScenes.length - 1];
-        const previousSpeeches = lastScene
-          ? ((lastScene.actions || []) as Action[])
-              .filter((a): a is SpeechAction => a.type === 'speech')
-              .map((a) => a.text)
-          : [];
+        const previousSpeeches = getPreviousSpeechesForOutline(
+          store.getState().scenes,
+          outline.order,
+        );
 
         const actionsResult = await fetchSceneActions(
           {
@@ -1172,6 +1187,8 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         if (!isAbortError(err)) {
           markOutlineFailed(outline);
         }
+      } finally {
+        retryingOutlineIdsRef.current.delete(outlineId);
       }
     },
     [store],

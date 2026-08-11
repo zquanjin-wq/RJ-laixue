@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { SceneOutline } from '@/lib/types/generation';
+import type { Scene } from '@/lib/types/stage';
 
 const mocks = vi.hoisted(() => ({
   getCurrentModelConfig: vi.fn(),
@@ -70,6 +71,32 @@ function jsonResponse(status: number, body: unknown) {
     status,
     statusText: status === 429 ? 'Too Many Requests' : status === 401 ? 'Unauthorized' : 'OK',
     json: async () => body,
+  };
+}
+
+function makeScene(order: number, speech: string): Scene {
+  return {
+    id: `scene-${order}`,
+    stageId: 'stage-1',
+    type: 'slide',
+    title: `Scene ${order}`,
+    order,
+    actions: [{ id: `speech-${order}`, type: 'speech', text: speech }],
+    content: {
+      type: 'slide',
+      canvas: {
+        id: `canvas-${order}`,
+        viewportSize: 1000,
+        viewportRatio: 0.5625,
+        theme: {
+          backgroundColor: '#fff',
+          themeColors: ['#000'],
+          fontColor: '#000',
+          fontName: 'Inter',
+        },
+        elements: [],
+      },
+    },
   };
 }
 
@@ -204,5 +231,26 @@ describe('browser scene generation retry wrappers', () => {
         format: 'wav',
       }),
     );
+  });
+});
+
+describe('retry speech context selection', () => {
+  it('uses the nearest completed predecessor instead of a later scene', async () => {
+    const { getPreviousSpeechesForOutline } = await import('@/lib/hooks/use-scene-generator');
+
+    expect(
+      getPreviousSpeechesForOutline(
+        [makeScene(1, 'first'), makeScene(3, 'third'), makeScene(4, 'fourth')],
+        2,
+      ),
+    ).toEqual(['first']);
+  });
+
+  it('falls back to an earlier completed scene and returns empty for the first page', async () => {
+    const { getPreviousSpeechesForOutline } = await import('@/lib/hooks/use-scene-generator');
+    const scenes = [makeScene(1, 'first'), makeScene(2, 'second'), makeScene(4, 'fourth')];
+
+    expect(getPreviousSpeechesForOutline(scenes, 3)).toEqual(['second']);
+    expect(getPreviousSpeechesForOutline(scenes, 1)).toEqual([]);
   });
 });

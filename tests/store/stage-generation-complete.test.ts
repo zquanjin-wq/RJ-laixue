@@ -75,6 +75,81 @@ afterEach(() => {
   useStageStore.getState().clearStore();
 });
 
+describe('addScene generation upsert', () => {
+  it('inserts a retried scene at its outline position without globally sorting manual order', () => {
+    useStageStore.setState({
+      stage: makeStage(),
+      scenes: [makeSlideScene('one', 1), makeSlideScene('three', 3), makeSlideScene('four', 4)],
+      outlines: [makeOutline(1), makeOutline(2), makeOutline(3), makeOutline(4)],
+      generatingOutlines: [makeOutline(2)],
+    });
+
+    useStageStore.getState().addScene(makeSlideScene('two', 2));
+
+    expect(useStageStore.getState().scenes.map((scene) => scene.order)).toEqual([1, 2, 3, 4]);
+    expect(useStageStore.getState().generatingOutlines).toEqual([]);
+  });
+
+  it('replaces an existing generated scene for the same outline order', () => {
+    useStageStore.setState({
+      stage: makeStage(),
+      scenes: [makeSlideScene('one', 1), makeSlideScene('old-two', 2), makeSlideScene('three', 3)],
+      outlines: [makeOutline(1), makeOutline(2), makeOutline(3)],
+    });
+
+    useStageStore.getState().addScene(makeSlideScene('new-two', 2));
+
+    expect(useStageStore.getState().scenes.map((scene) => scene.id)).toEqual([
+      'one',
+      'new-two',
+      'three',
+    ]);
+  });
+
+  it('replaces by scene id without duplicating a late completion', () => {
+    useStageStore.setState({
+      stage: makeStage(),
+      scenes: [makeSlideScene('one', 1), makeSlideScene('two', 2), makeSlideScene('three', 3)],
+      outlines: [makeOutline(1), makeOutline(2), makeOutline(3)],
+    });
+
+    const updated = makeSlideScene('two', 2);
+    updated.title = 'updated two';
+    useStageStore.getState().addScene(updated);
+
+    expect(useStageStore.getState().scenes).toHaveLength(3);
+    expect(useStageStore.getState().scenes[1].title).toBe('updated two');
+  });
+
+  it('preserves persisted scene array order on reload after a retried insertion', async () => {
+    loadStageDataMock.mockResolvedValue({
+      stage: makeStage(),
+      scenes: [
+        makeSlideScene('one', 1),
+        makeSlideScene('two', 2),
+        makeSlideScene('three', 3),
+        makeSlideScene('four', 4),
+      ],
+      currentSceneId: 'one',
+      chats: [],
+    });
+    stageOutlinesGet.mockResolvedValue({
+      stageId: 'stage-1',
+      outlines: [makeOutline(1), makeOutline(2), makeOutline(3), makeOutline(4)],
+      generationComplete: true,
+    });
+
+    await useStageStore.getState().loadFromStorage('stage-1');
+
+    expect(useStageStore.getState().scenes.map((scene) => scene.id)).toEqual([
+      'one',
+      'two',
+      'three',
+      'four',
+    ]);
+    expect(useStageStore.getState().generatingOutlines).toEqual([]);
+  });
+});
 describe('generationComplete', () => {
   it('defaults to false', () => {
     expect(useStageStore.getState().generationComplete).toBe(false);

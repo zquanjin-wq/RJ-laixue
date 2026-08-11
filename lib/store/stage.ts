@@ -205,7 +205,45 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       );
       return;
     }
-    const scenes = [...get().scenes, migrateScene(scene)];
+    const generatedScene = migrateScene(scene);
+    const currentScenes = get().scenes;
+    const outlines = get().outlines;
+    const outlineIndex = outlines.findIndex(
+      (outline) =>
+        outline.id === generatedScene.outlineId ||
+        (!generatedScene.outlineId && outline.order === generatedScene.order),
+    );
+    const existingIndex = currentScenes.findIndex(
+      (currentScene) =>
+        currentScene.id === generatedScene.id ||
+        (generatedScene.outlineId
+          ? currentScene.outlineId === generatedScene.outlineId
+          : currentScene.order === generatedScene.order),
+    );
+
+    let scenes: Scene[];
+    if (existingIndex >= 0) {
+      scenes = currentScenes.map((currentScene, index) =>
+        index === existingIndex ? generatedScene : currentScene,
+      );
+    } else if (outlineIndex >= 0) {
+      const followingSceneIndex = currentScenes.findIndex((currentScene) => {
+        const currentOutlineIndex = outlines.findIndex(
+          (outline) =>
+            outline.id === currentScene.outlineId ||
+            (!currentScene.outlineId && outline.order === currentScene.order),
+        );
+        return currentOutlineIndex > outlineIndex;
+      });
+      scenes = [...currentScenes];
+      scenes.splice(
+        followingSceneIndex < 0 ? scenes.length : followingSceneIndex,
+        0,
+        generatedScene,
+      );
+    } else {
+      scenes = [...currentScenes, generatedScene];
+    }
     // Remove the matching outline from generatingOutlines (match by order)
     const generatingOutlines = get().generatingOutlines.filter((o) => o.order !== scene.order);
     // Auto-switch from pending page to the newly generated scene
