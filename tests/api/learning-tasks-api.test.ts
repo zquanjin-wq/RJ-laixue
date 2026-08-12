@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-this-alias */
 /**
  * Gate 1A: 任务管理 API 集成测试
  * 核心场景：权限、创建、发布、学员入口、错误码

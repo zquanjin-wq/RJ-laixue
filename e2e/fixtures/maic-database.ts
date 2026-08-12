@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 // lib/utils/database.ts. Dexie stores logical version 15 as native IndexedDB
 // version 150 (logical version × 10); using 15 here would make Dexie replay
 // an incompatible upgrade path against this already-current test schema.
-const MAIC_DATABASE_VERSION = 15 * 10;
+const MAIC_DATABASE_VERSION = 18 * 10;
 
 const MAIC_STORES: ReadonlyArray<{
   name: string;
@@ -32,6 +32,20 @@ const MAIC_STORES: ReadonlyArray<{
       { name: 'stageId', keyPath: 'stageId' },
       { name: '[stageId+createdAt]', keyPath: ['stageId', 'createdAt'] },
     ],
+  },
+  {
+    name: 'playbackVisits',
+    primaryKey: 'visitId',
+    indexes: [
+      { name: '[stageId+status]', keyPath: ['stageId', 'status'] },
+      { name: '[tabOwnerId+stageId]', keyPath: ['tabOwnerId', 'stageId'] },
+      { name: 'completedCredentialAt', keyPath: 'completedCredentialAt' },
+    ],
+  },
+  {
+    name: 'playbackVisitStates',
+    primaryKey: 'visitId',
+    indexes: [{ name: '[stageId+visitId]', keyPath: ['stageId', 'visitId'] }],
   },
   { name: 'playbackState', primaryKey: 'stageId' },
   { name: 'stageOutlines', primaryKey: 'stageId' },
@@ -63,6 +77,26 @@ const MAIC_STORES: ReadonlyArray<{
       { name: '[stageId+updatedAt]', keyPath: ['stageId', 'updatedAt'] },
     ],
   },
+  {
+    name: 'runtimeOutbox',
+    indexes: [
+      { name: 'kind', keyPath: 'kind' },
+      { name: 'status', keyPath: 'status' },
+      { name: 'createdAt', keyPath: 'createdAt' },
+      { name: 'semanticKey', keyPath: 'semanticKey' },
+      { name: 'sessionId', keyPath: 'sessionId' },
+      { name: 'sequence', keyPath: 'sequence' },
+      { name: 'dependsOnEntryId', keyPath: 'dependsOnEntryId' },
+      { name: '[kind+status]', keyPath: ['kind', 'status'] },
+      { name: '[sessionId+sequence]', keyPath: ['sessionId', 'sequence'] },
+    ],
+  },
+  {
+    name: 'succeededEntries',
+    primaryKey: 'entryId',
+    indexes: [{ name: 'deletedAt', keyPath: 'deletedAt' }],
+  },
+  { name: 'runtimeChainHeads', primaryKey: 'sessionId' },
 ];
 
 /** Create the current MAIC schema before a test navigates to the application. */

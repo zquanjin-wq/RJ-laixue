@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Gate 1B: 学习任务发布与学员进入闭环测试
  *

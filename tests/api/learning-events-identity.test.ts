@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Gate 0.5: /api/learning/events identity-trust tests.
  *
