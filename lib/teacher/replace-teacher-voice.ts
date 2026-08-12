@@ -10,6 +10,8 @@ interface ReplaceTeacherVoiceInput {
   scenes: Scene[];
   outlines: unknown[];
   voice: StageTeacherVoiceConfig;
+  signal?: AbortSignal;
+  onProgress?: (progress: { completed: number; total: number; sceneId: string }) => void;
 }
 
 /**
@@ -23,6 +25,8 @@ export async function replaceTeacherVoice({
   scenes,
   outlines,
   voice,
+  signal,
+  onProgress,
 }: ReplaceTeacherVoiceInput) {
   const stageId = stage.id;
   // The signed-upload API requires a course row to exist. Persist the current
@@ -46,6 +50,8 @@ export async function replaceTeacherVoice({
 
   const publish = await publishSceneAudioAssets(stageId, scenes, voice, {
     forceRegenerate: true,
+    signal,
+    onProgress,
   });
   const validation = validatePublishedAudioAssets(publish.scenes);
   if (!validation.ok || publish.failed.length || publish.missing.length) {

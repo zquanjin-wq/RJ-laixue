@@ -43,6 +43,8 @@ export function TeacherVoiceControl() {
   const [selectedVoice, setSelectedVoice] = useState(courseVoice?.voiceId || voices[0]?.id || '');
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   useEffect(() => {
     if (!open) setSelectedVoice(courseVoice?.voiceId || voices[0]?.id || '');
@@ -55,7 +57,10 @@ export function TeacherVoiceControl() {
 
   async function handleReplace() {
     if (!stage || !selectedVoice || selectedVoice === courseVoice?.voiceId) return;
+    const controller = new AbortController();
     setRunning(true);
+    setAbortController(controller);
+    setProgress(null);
     try {
       const provider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
       const voice = {
@@ -63,15 +68,29 @@ export function TeacherVoiceControl() {
         voiceId: selectedVoice,
         modelId: providerConfigs[providerId]?.modelId || provider?.defaultModelId || undefined,
       };
-      const result = await replaceTeacherVoice({ stage, scenes, outlines, voice });
+      const result = await replaceTeacherVoice({
+        stage,
+        scenes,
+        outlines,
+        voice,
+        signal: controller.signal,
+        onProgress: ({ completed, total }) => setProgress({ completed, total }),
+      });
       setScenes(result.scenes);
       updateStage(result.stage);
       setOpen(false);
       toast.success('AI 老师音色已更新，配音已重新生成并保存到云端');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '重新配音失败');
+      toast.error(
+        controller.signal.aborted
+          ? '已停止重新配音，课程继续使用原音色'
+          : error instanceof Error
+            ? error.message
+            : '重新配音失败',
+      );
     } finally {
       setRunning(false);
+      setAbortController(null);
     }
   }
 
@@ -90,7 +109,7 @@ export function TeacherVoiceControl() {
         <DialogHeader>
           <DialogTitle>更换 AI 老师音色</DialogTitle>
           <DialogDescription>
-            确认后会为整门课程重新生成讲解配音并上传云端。完成前将保留当前音色和音频。
+            确认后会为整门课程重新生成讲解配音并上传云端。完成前将保留当前音色和音频；可随时停止，已上传的临时文件不会影响课程。
           </DialogDescription>
         </DialogHeader>
         <Select value={selectedVoice} onValueChange={setSelectedVoice} disabled={running}>
@@ -106,15 +125,23 @@ export function TeacherVoiceControl() {
           </SelectContent>
         </Select>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={running}>
-            取消
+          <Button
+            variant="outline"
+            onClick={() => (running ? abortController?.abort() : setOpen(false))}
+            disabled={running && !abortController}
+          >
+            {running ? '停止并保留原音色' : '取消'}
           </Button>
           <Button
             onClick={handleReplace}
             disabled={running || !selectedVoice || selectedVoice === courseVoice?.voiceId}
           >
             {running && <Loader2 className="mr-2 size-4 animate-spin" />}
-            {running ? '正在重新生成并保存…' : '确认更换并重新配音'}
+            {running
+              ? progress
+                ? `正在生成配音 ${progress.completed}/${progress.total}…`
+                : '正在准备重新配音…'
+              : '确认更换并重新配音'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -103,6 +103,10 @@ export interface TeacherVoiceConfig {
 export interface PublishSceneAudioAssetsOptions {
   /** Ignore every existing audio reference and synthesize with the supplied voice. */
   forceRegenerate?: boolean;
+  /** Stop the in-flight revoice without committing a new course snapshot. */
+  signal?: AbortSignal;
+  /** Progress for the required per-speech audio assets (not optional narration). */
+  onProgress?: (progress: { completed: number; total: number; sceneId: string }) => void;
 }
 
 async function resolveTtsConfigForPublish(
@@ -225,6 +229,7 @@ async function generateTTSForText(
   audioId: string,
   teacherVoiceConfig?: TeacherVoiceConfig | null,
   sceneId?: string,
+  signal?: AbortSignal,
 ): Promise<{
   data: ArrayBuffer;
   format: string;
@@ -245,6 +250,11 @@ async function generateTTSForText(
         ttsApiKey: ttsConfig.apiKey || undefined,
         ttsBaseUrl: ttsConfig.baseUrl || undefined,
       }),
+      // A Vercel function can terminate while the browser fetch stays pending.
+      // Never leave a course-level revoice spinner running indefinitely.
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(45_000)])
+        : AbortSignal.timeout(45_000),
     }),
   );
 
@@ -381,6 +391,23 @@ export async function publishSceneAudioAssets(
   const missing: MissingAudioItem[] = [];
   const failed: FailedAudioItem[] = [];
   const regenerated: RegeneratedAudioItem[] = [];
+  const requiredSpeechTotal = nextScenes.reduce(
+    (total, scene) =>
+      total +
+      (!options.forceRegenerate && isInteractiveScene(scene)
+        ? 0
+        : (scene.actions ?? []).filter(isSpeechAction).length),
+    0,
+  );
+  let requiredSpeechCompleted = 0;
+  const reportSpeechProgress = (sceneId: string) => {
+    requiredSpeechCompleted++;
+    options.onProgress?.({
+      completed: requiredSpeechCompleted,
+      total: requiredSpeechTotal,
+      sceneId,
+    });
+  };
 
   /**
    * Compute a content hash for TTS idempotency: same (voice, speed, text)
@@ -408,6 +435,7 @@ export async function publishSceneAudioAssets(
   }[] = [];
 
   for (const scene of nextScenes) {
+    if (options.signal?.aborted) throw new DOMException('已停止重新配音', 'AbortError');
     // Normal publishing skips interactive scenes for mobile podcast mode.
     // A deliberate course revoice must still replace every teacher speech
     // action so desktop/classroom playback cannot retain the previous voice.
@@ -442,6 +470,7 @@ export async function publishSceneAudioAssets(
           audioId: audioId || '',
           audioUrl: speechAction.audioUrl,
         });
+        reportSpeechProgress(sceneId);
         continue;
       }
 
@@ -508,6 +537,7 @@ export async function publishSceneAudioAssets(
           audioId: audioId || `(auto-${Date.now()})`,
           reason: '无法提取章节文字内容（speechAction.text / narrationText / content 均为空）',
         });
+        reportSpeechProgress(sceneId);
         continue;
       }
 
@@ -549,6 +579,7 @@ export async function publishSceneAudioAssets(
           regenAudioId,
           teacherVoiceConfig,
           sceneId,
+          options.signal,
         );
 
         // Defer upload to batch pool (flushed at end of function).
@@ -592,6 +623,9 @@ export async function publishSceneAudioAssets(
 
         log.info(`TTS regenerated (queued for batch upload): ${regenAudioId}`);
       } catch (error) {
+        if (options.signal?.aborted) {
+          throw new DOMException('已停止重新配音', 'AbortError');
+        }
         const errMsg = error instanceof Error ? error.message : String(error);
         log.error(`TTS regeneration failed for ${regenAudioId}:`, errMsg);
 
@@ -603,6 +637,7 @@ export async function publishSceneAudioAssets(
           error: `TTS 重新生成失败: ${errMsg}`,
         });
       }
+      reportSpeechProgress(sceneId);
     }
 
     // ── Scene-level narration audio (best-effort, non-blocking) ──
