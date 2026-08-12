@@ -37,9 +37,7 @@ export default async function StudentCoursesPage() {
     return (
       <main className="min-h-screen bg-background p-10">
         <div className="mx-auto max-w-3xl text-sm text-muted-foreground">
-          {
-            Please bind your learner account with the teacher invitation link.
-          }
+          <>Please bind your learner account with the teacher invitation link.</>
         </div>
       </main>
     );
@@ -72,15 +70,11 @@ export default async function StudentCoursesPage() {
     <main className="min-h-screen bg-background px-4 py-10">
       <div className="mx-auto max-w-3xl space-y-6">
         <header className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            My learning tasks
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">My learning tasks</h1>
           <p className="text-sm text-muted-foreground">
-            Welcome, 
+            Welcome,
             {student.name}
-            {
-              . Your assigned tasks appear here.
-            }
+            <>. Your assigned tasks appear here.</>
           </p>
         </header>
         {(tasks ?? []).length === 0 ? (
@@ -88,9 +82,7 @@ export default async function StudentCoursesPage() {
             <CardHeader>
               <CardTitle>No learning tasks yet</CardTitle>
               <CardDescription>
-                {
-                  Tasks appear here after your teacher assigns you.
-                }
+                <>Tasks appear here after your teacher assigns you.</>
               </CardDescription>
             </CardHeader>
           </Card>
@@ -99,9 +91,7 @@ export default async function StudentCoursesPage() {
             {(tasks ?? []).map((task) => (
               <Card key={task.id} className="rounded-lg">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">
-                    {task.title || 'Untitled task'}
-                  </CardTitle>
+                  <CardTitle className="text-base">{task.title || 'Untitled task'}</CardTitle>
                   {task.description && (
                     <CardDescription className="line-clamp-2">{task.description}</CardDescription>
                   )}
@@ -109,15 +99,13 @@ export default async function StudentCoursesPage() {
                 <CardContent className="flex flex-wrap items-center gap-3">
                   {task.due_at && (
                     <span className="text-xs text-muted-foreground">
-                      Due: 
+                      Due:
                       {new Date(task.due_at).toLocaleString('zh-CN')}
                     </span>
                   )}
                   <div className="ml-auto">
                     <Button asChild size="sm">
-                      <Link href={`/learn/${task.share_token}`}>
-                        Start learning
-                      </Link>
+                      <Link href={`/learn/${task.share_token}`}>Start learning</Link>
                     </Button>
                   </div>
                 </CardContent>
