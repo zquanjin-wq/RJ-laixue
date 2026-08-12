@@ -95,7 +95,7 @@ describe('GET /api/admin/learning-tasks/[id]/report', () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.data.overview).toMatchObject({ total: 2, completed: 1, effectiveSeconds: 30 });
-    expect(json.data.chapters[0]).toMatchObject({ completedLearners: 1, questionsAsked: 1 });
+    expect(json.data.chapters).toBeUndefined();
     expect(json.data.learners[0].name).toBe('张三');
   });
 });

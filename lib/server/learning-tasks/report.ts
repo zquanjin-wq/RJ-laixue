@@ -34,8 +34,8 @@ export function learnerDisplayStatus(
 export function buildTaskReport(input: {
   dueAt: string | null;
   learners: LearnerReportRow[];
-  events: LearningEventRow[];
-  scenes: ReportScene[];
+  events?: LearningEventRow[];
+  scenes?: ReportScene[];
   now?: Date;
 }) {
   const now = input.now ?? new Date();
@@ -51,13 +51,14 @@ export function buildTaskReport(input: {
   const overdue = learners.filter((learner) => learner.displayStatus === 'overdue').length;
   const effectiveSeconds = learners.reduce((sum, learner) => sum + learner.effectiveSeconds, 0);
 
-  const chapters = input.scenes.map((scene) => {
+  const events = input.events ?? [];
+  const chapters = (input.scenes ?? []).map((scene) => {
     const completedBy = new Set(
-      input.events
+      events
         .filter((event) => event.event_type === 'scene_completed' && event.scene_id === scene.id)
         .map((event) => event.student_id),
     );
-    const questionsAsked = input.events.filter(
+    const questionsAsked = events.filter(
       (event) => event.event_type === 'question_asked' && event.scene_id === scene.id,
     ).length;
     return {

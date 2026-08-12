@@ -23,13 +23,6 @@ type ReportData = {
     effectiveSeconds: number;
     lastSeenAt: string | null;
   }>;
-  chapters: Array<{
-    id: string;
-    title: string;
-    completedLearners: number;
-    completionRate: number;
-    questionsAsked: number;
-  }>;
   courses: Array<{
     courseId: string;
     title: string;
@@ -66,7 +59,7 @@ export function TaskReport({ taskId }: { taskId: string }) {
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-base">学习概览</CardTitle>
-          <CardDescription>基于学员学习记录实时汇总。</CardDescription>
+          <CardDescription>基于本任务内学员的学习记录实时汇总。</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -85,7 +78,7 @@ export function TaskReport({ taskId }: { taskId: string }) {
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-base">课程组合进度</CardTitle>
-          <CardDescription>以任务为范围查看每门课程的学习情况。</CardDescription>
+          <CardDescription>以本任务为范围，查看每门课程的学习率与完成率。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {report.courses.map((course) => (
@@ -93,7 +86,7 @@ export function TaskReport({ taskId }: { taskId: string }) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="font-medium">
-                    第 {course.position} 门·{course.title}
+                    第 {course.position} 门：{course.title}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {course.isRequired ? '必修' : '选修'} · 已开始 {course.startedCount}/
@@ -161,35 +154,6 @@ export function TaskReport({ taskId }: { taskId: string }) {
               <p className="py-4 text-sm text-muted-foreground">暂未指定学员。</p>
             )}
           </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-lg">
-        <CardHeader>
-          <CardTitle className="text-base">章节分析</CardTitle>
-          <CardDescription>仅展示课件页面完成情况与提问次数。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {report.chapters.length === 0 ? (
-            <p className="text-sm text-muted-foreground">发布后将按课程页面展示分析。</p>
-          ) : (
-            <div className="space-y-3">
-              {report.chapters.map((chapter, index) => (
-                <div
-                  key={chapter.id}
-                  className="flex items-center justify-between gap-4 border-b pb-3 text-sm last:border-0 last:pb-0"
-                >
-                  <span className="min-w-0 truncate">
-                    {index + 1}. {chapter.title}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    完成 {chapter.completedLearners} 人（{chapter.completionRate}%）· 提问{' '}
-                    {chapter.questionsAsked} 次
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </CardContent>
       </Card>
     </section>
