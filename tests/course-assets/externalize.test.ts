@@ -36,4 +36,24 @@ describe('externalizeCourseAssets', () => {
     expect(uploadCourseDataUri).not.toHaveBeenCalled();
     expect(result.converted).toEqual({ images: 0, audio: 0 });
   });
+
+  it('externalizes nested canvas media and reuses a single upload for duplicate data URIs', async () => {
+    uploadCourseDataUri.mockClear();
+    const inlineImage = 'data:image/png;base64,NESTED';
+    const scene = {
+      content: {
+        type: 'slide',
+        canvas: { elements: [{ id: 'image-1', props: { src: inlineImage } }, { id: 'image-2', src: inlineImage }] },
+      },
+    };
+
+    const result = await externalizeCourseAssets('course-3', {}, [scene]);
+
+    expect(uploadCourseDataUri).toHaveBeenCalledTimes(1);
+    expect(result.converted).toEqual({ images: 1, audio: 0 });
+    const elements = ((result.scenes[0].content as { canvas: { elements: Array<{ props?: { src?: string }; src?: string }> } }).canvas.elements);
+    expect(elements[0].props?.src).toMatch(/^https:\/\//);
+    expect(elements[1].src).toMatch(/^https:\/\//);
+    expect((scene.content.canvas.elements[0].props?.src)).toBe(inlineImage);
+  });
 });

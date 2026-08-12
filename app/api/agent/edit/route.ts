@@ -17,6 +17,7 @@ import { buildToolset } from '@/lib/agent/tools/registry';
 import { callLLM } from '@/lib/ai/llm';
 import { createLogger } from '@/lib/logger';
 import type { SceneContext } from '@/lib/agent/tools/regenerate-scene-actions';
+import type { SceneOutline } from '@/lib/types/generation';
 
 const log = createLogger('MAIC Agent');
 
@@ -49,6 +50,8 @@ interface AgentEditBody {
    * relying on model-fabricated arguments.
    */
   sceneContextMap?: SceneContextMap;
+  /** Shared stage outline list; avoids repeating it once per scene. */
+  allOutlines?: SceneOutline[];
   /**
    * Current canvas selection (element ids) for selection-aware `edit_elements`.
    * Client-sourced from `useCanvasStore.activeElementIdList`.
@@ -149,7 +152,14 @@ export async function POST(req: NextRequest) {
     return r.text;
   };
 
-  const sceneContextMap: SceneContextMap = body.sceneContextMap ?? {};
+  const rawSceneContextMap = body.sceneContextMap ?? {};
+  const sharedOutlines = Array.isArray(body.allOutlines) ? body.allOutlines : null;
+  const sceneContextMap: SceneContextMap = Object.fromEntries(
+    Object.entries(rawSceneContextMap).map(([sceneId, context]) => [
+      sceneId,
+      sharedOutlines ? { ...context, allOutlines: sharedOutlines } : context,
+    ]),
+  ) as SceneContextMap;
   const selectionIds: readonly string[] = Array.isArray(body.selection)
     ? body.selection.filter((id): id is string => typeof id === 'string')
     : [];

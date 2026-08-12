@@ -3,6 +3,7 @@ import type { StageTeacherVoiceConfig } from './apply-teacher-voice';
 import { db } from '@/lib/utils/database';
 import { publishSceneAudioAssets, validatePublishedAudioAssets } from '@/lib/audio/audio-publish';
 import { externalizeCourseAssets } from '@/lib/course-assets/externalize';
+import { prepareCourseForAssetUploads } from '@/lib/course-assets/prepare-course';
 import { stripRuntimeOnly } from '@/lib/dsl-extensions/serialize';
 
 interface ReplaceTeacherVoiceInput {
@@ -29,26 +30,21 @@ export async function replaceTeacherVoice({
   onProgress,
 }: ReplaceTeacherVoiceInput) {
   const stageId = stage.id;
-  // The signed-upload API requires a course row to exist. Persist the current
-  // snapshot as a recoverable draft first; it intentionally keeps the old
-  // voice/audio until the complete revoice snapshot is ready.
-  const prepareResponse = await fetch('/api/courses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: stageId,
-      title: stage.name?.trim?.() || '未命名课程',
-      topic: stage.name?.trim?.() || '',
-      saveState: 'draft',
-      data: { stage, scenes, outlines },
-    }),
+  // Externalize inline media before writing the recovery draft. New courses
+  // use a pending namespace, so the deployment gateway never receives a
+  // Base64-heavy JSON body before the persistent row exists.
+  const prepared = await prepareCourseForAssetUploads({
+    id: stageId,
+    title: stage.name?.trim?.() || '\u672a\u547d\u540d\u8bfe\u7a0b',
+    topic: stage.name?.trim?.() || '',
+    stage: stage as unknown as Record<string, unknown>,
+    scenes: scenes as unknown as Record<string, unknown>[],
+    outlines,
   });
-  const prepareJson = await prepareResponse.json().catch(() => null);
-  if (!prepareResponse.ok || !prepareJson?.success) {
-    throw new Error(prepareJson?.error || '无法准备云端课程，尚未开始重新配音');
-  }
+  const preparedStage = prepared.stage as unknown as Stage;
+  const preparedScenes = prepared.scenes as unknown as Scene[];
 
-  const publish = await publishSceneAudioAssets(stageId, scenes, voice, {
+  const publish = await publishSceneAudioAssets(stageId, preparedScenes, voice, {
     forceRegenerate: true,
     signal,
     onProgress,
@@ -59,7 +55,7 @@ export async function replaceTeacherVoice({
     throw new Error(`重新配音未完成（${count} 处失败），课程仍保留原音色`);
   }
 
-  const nextStage = { ...stage, teacherVoiceConfig: voice } as Stage & {
+  const nextStage = { ...preparedStage, teacherVoiceConfig: voice } as Stage & {
     teacherVoiceConfig: StageTeacherVoiceConfig;
   };
   const externalized = await externalizeCourseAssets(
@@ -80,9 +76,16 @@ export async function replaceTeacherVoice({
       data: { stage: stageToSave, scenes: scenesToSave, outlines },
     }),
   });
-  const json = await response.json().catch(() => null);
+  const responseText = await response.text();
+  let json: { success?: boolean; error?: string } | null = null;
+  try {
+    json = JSON.parse(responseText) as { success?: boolean; error?: string };
+  } catch {
+    // The deployment gateway can return a plain-text error before Next.js.
+  }
   if (!response.ok || !json?.success) {
-    throw new Error(json?.error || '新配音保存至云端失败，课程仍保留原音色');
+    const detail = json?.error || responseText.slice(0, 200) || 'cloud save failed';
+    throw new Error(response.status === 413 ? 'Revoiced course is still too large to save.' : detail);
   }
 
   const now = Date.now();

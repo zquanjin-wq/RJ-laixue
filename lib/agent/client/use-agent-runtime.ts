@@ -56,6 +56,38 @@ import { useSceneRuntimeErrors } from '@/lib/store/scene-runtime-errors';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { editElementsApplyCorrectionKey } from './edit-elements-result';
 
+
+function stripInlineAssets(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === 'string' && /^data:(image|audio)\//i.test(value)) {
+    return '[inline asset omitted from AI context]';
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => stripInlineAssets(item, seen));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, stripInlineAssets(item, seen)]),
+  );
+}
+
+function compactSceneContent(content: unknown): unknown {
+  const sanitized = stripInlineAssets(content) as Record<string, unknown> | null;
+  if (!sanitized || typeof sanitized !== 'object') return sanitized;
+  if (sanitized.type !== 'slide') return { type: sanitized.type ?? 'unknown' };
+  const canvas = sanitized.canvas as Record<string, unknown> | undefined;
+  return {
+    type: 'slide',
+    canvas: {
+      background: canvas?.background,
+      elements: Array.isArray(canvas?.elements)
+        ? canvas.elements.map((element) => {
+            const item = element as Record<string, unknown>;
+            return { id: item.id, type: item.type, text: item.text, content: item.content };
+          })
+        : [],
+    },
+  };
+}
+
 export interface UseAgentRuntimeOptions {
   scene?: { id: string; title: string };
   isSendDisabled?: boolean;
@@ -537,12 +569,15 @@ export function useAgentRuntime(opts: UseAgentRuntimeOptions) {
         // title list. See resolveSceneOutline.
         const allOutlines = scenes.map((s) => resolveSceneOutline(s, outlines));
         const sceneContextMap: SceneContextMap = {};
+        const activeSceneId = opts.scene?.id;
         for (const scene of scenes) {
           const outline = resolveSceneOutline(scene, outlines);
           sceneContextMap[scene.id] = {
             outline,
-            allOutlines,
-            content: scene.content,
+            allOutlines: [],
+            content: (scene.id === activeSceneId
+              ? stripInlineAssets(scene.content)
+              : compactSceneContent(scene.content)) as typeof scene.content,
             stageId: scene.stageId,
             languageDirective: stage?.languageDirective,
             // Runtime errors the interactive iframe reported, so read_scene_content
@@ -570,6 +605,7 @@ export function useAgentRuntime(opts: UseAgentRuntimeOptions) {
             scene: opts.scene,
             history,
             sceneContextMap,
+            allOutlines,
             // Selection-aware edit_elements: prefer "this title" against the
             // current canvas selection (trusted client state, not model-authored).
             selection: useCanvasStore.getState().activeElementIdList,
@@ -580,7 +616,14 @@ export function useAgentRuntime(opts: UseAgentRuntimeOptions) {
           }),
           signal: abort.signal,
         });
-        if (!res.ok || !res.body) throw new Error(`agent request failed: ${res.status}`);
+        if (!res.ok || !res.body) {
+          const detail = (await res.text()).slice(0, 200);
+          throw new Error(
+            res.status === 413
+              ? '\u8bf7\u6c42\u8fc7\u5927\uff1a\u5df2\u81ea\u52a8\u7701\u7565\u5185\u8054\u5a92\u4f53\uff0c\u8bf7\u9009\u62e9\u5355\u4e2a\u9875\u9762\u540e\u91cd\u8bd5\u3002'
+              : detail || `agent request failed: ${res.status}`,
+          );
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();

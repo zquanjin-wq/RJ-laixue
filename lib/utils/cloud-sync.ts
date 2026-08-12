@@ -8,64 +8,24 @@ import {
 } from '@/lib/audio/audio-publish';
 import { createLogger } from '@/lib/logger';
 import { externalizeCourseAssets } from '@/lib/course-assets/externalize';
+import { prepareCourseForAssetUploads } from '@/lib/course-assets/prepare-course';
 import { stripRuntimeOnly } from '@/lib/dsl-extensions/serialize';
 
 const log = createLogger('CloudSync');
 
 async function readApiJson<T>(response: Response): Promise<T> {
-  const data = await response.json();
-  if (!response.ok || !data.success) {
-    throw new Error(data.error || '请求失败');
+  const text = await response.text();
+  let data: { success?: boolean; error?: string; data?: T } | null = null;
+  try {
+    data = JSON.parse(text) as { success?: boolean; error?: string; data?: T };
+  } catch {
+    // A proxy can reject an oversized payload before the route returns JSON.
+  }
+  if (!response.ok || !data?.success) {
+    const detail = data?.error || text.slice(0, 200) || 'HTTP ' + response.status;
+    throw new Error(response.status === 413 ? '?????????????????' : detail);
   }
   return data.data as T;
-}
-
-/**
- * Phase 0 helper for `saveStageToCloud`: ensure a course row exists in the
- * cloud before any audio asset upload runs.
- *
- * Background: production's `/api/course-assets/sign-upload` (introduced in
- * upstream commit 3d80b985, 2026-07-28) requires the course row to already
- * exist in the `courses` table — otherwise it returns 404 "课程不存在".
- * Saving used to upsert the course row at the very end (Phase 3 in this
- * module), so a brand-new course's first save hit a chicken-and-egg:
- * every audio upload → 404 → 166 failed → 18 missing-audio-url → save
- * blocked. By pre-creating an empty row here, the first sign-upload call
- * finds the row in place.
- *
- * `POST /api/courses` is itself an upsert, so calling it on an already-saved
- * course is a no-op safe re-run. The draft write is required before resource upload so later failures remain
- * recoverable.
- */
-async function ensureCourseRowOnCloud(
-  id: string,
-  title: string,
-  topic: string,
-  stage: unknown,
-  scenes: unknown,
-  outlines: unknown,
-): Promise<void> {
-  const probe = await fetch(`/api/courses/${encodeURIComponent(id)}`, { method: 'GET' });
-  if (!probe.ok && probe.status !== 404) {
-    throw new Error(`Course preparation failed: cloud probe returned HTTP ${probe.status}`);
-  }
-  log.info('Phase 0: course row missing on cloud — upserting full row', { id });
-  const create = await fetch('/api/courses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id,
-      title,
-      topic,
-      // Full payload — matches the historical Phase 3 save so an interrupted
-      // save leaves a populated (if slightly stale) row on the cloud,
-      // not a blank stub.
-      saveState: 'draft',
-      data: { stage, scenes, outlines },
-    }),
-  });
-  await readApiJson(create);
-  log.info('Phase 0: course row upserted', { id });
 }
 // ============================================================
 // 浠?IndexedDB 璇诲彇瀹屾暣璇剧▼鏁版嵁
@@ -137,7 +97,10 @@ async function collectStageData(stageId: string) {
 // 淇濆瓨璇剧▼鍒颁簯绔?
 // ============================================================
 export async function saveStageToCloud(stageId: string) {
-  const { id, title, topic, stage, scenes, outlines } = await collectStageData(stageId);
+  const collected = await collectStageData(stageId);
+  const { id, title, topic, outlines } = collected;
+  let stage = collected.stage;
+  let scenes = collected.scenes;
 
   // ── Phase 0: Ensure the course row exists on the cloud BEFORE we publish
   // any audio. Production's sign-upload endpoint (post upstream commit
@@ -155,7 +118,16 @@ export async function saveStageToCloud(stageId: string) {
   // have produced — i.e. fully populated, just stale. An empty stub would
   // surface in "我的创作" as a blank course and confuse anyone opening the
   // share link. Mirrors the pre-existing "save fails halfway" experience.
-  await ensureCourseRowOnCloud(id, title, topic, stage, scenes, outlines);
+  const prepared = await prepareCourseForAssetUploads({
+    id,
+    title,
+    topic,
+    stage: stage as unknown as Record<string, unknown>,
+    scenes: scenes as unknown as Record<string, unknown>[],
+    outlines,
+  });
+  stage = prepared.stage as unknown as typeof stage;
+  scenes = prepared.scenes as unknown as typeof scenes;
 
   // ── Phase 1: Publish audio assets (3-tier: skip / upload / regenerate) ──
   // Extract teacherVoiceConfig from stage so Tier 3 TTS regeneration uses the

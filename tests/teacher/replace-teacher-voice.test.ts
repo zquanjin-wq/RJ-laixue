@@ -12,6 +12,9 @@ vi.mock('@/lib/audio/audio-publish', () => ({
 vi.mock('@/lib/course-assets/externalize', () => ({
   externalizeCourseAssets: vi.fn(async (_id, stage, scenes) => ({ stage, scenes })),
 }));
+vi.mock('@/lib/course-assets/prepare-course', () => ({
+  prepareCourseForAssetUploads: vi.fn(async ({ stage, scenes }) => ({ stage, scenes })),
+}));
 vi.mock('@/lib/dsl-extensions/serialize', () => ({ stripRuntimeOnly: (value: unknown) => value }));
 vi.mock('@/lib/utils/database', () => ({
   db: {
@@ -59,11 +62,8 @@ describe('replaceTeacherVoice', () => {
       outlines: [],
       voice,
     });
-    expect(fetch).toHaveBeenCalledTimes(2);
-    const firstBody = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
-    const finalBody = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body);
-    expect(firstBody.saveState).toBe('draft');
-    expect(firstBody.data.stage.teacherVoiceConfig.voiceId).toBe('old');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const finalBody = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
     expect(publish).toHaveBeenCalledWith('course-1', scenes, voice, { forceRegenerate: true });
     expect(finalBody.saveState).toBe('ready');
     expect(finalBody.data.stage.teacherVoiceConfig.voiceId).toBe('new');
@@ -75,7 +75,7 @@ describe('replaceTeacherVoice', () => {
     await expect(
       replaceTeacherVoice({ stage: stage as never, scenes: scenes as never, outlines: [], voice }),
     ).rejects.toThrow('课程仍保留原音色');
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
     expect(stagePut).not.toHaveBeenCalled();
   });
 
