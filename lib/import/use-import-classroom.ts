@@ -233,6 +233,18 @@ export function useImportClassroom(onSuccess?: () => void) {
         });
         await db.scenes.bulkPut(sceneRecords);
 
+        // Imported classrooms already contain their final scenes. Persist the
+        // same completion marker used by generated classrooms so reopening an
+        // imported course exposes the existing edit/save-to-cloud flow instead
+        // of treating it as an interrupted generation.
+        await db.stageOutlines.put({
+          stageId: newStageId,
+          outlines: [],
+          generationComplete: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+
         // 6. Done
         setPhase('done');
         toast.success(t('import.success'), { id: toastId });

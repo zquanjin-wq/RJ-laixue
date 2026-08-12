@@ -149,6 +149,25 @@ describe('addScene generation upsert', () => {
     ]);
     expect(useStageStore.getState().generatingOutlines).toEqual([]);
   });
+
+  it('keeps an imported classroom complete when it has no generation outlines', async () => {
+    loadStageDataMock.mockResolvedValue({
+      stage: makeStage(),
+      scenes: [makeSlideScene('imported', 0)],
+      currentSceneId: 'imported',
+      chats: [],
+    });
+    stageOutlinesGet.mockResolvedValue({
+      stageId: 'stage-1',
+      outlines: [],
+      generationComplete: true,
+    });
+
+    await useStageStore.getState().loadFromStorage('stage-1');
+
+    expect(useStageStore.getState().generationComplete).toBe(true);
+    expect(useStageStore.getState().generatingOutlines).toEqual([]);
+  });
 });
 describe('generationComplete', () => {
   it('defaults to false', () => {
