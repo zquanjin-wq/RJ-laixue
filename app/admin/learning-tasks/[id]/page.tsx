@@ -123,6 +123,9 @@ export default function LearningTaskDetailPage() {
   const isDraft = task?.status === 'draft';
   const isPublished = task?.status === 'published';
   const isClosed = task?.status === 'closed';
+  const assignedLearnerIds = new Set(task?.learners.map((learner) => learner.student_id) ?? []);
+  const canUpdateLearners = isDraft || isPublished;
+
   const isArchived = task?.status === 'archived';
 
   const timeError = useMemo(() => {
@@ -311,6 +314,10 @@ export default function LearningTaskDetailPage() {
 
   function toggleLearner(id: string) {
     setSelectedLearners((prev) => {
+      if (isPublished && assignedLearnerIds.has(id)) {
+        return prev;
+      }
+
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -448,7 +455,7 @@ export default function LearningTaskDetailPage() {
                     <Checkbox
                       checked={selectedLearners.has(s.id)}
                       onCheckedChange={() => toggleLearner(s.id)}
-                      disabled={!isDraft}
+                      disabled={!canUpdateLearners || (isPublished && assignedLearnerIds.has(s.id))}
                     />
                     <span>{s.name}</span>
                     {s.email && <span className="text-muted-foreground text-xs">({s.email})</span>}
@@ -456,7 +463,7 @@ export default function LearningTaskDetailPage() {
                 ))}
               </div>
             )}
-            {isDraft && (
+            {canUpdateLearners && (
               <Button onClick={saveLearners} disabled={saving}>
                 {saving ? '保存中...' : '更新学员名单'}
               </Button>

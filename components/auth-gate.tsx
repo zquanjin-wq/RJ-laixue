@@ -17,6 +17,12 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
     }
   }, [loading, pathname, profile, router]);
 
+  useEffect(() => {
+    if (profile?.role === 'learner') {
+      router.replace('/student/courses');
+    }
+  }, [profile?.role, router]);
+
   if (loading || !profile) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-background">
@@ -47,4 +53,3 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
-

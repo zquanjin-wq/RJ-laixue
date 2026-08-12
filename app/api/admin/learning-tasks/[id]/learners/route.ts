@@ -51,9 +51,22 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     const svc = getServiceSupabase();
+    const { data: task } = await svc
+      .from('learning_tasks')
+      .select('status')
+      .eq('id', taskId)
+      .maybeSingle();
+    if (!task) {
+      return NextResponse.json(
+        { success: false, error: 'Task not found', errorCode: 'NOT_FOUND' },
+        { status: 404 },
+      );
+    }
+
+    const rpcName = task.status === 'published' ? 'add_task_learners' : 'replace_task_learners';
 
     // 使用 RPC 原子替换
-    const { data: rpcResult, error: rpcError } = await svc.rpc('replace_task_learners', {
+    const { data: rpcResult, error: rpcError } = await svc.rpc(rpcName, {
       p_task_id: taskId,
       p_learner_ids: learnerIds,
     });
