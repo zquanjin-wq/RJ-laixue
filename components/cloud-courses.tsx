@@ -70,9 +70,15 @@ function CourseCard({
         </button>
         {isOwner && (
           <button
-            onClick={() =>
-              window.open(`/classroom/${course.id}?editor=1`, '_blank')
-            }
+            onClick={() => window.open(`/courses/${course.id}`, '_blank')}
+            className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            查看数据
+          </button>
+        )}
+        {isOwner && (
+          <button
+            onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank')}
             className="rounded bg-secondary px-3 py-1 text-xs text-secondary-foreground hover:opacity-90"
           >
             ✎ {editLabel}
@@ -101,6 +107,7 @@ function CourseCard({
 export default function CloudCourses() {
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
+  const isGlobalManager = user?.email?.toLowerCase() === 'jinzengquan@ruijie.com.cn';
 
   const [myCourses, setMyCourses] = useState<CloudCourse[]>([]);
   const [allCourses, setAllCourses] = useState<CloudCourse[]>([]);
@@ -115,18 +122,14 @@ export default function CloudCourses() {
       // Fetch BOTH scopes in parallel. The 'mine' scope is filtered
       // server-side by created_by=user.id. The 'all' scope is the
       // full discover list.
-      const [mine, all] = await Promise.all([
-        listMyCourses().catch(() => []),
-        listCloudCourses().catch(() => []),
-      ]);
-      setMyCourses(mine);
-      setAllCourses(all);
+      const mine = await listMyCourses();
+      setMyCourses(isGlobalManager ? await listCloudCourses() : mine);
     } catch (e: unknown) {
       setError(getErrorMessage(e, '获取云端课程失败'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user?.email]);
 
   useEffect(() => {
     fetchCourses();
@@ -180,18 +183,13 @@ export default function CloudCourses() {
       await deleteCloudCourse(courseId);
       // Remove from both lists (a deleted course can't be in either).
       setMyCourses((prev) => prev.filter((c) => c.id !== courseId));
-      setAllCourses((prev) => prev.filter((c) => c.id !== courseId));
     } catch (e: unknown) {
       alert('删除失败：' + getErrorMessage(e, '未知错误'));
     }
   };
 
   if (loading) {
-    return (
-      <div className="mt-8 text-center text-sm text-muted-foreground">
-        ☁️ 正在加载课程...
-      </div>
-    );
+    return <div className="mt-8 text-center text-sm text-muted-foreground">☁️ 正在加载课程...</div>;
   }
   if (error) {
     return (
@@ -202,18 +200,13 @@ export default function CloudCourses() {
   }
 
   // Discover section: courses NOT created by me (or all if user is null).
-  const discoverCourses = currentUserId
-    ? allCourses.filter((c) => c.created_by !== currentUserId)
-    : allCourses;
-
+  const discoverCourses = allCourses;
   return (
     <div className="mt-8 space-y-10">
       {/* 我的创作 — courses I created (or have edit rights to). Edit + Delete only here. */}
       <section>
         <h2 className="mb-1 text-lg font-semibold">📚 我的创作</h2>
-        <p className="mb-4 text-sm text-muted-foreground">
-          你创建或可以编辑的课程
-        </p>
+        <p className="mb-4 text-sm text-muted-foreground">你创建或可以编辑的课程</p>
         {myCourses.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             你还没有创建过课程。生成课件后点击「保存到云端」即可在这里看到。
@@ -224,7 +217,7 @@ export default function CloudCourses() {
               <CourseCard
                 key={course.id}
                 course={course}
-                isOwner={true}
+                isOwner={course.created_by === currentUserId}
                 currentUserId={currentUserId}
                 sharingId={sharingId}
                 section="mine"
@@ -237,39 +230,34 @@ export default function CloudCourses() {
         )}
       </section>
 
-      {/* 课程资源库 — public courses created by others (replaces "云端课程（发现）"). */}
-      <section>
-        <h2 className="mb-1 text-lg font-semibold">🌐 课程资源库</h2>
-        <p className="mb-4 text-sm text-muted-foreground">
-          发现可预览或复用的公开课程
-        </p>
-        {discoverCourses.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            资源库暂无其他老师分享的课程。
-          </p>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {discoverCourses.map((course) => (
-              <CourseCard
-                key={course.id}
-                course={course}
-                isOwner={false}
-                currentUserId={currentUserId}
-                sharingId={sharingId}
-                section="library"
-                onOpen={handleOpen}
-                onShare={handleShare}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      {false && (
+        <section>
+          <h2 className="mb-1 text-lg font-semibold">🌐 课程资源库</h2>
+          <p className="mb-4 text-sm text-muted-foreground">发现可预览或复用的公开课程</p>
+          {discoverCourses.length === 0 ? (
+            <p className="text-sm text-muted-foreground">资源库暂无其他老师分享的课程。</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {discoverCourses.map((course) => (
+                <CourseCard
+                  key={course.id}
+                  course={course}
+                  isOwner={false}
+                  currentUserId={currentUserId}
+                  sharingId={sharingId}
+                  section="library"
+                  onOpen={handleOpen}
+                  onShare={handleShare}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {shareMessage && !sharingId && (
-        <p className="mt-4 text-sm text-muted-foreground text-center">
-          {shareMessage}
-        </p>
+        <p className="mt-4 text-sm text-muted-foreground text-center">{shareMessage}</p>
       )}
     </div>
   );

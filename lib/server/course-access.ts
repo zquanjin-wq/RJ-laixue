@@ -14,10 +14,9 @@
  *   5. 其余：forbidden。
  */
 import { getServiceSupabase } from '@/lib/supabase/server';
+import { isGlobalCourseManager } from '@/lib/server/course-management-access';
 
-export type CourseReadAccess =
-  | { ok: true }
-  | { ok: false; reason: 'not_found' | 'forbidden' };
+export type CourseReadAccess = { ok: true } | { ok: false; reason: 'not_found' | 'forbidden' };
 
 export async function checkCourseReadAccess(
   userId: string,
@@ -39,9 +38,16 @@ export async function checkCourseReadAccess(
   // （learnerKey 强制 = auth.uid()），不泄漏任何他人数据。
   if (opts.shareLink) return { ok: true };
 
-  if (role === 'admin') return { ok: true };
+  if (course.created_by === userId) return { ok: true };
+
+  if (role === 'admin' || role === 'teacher') {
+    // Only the exceptional global course manager needs an email lookup.
+    const { data: caller } = await serviceSupabase.auth.admin.getUserById(userId);
+    if (isGlobalCourseManager(caller.user?.email)) return { ok: true };
+  }
+  if (role === 'admin') return { ok: false, reason: 'forbidden' };
   if (role === 'teacher') {
-    if (!course.created_by || course.created_by === userId) return { ok: true };
+    if (!course.created_by) return { ok: true };
     return { ok: false, reason: 'forbidden' };
   }
 

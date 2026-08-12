@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase, getServerSupabase } from '@/lib/supabase/server';
-
+import { isGlobalCourseManager } from '@/lib/server/course-management-access';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -12,23 +12,18 @@ export const maxDuration = 300;
 export async function GET(request: NextRequest) {
   try {
     const serviceSupabase = getServiceSupabase();
-    const scope = request.nextUrl.searchParams.get('scope') ?? 'all';
+    const scope = request.nextUrl.searchParams.get('scope') ?? 'mine';
     const selectFields = 'id, title, topic, created_by, created_at, updated_at';
-
+    const serverSupabase = await getServerSupabase();
+    const {
+      data: { user },
+    } = await serverSupabase.auth.getUser();
+    if (!user)
+      return NextResponse.json({ success: false, errorCode: 'UNAUTHENTICATED' }, { status: 401 });
     let query = serviceSupabase.from('courses').select(selectFields);
-
-    if (scope === 'mine') {
-      // Identify the caller via their cookie session. If unauthenticated,
-      // return an empty array rather than leaking everyone's courses.
-      const serverSupabase = await getServerSupabase();
-      const {
-        data: { user },
-      } = await serverSupabase.auth.getUser();
-      if (!user) {
-        return NextResponse.json({ success: true, data: [] });
-      }
-      query = query.eq('created_by', user.id);
-    }
+    if (scope === 'all' && !isGlobalCourseManager(user.email))
+      return NextResponse.json({ success: false, errorCode: 'FORBIDDEN' }, { status: 403 });
+    if (scope !== 'all') query = query.eq('created_by', user.id);
 
     const { data, error } = await query.order('updated_at', { ascending: false });
 
@@ -64,10 +59,7 @@ export async function POST(request: NextRequest) {
     const { id, title, topic, data, saveState = 'ready' } = body;
 
     if (!id) {
-      return NextResponse.json(
-        { success: false, error: '缺少课程 ID' },
-        { status: 400 },
-      );
+      return NextResponse.json({ success: false, error: '缺少课程 ID' }, { status: 400 });
     }
 
     const courseData = data || {};
@@ -76,10 +68,7 @@ export async function POST(request: NextRequest) {
     const scenes = Array.isArray(courseData.scenes) ? courseData.scenes : [];
 
     if (!stage) {
-      return NextResponse.json(
-        { success: false, error: '缺少课程 stage 数据' },
-        { status: 400 },
-      );
+      return NextResponse.json({ success: false, error: '缺少课程 stage 数据' }, { status: 400 });
     }
 
     const payload = {
