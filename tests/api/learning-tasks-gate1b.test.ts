@@ -355,6 +355,21 @@ describe('Gate 1B — teacher task entry', () => {
     expect(result).toMatchObject({ ok: false, status: 403, errorCode: 'TASK_NOT_OWNED' });
     expect(result).not.toHaveProperty('title');
   });
+
+  it('lets an assigned teacher enter as a learner', async () => {
+    const { client } = makeServiceClient({
+      profile: { role: 'teacher' },
+      student: { id: 'teacher-student', disabled_at: null, user_id: TEACHER.id },
+      task: { ...TASK_PUBLISHED, created_by: 'another-teacher' },
+      taskLearner: { id: 'teacher-task-learner', student_id: 'teacher-student' },
+    });
+    getServiceSupabaseMock.mockReturnValue(client);
+
+    const { resolveTaskEntry } = await import('@/lib/server/learning-tasks/task-entry');
+    const result = await resolveTaskEntry(TEACHER.id, 'tok123');
+
+    expect(result).toMatchObject({ ok: true, actor: 'learner', taskId: TASK_PUBLISHED.id });
+  });
 });
 
 describe('Gate 1B — /learn/[token] entry resolution', () => {

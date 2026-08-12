@@ -14,13 +14,6 @@ export default async function StudentCoursesPage() {
   if (!user) redirect('/login?next=/student/courses');
 
   const serviceSupabase = getServiceSupabase();
-  const { data: callerProfile } = await serviceSupabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-  if (callerProfile?.role === 'admin') redirect('/admin');
-
   const { data: student } = (await serviceSupabase
     .from('students')
     .select('id, name, disabled_at')

@@ -145,9 +145,36 @@ export async function checkTaskEntryPermission(
   const actor = await resolveActor(userId);
 
   // admin/teacher 预览
-  if (actor.role === 'admin') {
-    return { ok: true, actor: 'preview', role: actor.role };
+  const { data: student } = await getServiceSupabase()
+    .from('students')
+    .select('id, disabled_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  // Staff may also be assigned as learners. A real roster entry takes
+  // precedence over the read-only staff preview.
+  if (student) {
+    if (student.disabled_at) return { ok: false, reason: 'learner_disabled' };
+
+    const { data: taskLearner } = await getServiceSupabase()
+      .from('task_learners')
+      .select('id, student_id')
+      .eq('task_id', taskId)
+      .eq('student_id', student.id)
+      .maybeSingle();
+
+    if (taskLearner) {
+      return {
+        ok: true,
+        actor: 'learner',
+        studentId: student.id,
+        taskLearnerId: taskLearner.id,
+      };
+    }
   }
+
+  if (actor.role === 'admin') return { ok: true, actor: 'preview', role: actor.role };
+
   if (actor.role === 'teacher') {
     const { data: task } = await getServiceSupabase()
       .from('learning_tasks')
@@ -155,34 +182,8 @@ export async function checkTaskEntryPermission(
       .eq('id', taskId)
       .eq('created_by', userId)
       .maybeSingle();
-
-    if (!task) return { ok: false, reason: 'learner_not_assigned' };
-    return { ok: true, actor: 'preview', role: actor.role };
+    if (task) return { ok: true, actor: 'preview', role: actor.role };
   }
 
-  // learner
-  const { data: student } = await getServiceSupabase()
-    .from('students')
-    .select('id, disabled_at')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (!student) return { ok: false, reason: 'learner_not_bound' };
-  if (student.disabled_at) return { ok: false, reason: 'learner_disabled' };
-
-  const { data: taskLearner } = await getServiceSupabase()
-    .from('task_learners')
-    .select('id, student_id')
-    .eq('task_id', taskId)
-    .eq('student_id', student.id)
-    .maybeSingle();
-
-  if (!taskLearner) return { ok: false, reason: 'learner_not_assigned' };
-
-  return {
-    ok: true,
-    actor: 'learner',
-    studentId: student.id,
-    taskLearnerId: taskLearner.id,
-  };
+  return { ok: false, reason: student ? 'learner_not_assigned' : 'learner_not_bound' };
 }

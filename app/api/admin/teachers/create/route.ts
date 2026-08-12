@@ -3,7 +3,7 @@
  *
  * Admin-only. Creates a "teacher" account: a Supabase Auth user who
  * can sign in, edit courses on /, and view the admin hub at
- * /admin (auth-gate allows admin + teacher). Teachers do NOT get
+ * /admin (auth-gate allows admin + teacher). Teachers also get
  * a public.students row — they are creators, not learners.
  *
  * Body: { name: string, email: string }
@@ -18,15 +18,12 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 
-const PASSWORD_ALPHABET =
-  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 
 function generateInitialPassword(length = 12): string {
   let out = '';
   for (let i = 0; i < length; i++) {
-    out += PASSWORD_ALPHABET.charAt(
-      Math.floor(Math.random() * PASSWORD_ALPHABET.length),
-    );
+    out += PASSWORD_ALPHABET.charAt(Math.floor(Math.random() * PASSWORD_ALPHABET.length));
   }
   return out;
 }
@@ -80,8 +77,10 @@ export async function POST(request: Request) {
   }
 
   // Reject if email already exists in auth.users.
-  const { data: existingUsers, error: listErr } =
-    await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+  const { data: existingUsers, error: listErr } = await serviceSupabase.auth.admin.listUsers({
+    page: 1,
+    perPage: 200,
+  });
   if (listErr) {
     return NextResponse.json(
       { success: false, errorCode: 'AUTH_LIST_FAILED', error: listErr.message },
@@ -91,9 +90,7 @@ export async function POST(request: Request) {
   if (existingUsers?.users?.some((u) => u.email?.toLowerCase() === email)) {
     // Look up the conflicting profile's role so the admin knows
     // which existing identity owns the email.
-    const conflictingAuthUser = existingUsers.users.find(
-      (u) => u.email?.toLowerCase() === email,
-    );
+    const conflictingAuthUser = existingUsers.users.find((u) => u.email?.toLowerCase() === email);
     let message = `该邮箱已被占用：${email}`;
     if (conflictingAuthUser) {
       const { data: conflictingProfile } = await serviceSupabase
@@ -122,13 +119,12 @@ export async function POST(request: Request) {
 
   const initialPassword = generateInitialPassword();
 
-  const { data: created, error: createError } =
-    await serviceSupabase.auth.admin.createUser({
-      email,
-      password: initialPassword,
-      email_confirm: true,
-      user_metadata: { display_name: name },
-    });
+  const { data: created, error: createError } = await serviceSupabase.auth.admin.createUser({
+    email,
+    password: initialPassword,
+    email_confirm: true,
+    user_metadata: { display_name: name },
+  });
   if (createError || !created?.user) {
     return NextResponse.json(
       {
