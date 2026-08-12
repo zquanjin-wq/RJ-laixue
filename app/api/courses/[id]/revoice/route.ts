@@ -89,7 +89,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     : (await query.maybeSingle()).data;
   if (!job) return apiSuccess({ job: null });
   if (job.course_id !== id) return apiError('NOT_FOUND', 404, '任务不存在');
-  if (job.status === 'queued') after(() => runCourseRevoiceJob(job.id).catch(() => undefined));
+  if (job.status === 'queued' || job.status === 'running') {
+    after(() => runCourseRevoiceJob(job.id).catch(() => undefined));
+  }
   return apiSuccess({ job: present(job), pollIntervalMs: 5000 });
 }
 
