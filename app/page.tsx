@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
+import { TeachingDashboard } from '@/components/teaching-dashboard';
 import CloudCourses from '@/components/cloud-courses';
 import { AdminGate } from '@/components/auth-gate';
 import {
@@ -91,7 +92,7 @@ const initialFormState: FormState = {
   vocationalTestMode: false,
 };
 
-function HomePage() {
+export function HomePage() {
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
@@ -1474,7 +1475,7 @@ function ClassroomCard({
 export default function Page() {
   return (
     <AdminGate>
-      <HomePage />
+      <TeachingDashboard />
     </AdminGate>
   );
 }
