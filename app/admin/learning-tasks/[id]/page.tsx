@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { toTaskTimestamp } from '@/lib/utils/task-datetime';
 
 type TaskStatus = 'draft' | 'published' | 'closed' | 'archived';
 
@@ -205,8 +206,8 @@ export default function LearningTaskDetailPage() {
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || null,
-          startAt: startAt || null,
-          dueAt: dueAt || null,
+          startAt: toTaskTimestamp(startAt) ?? null,
+          dueAt: toTaskTimestamp(dueAt) ?? null,
         }),
       });
       const json = (await res.json()) as { success: boolean; error?: string; errorCode?: string };

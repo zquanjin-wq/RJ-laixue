@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { toTaskTimestamp } from '@/lib/utils/task-datetime';
 
 interface CourseOption {
   id: string;
@@ -93,8 +94,8 @@ export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
           courseId,
           title: title.trim(),
           description: description.trim() || undefined,
-          startAt: startAt || undefined,
-          dueAt: dueAt || undefined,
+          startAt: toTaskTimestamp(startAt),
+          dueAt: toTaskTimestamp(dueAt),
           learnerIds: Array.from(selectedLearners),
         }),
       });
