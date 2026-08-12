@@ -74,7 +74,12 @@ vi.mock('@/lib/audio/audio-publish', () => ({
       scenes,
     };
   }),
-  validatePublishedAudioAssets: vi.fn(() => ({ ok: true, issues: [], totalLearnable: 0, validCount: 0 })),
+  validatePublishedAudioAssets: vi.fn(() => ({
+    ok: true,
+    issues: [],
+    totalLearnable: 0,
+    validCount: 0,
+  })),
 }));
 
 vi.mock('@/lib/course-assets/externalize', () => ({
@@ -102,7 +107,7 @@ vi.mock('@/lib/utils/scene-order', () => ({
 }));
 
 // Lazy import so the module-level vi.mock above takes effect first.
-const { saveStageToCloud } = await import('@/lib/utils/cloud-sync');
+const { saveStageToCloud, recordLearningEvent } = await import('@/lib/utils/cloud-sync');
 
 interface FetchCall {
   url: string;
@@ -164,9 +169,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     await saveStageToCloud('stage-new-1');
 
     // ── Order assertion (the soul of the fix card) ──
-    const probeIdx = findCall(
-      (c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1',
-    );
+    const probeIdx = findCall((c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1');
     const createIdx = findCall(
       (c) =>
         c.method === 'POST' &&
@@ -206,9 +209,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     await saveStageToCloud('stage-new-1');
 
     // ── No Phase 0 POST when the probe succeeds ──
-    const probeIdx = findCall(
-      (c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1',
-    );
+    const probeIdx = findCall((c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1');
     expect(probeIdx).toBeGreaterThanOrEqual(0);
 
     // The very first POST to /api/courses should be Phase 3 (final save), not
@@ -242,9 +243,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     await expect(saveStageToCloud('stage-new-1')).resolves.toBeDefined();
 
     // The probe GET happened...
-    const probeIdx = findCall(
-      (c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1',
-    );
+    const probeIdx = findCall((c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1');
     expect(probeIdx).toBeGreaterThanOrEqual(0);
 
     // ...and we did NOT POST /api/courses for Phase 0 (only Phase 3 fires).
@@ -258,5 +257,53 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
       (c) => c.method === 'POST' && c.url === '/api/course-assets/sign-upload',
     );
     expect(signUploadIdx).toBeGreaterThan(probeIdx);
+  });
+});
+
+describe('recordLearningEvent — client contract', () => {
+  it('records learner event and returns recorded:true', async () => {
+    enqueueResponse(200, { success: true, recorded: true });
+
+    const result = await recordLearningEvent({
+      courseId: 'course-1',
+      eventType: 'open_course',
+    });
+
+    expect(result.recorded).toBe(true);
+
+    const call = fetchCalls.find((c) => c.method === 'POST' && c.url === '/api/learning/events');
+    expect(call).toBeDefined();
+    const payload = JSON.parse(call?.body ?? '{}');
+    expect(payload.courseId).toBe('course-1');
+    expect(payload.eventType).toBe('open_course');
+    expect(payload.studentId).toBeUndefined();
+  });
+
+  it('preview recorded:false does not throw and is surfaced to caller', async () => {
+    enqueueResponse(200, { success: true, recorded: false, reason: 'preview', role: 'teacher' });
+
+    const result = await recordLearningEvent({
+      courseId: 'course-1',
+      eventType: 'open_course',
+    });
+
+    expect(result.recorded).toBe(false);
+    expect(result.reason).toBe('preview');
+    expect(result.role).toBe('teacher');
+  });
+
+  it('forged studentId is not sent to server', async () => {
+    enqueueResponse(200, { success: true, recorded: true });
+
+    await recordLearningEvent({
+      courseId: 'course-1',
+      eventType: 'open_course',
+      // @ts-expect-error 客户端不再携带 studentId，测试确保旧字段被忽略
+      studentId: 'forged-student-id',
+    });
+
+    const call = fetchCalls.find((c) => c.method === 'POST' && c.url === '/api/learning/events');
+    const payload = JSON.parse(call?.body ?? '{}');
+    expect(payload.studentId).toBeUndefined();
   });
 });

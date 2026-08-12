@@ -20,6 +20,7 @@ import { useRouter } from 'next/navigation';
 import type { Scene } from '@/lib/types/stage';
 import type { StageOutlinesRecord } from '@/lib/utils/database';
 import { inspectOrderField } from '@/lib/utils/scene-order';
+import { recordTaskLearningEvent } from '@/lib/utils/task-learning-events';
 
 const log = createLogger('Classroom');
 
@@ -29,18 +30,16 @@ export default function ClassroomDetailPage() {
   const router = useRouter();
   const classroomId = params?.id as string;
   const readOnlyShare = searchParams.get('share') === '1';
-  const studentId = searchParams.get('student') || undefined;
   const editorAutoOpen = searchParams.get('editor') === '1';
   const viewMode = searchParams.get('view') === '1';
   const explicitSceneId = searchParams.get('sceneId') || undefined;
+  const taskId = searchParams.get('task') || undefined;
   // Temporary repair entry: ?repairOrder=createdAt
   // Forces scenes to be re-sorted by createdAt/updatedAt/id, normalized to
   // seq=order=index, and re-uploaded to cloud. See loadClassroom for logic.
   const repairOrder = searchParams.get('repairOrder');
   const { isMobile } = useMobileDetection();
-  const [verifiedStudentId, setVerifiedStudentId] = useState<string | null>(null);
-  const [verifiedStudentName, setVerifiedStudentName] = useState<string | null>(null);
-const [isSavingToCloud, setIsSavingToCloud] = useState(false);
+  const [isSavingToCloud, setIsSavingToCloud] = useState(false);
 
   // Supabase Auth gate: anyone visiting /classroom/[id] must be
   // signed in. This replaces OPENMAIC upstream's ACCESS_CODE modal
@@ -92,13 +91,14 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
 
     const params = new URLSearchParams();
     if (isShareMode) params.set('share', '1');
-    if (studentId) params.set('student', studentId);
     if (viewMode) params.set('view', '1');
+    if (taskId) params.set('task', taskId);
     const qs = params.toString();
     const target = `/m/${classroomId}${qs ? `?${qs}` : ''}`;
 
     log.info('[MOBILE REDIRECT][Classroom]', {
       id: classroomId,
+      taskId,
       isMobile,
       isEditorMode,
       isShareMode,
@@ -107,7 +107,17 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
     });
 
     router.replace(target);
-  }, [authReady, isMobile, editorAutoOpen, classroomId, readOnlyShare, studentId, viewMode, router, profile]);
+  }, [
+    authReady,
+    isMobile,
+    editorAutoOpen,
+    classroomId,
+    readOnlyShare,
+    viewMode,
+    router,
+    profile,
+    taskId,
+  ]);
 
   // When the URL says ?editor=1, flip the stage store into 'edit'
   // (MAIC Editor / Pro mode) so the admin / teacher lands directly
@@ -120,7 +130,7 @@ const [isSavingToCloud, setIsSavingToCloud] = useState(false);
       useStageStore.setState({ mode: 'edit' });
     }
   }, [editorAutoOpen]);
-const [saveCloudMessage, setSaveCloudMessage] = useState('');
+  const [saveCloudMessage, setSaveCloudMessage] = useState('');
 
   const { loadFromStorage } = useStageStore();
   const generationComplete = useStageStore((s) => s.generationComplete);
@@ -133,6 +143,8 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
   const generationStartedRef = useRef(false);
   const openEventSentRef = useRef(false);
   const completeEventSentRef = useRef(false);
+  const previousTaskSceneRef = useRef<Scene | null>(null);
+  const taskCompletedRef = useRef(false);
 
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
     onComplete: () => {
@@ -140,9 +152,55 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
     },
   });
 
+  /**
+   * Load a learning-task snapshot from the server.
+   * Task mode: never reads/writes IndexedDB under the course key; never
+   * falls back to /api/courses/[id]. Throws on any error so the UI shows
+   * the error screen instead of silently degrading.
+   */
+  const loadTaskSnapshot = useCallback(async () => {
+    if (!taskId) return false;
+
+    const res = await fetch(`/api/classroom/snapshot?taskId=${encodeURIComponent(taskId)}`);
+    const json = await res.json().catch(() => ({ success: false, error: '快照加载失败' }));
+
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || `快照加载失败（HTTP ${res.status}）`);
+    }
+
+    const { stage, scenes = [], outlines = [] } = json.data ?? {};
+    if (!stage) {
+      throw new Error('快照数据不完整');
+    }
+
+    const migrated = (scenes as Scene[]).map(migrateScene);
+
+    useStageStore.getState().setStage(stage);
+    useStageStore.setState({
+      scenes: migrated,
+      outlines,
+      currentSceneId: migrated[0]?.id ?? null,
+      mode: 'playback',
+      generationComplete: true,
+      generatingOutlines: [],
+      generationStatus: 'completed',
+    });
+
+    // Do NOT persist the snapshot to IndexedDB under the course key.
+    // Do NOT hydrate generated agents into the course-key registry.
+    log.info('Loaded from task snapshot:', { taskId, courseId: classroomId });
+    return true;
+  }, [taskId, classroomId]);
+
   const loadClassroom = useCallback(async () => {
     if (!authReady) return;
     try {
+      // Task mode: authoritative snapshot only.
+      if (taskId) {
+        const loaded = await loadTaskSnapshot();
+        if (loaded) return;
+      }
+
       await loadFromStorage(classroomId);
 
       // ── Self-heal broken IndexedDB scene order ──────────────────────
@@ -156,8 +214,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         const storeState = useStageStore.getState();
         const scenesNow = storeState.scenes;
         const isSeqBroken =
-          scenesNow.length > 0 &&
-          scenesNow.some((s, i) => (s as { seq?: number }).seq !== i);
+          scenesNow.length > 0 && scenesNow.some((s, i) => (s as { seq?: number }).seq !== i);
 
         if (isSeqBroken) {
           log.warn(
@@ -174,9 +231,19 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           );
           const repaired = scenesNow.map((s, i) => ({ ...s, seq: i }));
           // Normalize to Scene[] for the store
-        const { migrateScene } = await import('@/lib/edit/slide-schema');
-        const repairedScenes = repaired.map((s) => migrateScene({ ...s, stageId: classroomId, type: (s as { type?: string }).type ?? 'slide' } as Parameters<typeof migrateScene>[0]));
-        useStageStore.setState({ scenes: repairedScenes as unknown as ReturnType<typeof useStageStore.getState>['scenes'] });
+          const { migrateScene } = await import('@/lib/edit/slide-schema');
+          const repairedScenes = repaired.map((s) =>
+            migrateScene({
+              ...s,
+              stageId: classroomId,
+              type: (s as { type?: string }).type ?? 'slide',
+            } as Parameters<typeof migrateScene>[0]),
+          );
+          useStageStore.setState({
+            scenes: repairedScenes as unknown as ReturnType<
+              typeof useStageStore.getState
+            >['scenes'],
+          });
           // Persist immediately so the repair survives a refresh even if no
           // other edit happens. Skip if the stage itself didn't load (e.g.
           // the cloud fallback path below will run and persist its own copy).
@@ -201,14 +268,15 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
                 currentSceneId: useStageStore.getState().currentSceneId,
                 chats: useStageStore.getState().chats ?? [],
               });
-              log.info('[CLASSROOM INIT][Order Repair] Persisted repaired seq + trusted flag to IndexedDB');
+              log.info(
+                '[CLASSROOM INIT][Order Repair] Persisted repaired seq + trusted flag to IndexedDB',
+              );
             } catch (e) {
               log.warn('[CLASSROOM INIT][Order Repair] Failed to persist repair:', e);
             }
           }
         }
       }
-
 
       // ── Manual repair entry: ?repairOrder=createdAt ───────────────────
       // Forces scenes to be re-sorted by createdAt/updatedAt/id (the
@@ -220,17 +288,48 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         const { orderSceneRecordsForDisplay } = await import('@/lib/utils/scene-order');
         const { db: dbRef } = await import('@/lib/utils/database');
         const dbRawScenes = await dbRef.scenes.where('stageId').equals(classroomId).toArray();
-        const first10Before = dbRawScenes.slice(0, 10).map((s: { id: string; title?: string; order?: number | null; seq?: number | null; createdAt?: number }) => ({
-          id: s.id, title: s.title, order: s.order, seq: s.seq, createdAt: s.createdAt,
-        }));
+        const first10Before = dbRawScenes
+          .slice(0, 10)
+          .map(
+            (s: {
+              id: string;
+              title?: string;
+              order?: number | null;
+              seq?: number | null;
+              createdAt?: number;
+            }) => ({
+              id: s.id,
+              title: s.title,
+              order: s.order,
+              seq: s.seq,
+              createdAt: s.createdAt,
+            }),
+          );
         // MUST pass prefer: 'createdAt' — auto mode would still trust the
         // poisoned seq=0,1,2... that v13 left behind. We force the recovery
         // to consult createdAt/updatedAt/id and ignore seq entirely.
-        const { ordered: repaired, source: repairSource, duplicateIdsRemoved: dupIds } =
-          orderSceneRecordsForDisplay(dbRawScenes, { prefer: 'createdAt' });
-        const first10After = repaired.slice(0, 10).map((s: { id: string; title?: string; order?: number | null; seq?: number | null; createdAt?: number }) => ({
-          id: s.id, title: s.title, order: s.order, seq: s.seq, createdAt: s.createdAt,
-        }));
+        const {
+          ordered: repaired,
+          source: repairSource,
+          duplicateIdsRemoved: dupIds,
+        } = orderSceneRecordsForDisplay(dbRawScenes, { prefer: 'createdAt' });
+        const first10After = repaired
+          .slice(0, 10)
+          .map(
+            (s: {
+              id: string;
+              title?: string;
+              order?: number | null;
+              seq?: number | null;
+              createdAt?: number;
+            }) => ({
+              id: s.id,
+              title: s.title,
+              order: s.order,
+              seq: s.seq,
+              createdAt: s.createdAt,
+            }),
+          );
         log.info('[ORDER REPAIR][Before]', {
           stageId: classroomId,
           repairSource,
@@ -246,8 +345,16 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         });
         // Normalize to Scene[] for the store
         const { migrateScene } = await import('@/lib/edit/slide-schema');
-        const repairedScenes = repaired.map((s) => migrateScene({ ...s, stageId: classroomId, type: (s as { type?: string }).type ?? 'slide' } as Parameters<typeof migrateScene>[0]));
-        useStageStore.setState({ scenes: repairedScenes as unknown as ReturnType<typeof useStageStore.getState>['scenes'] });
+        const repairedScenes = repaired.map((s) =>
+          migrateScene({
+            ...s,
+            stageId: classroomId,
+            type: (s as { type?: string }).type ?? 'slide',
+          } as Parameters<typeof migrateScene>[0]),
+        );
+        useStageStore.setState({
+          scenes: repairedScenes as unknown as ReturnType<typeof useStageStore.getState>['scenes'],
+        });
         const stageRef2 = useStageStore.getState().stage;
         if (stageRef2) {
           // Manual repair via ?repairOrder=createdAt: this is a deliberate
@@ -348,9 +455,7 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
         // Priority 3: learner / share / open → always start from beginning
         else {
           selectedInitialSceneId = displayFirst?.id ?? null;
-          reason = isLearnerEntry
-            ? 'learner/share default first scene'
-            : 'fallback first scene';
+          reason = isLearnerEntry ? 'learner/share default first scene' : 'fallback first scene';
         }
 
         // Apply if different from what IndexedDB restored (avoid unnecessary re-render)
@@ -366,7 +471,9 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           isShareMode,
           isLearnerEntry,
           explicitSceneId,
-          explicitSceneIdValid: explicitSceneId ? displayScenes.some((s) => s.id === explicitSceneId) : undefined,
+          explicitSceneIdValid: explicitSceneId
+            ? displayScenes.some((s) => s.id === explicitSceneId)
+            : undefined,
           restoredCurrentSceneId: storeState.currentSceneId, // value BEFORE our override
           selectedInitialSceneId,
           selectedInitialSceneTitle: selectedScene?.title,
@@ -490,7 +597,9 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
                   scheduleLegacyDocumentBridge(snapshot);
                   scheduleDocumentParityCheck(snapshot, 'cloud_hydration');
                 })
-                .catch((error) => log.warn('DocumentStore preview bridge module failed to load:', error));
+                .catch((error) =>
+                  log.warn('DocumentStore preview bridge module failed to load:', error),
+                );
               log.info('Loaded from cloud course:', classroomId);
             }
           } else {
@@ -575,23 +684,155 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
   }, [classroomId, loadClassroom, stop]);
 
   useEffect(() => {
-    if (!readOnlyShare || !verifiedStudentId || openEventSentRef.current) return;
+    if (!readOnlyShare || openEventSentRef.current) return;
 
     openEventSentRef.current = true;
+    if (taskId) {
+      recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType: 'task_opened',
+      }).catch(() => {
+        openEventSentRef.current = false;
+      });
+      return;
+    }
     recordLearningEvent({
       courseId: classroomId,
-      studentId: verifiedStudentId!,
       eventType: 'open_course',
     }).catch((err) => {
+      // preview 返回 recorded:false 是正常行为，不触发失败重试
+      if (err instanceof Error && err.message === 'preview') {
+        return;
+      }
       log.warn('Failed to record learning open event:', err);
       openEventSentRef.current = false;
     });
-  }, [classroomId, readOnlyShare, verifiedStudentId]);
+  }, [classroomId, readOnlyShare, taskId]);
+
+  useEffect(() => {
+    if (!taskId || !readOnlyShare || !generationComplete) return;
+    const currentScene = scenes.find((scene) => scene.id === currentSceneId);
+    if (!currentScene) return;
+
+    const previous = previousTaskSceneRef.current;
+    if (previous && previous.id !== currentScene.id) {
+      recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType: 'scene_completed',
+        sceneId: previous.id,
+        sceneOrder: previous.order,
+      }).catch(() => {});
+    }
+    recordTaskLearningEvent({
+      taskId,
+      courseId: classroomId,
+      eventType: 'scene_started',
+      sceneId: currentScene.id,
+      sceneOrder: currentScene.order,
+    }).catch(() => {});
+    previousTaskSceneRef.current = currentScene;
+  }, [classroomId, currentSceneId, generationComplete, readOnlyShare, scenes, taskId]);
+
+  useEffect(() => {
+    if (!taskId || !readOnlyShare) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      const state = useStageStore.getState();
+      const currentScene = state.scenes.find((scene) => scene.id === state.currentSceneId);
+      recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType: 'heartbeat',
+        sceneId: currentScene?.id,
+        sceneOrder: currentScene?.order,
+        metadata: { activeSeconds: 30 },
+      }).catch(() => {});
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [classroomId, readOnlyShare, taskId]);
+  useEffect(() => {
+    if (!taskId || !readOnlyShare) return;
+
+    const recordQuizEvent = (eventType: 'check_submitted' | 'check_reviewed', event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          sceneId?: string;
+          results?: Array<{ questionId: string; correct: boolean | null }>;
+        }>
+      ).detail;
+      if (!detail?.sceneId) return;
+      const scene = useStageStore.getState().scenes.find((item) => item.id === detail.sceneId);
+      recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType,
+        sceneId: detail.sceneId,
+        sceneOrder: scene?.order,
+        metadata: detail.results ? { results: detail.results } : undefined,
+      }).catch(() => {});
+    };
+
+    const submitted = (event: Event) => recordQuizEvent('check_submitted', event);
+    const reviewed = (event: Event) => recordQuizEvent('check_reviewed', event);
+    const questionAsked = (event: Event) => {
+      const detail = (event as CustomEvent<{ sceneId?: string | null; question?: string }>).detail;
+      const scene = useStageStore.getState().scenes.find((item) => item.id === detail?.sceneId);
+      recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType: 'question_asked',
+        sceneId: detail?.sceneId ?? undefined,
+        sceneOrder: scene?.order,
+        metadata: detail?.question ? { question: detail.question } : undefined,
+      }).catch(() => {});
+    };
+    window.addEventListener('laixue:quiz-submitted', submitted);
+    window.addEventListener('laixue:quiz-reviewed', reviewed);
+    window.addEventListener('laixue:question-asked', questionAsked);
+    return () => {
+      window.removeEventListener('laixue:quiz-submitted', submitted);
+      window.removeEventListener('laixue:quiz-reviewed', reviewed);
+      window.removeEventListener('laixue:question-asked', questionAsked);
+    };
+  }, [classroomId, readOnlyShare, taskId]);
+
+  const completeTask = useCallback(async () => {
+    if (!taskId || taskCompletedRef.current) return;
+    const currentScene = scenes.find((scene) => scene.id === currentSceneId);
+    if (!currentScene) return;
+    taskCompletedRef.current = true;
+    try {
+      await recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType: 'scene_completed',
+        sceneId: currentScene.id,
+        sceneOrder: currentScene.order,
+      });
+      const result = await recordTaskLearningEvent({
+        taskId,
+        courseId: classroomId,
+        eventType: 'task_completed',
+        sceneId: currentScene.id,
+        sceneOrder: currentScene.order,
+      });
+      if (!result.completed) {
+        taskCompletedRef.current = false;
+        window.alert(
+          '\u8bf7\u5148\u5b8c\u6210\u5fc5\u5b66\u7ae0\u8282\u548c\u5fc5\u505a\u68c0\u67e5\u9898\u3002',
+        );
+      }
+    } catch {
+      taskCompletedRef.current = false;
+    }
+  }, [classroomId, currentSceneId, scenes, taskId]);
 
   useEffect(() => {
     if (
+      taskId ||
       !readOnlyShare ||
-      !verifiedStudentId ||
       !generationComplete ||
       completeEventSentRef.current ||
       scenes.length === 0
@@ -606,15 +847,18 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
     completeEventSentRef.current = true;
     recordLearningEvent({
       courseId: classroomId,
-      studentId: verifiedStudentId!,
       eventType: 'complete_course',
       sceneId: currentScene.id,
       sceneOrder: currentScene.order,
     }).catch((err) => {
+      // preview 返回 recorded:false 是正常行为，不触发失败重试
+      if (err instanceof Error && err.message === 'preview') {
+        return;
+      }
       log.warn('Failed to record learning complete event:', err);
       completeEventSentRef.current = false;
     });
-  }, [classroomId, currentSceneId, generationComplete, readOnlyShare, scenes, verifiedStudentId]);
+  }, [classroomId, currentSceneId, generationComplete, readOnlyShare, scenes, taskId]);
 
   // Auto-resume generation for pending outlines
   useEffect(() => {
@@ -722,45 +966,54 @@ const [saveCloudMessage, setSaveCloudMessage] = useState('');
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
-{/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
+              {taskId && readOnlyShare && (
+                <button
+                  type="button"
+                  onClick={() => void completeTask()}
+                  className="fixed bottom-6 left-6 z-50 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg"
+                >
+                  &#23436;&#25104;&#23398;&#20064;
+                </button>
+              )}
+              {/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
     the same course via /student/courses doesn't see a 'save to cloud'
     affordance they shouldn't be using. */}
-{!readOnlyShare && !viewMode && canSave && generationComplete && (
-  <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
-    {saveCloudMessage && (
-      <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
-        {saveCloudMessage}
-      </div>
-    )}
+              {!readOnlyShare && !viewMode && canSave && generationComplete && (
+                <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
+                  {saveCloudMessage && (
+                    <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
+                      {saveCloudMessage}
+                    </div>
+                  )}
 
-    <button
-      onClick={async () => {
-        if (isSavingToCloud) return;
+                  <button
+                    onClick={async () => {
+                      if (isSavingToCloud) return;
 
-        setIsSavingToCloud(true);
-        setSaveCloudMessage('正在保存到云端，请稍候...');
+                      setIsSavingToCloud(true);
+                      setSaveCloudMessage('正在保存到云端，请稍候...');
 
-        try {
-          await saveStageToCloud(classroomId);
-          setSaveCloudMessage('✅ 保存成功');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-          setSaveCloudMessage('❌ 保存失败：' + (e.message || '未知错误'));
-        } finally {
-          setIsSavingToCloud(false);
-        }
-      }}
-      disabled={isSavingToCloud}
-      className={`rounded-full px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition-opacity ${
-        isSavingToCloud
-          ? 'cursor-not-allowed bg-primary/70 opacity-70'
-          : 'bg-primary hover:opacity-90'
-      }`}
-    >
-      {isSavingToCloud ? '⏳ 保存中...' : '☁️ 保存到云端'}
-    </button>
-  </div>
-)}
+                      try {
+                        await saveStageToCloud(classroomId);
+                        setSaveCloudMessage('✅ 保存成功');
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      } catch (e: any) {
+                        setSaveCloudMessage('❌ 保存失败：' + (e.message || '未知错误'));
+                      } finally {
+                        setIsSavingToCloud(false);
+                      }
+                    }}
+                    disabled={isSavingToCloud}
+                    className={`rounded-full px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition-opacity ${
+                      isSavingToCloud
+                        ? 'cursor-not-allowed bg-primary/70 opacity-70'
+                        : 'bg-primary hover:opacity-90'
+                    }`}
+                  >
+                    {isSavingToCloud ? '⏳ 保存中...' : '☁️ 保存到云端'}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>

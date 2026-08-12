@@ -46,10 +46,7 @@ async function ensureCourseRowOnCloud(
   outlines: unknown,
 ): Promise<void> {
   try {
-    const probe = await fetch(
-      `/api/courses/${encodeURIComponent(id)}`,
-      { method: 'GET' },
-    );
+    const probe = await fetch(`/api/courses/${encodeURIComponent(id)}`, { method: 'GET' });
     if (probe.status !== 404) {
       // 200 → row exists; 401/403/etc → caller cannot self-create, but
       // /api/courses POST has its own ownership gate, so let it speak.
@@ -101,10 +98,13 @@ async function collectStageData(stageId: string) {
   // uploads that race before loadStageData has touched the stage.
   const { orderSceneRecordsForDisplay } = await import('./scene-order');
   const stageIsTrusted = stage.sceneOrderTrusted === true;
-  const { ordered: scenes, source: orderingSource, duplicateIdsRemoved } =
-    orderSceneRecordsForDisplay(rawScenes, {
-      prefer: stageIsTrusted ? 'auto' : 'createdAt',
-    });
+  const {
+    ordered: scenes,
+    source: orderingSource,
+    duplicateIdsRemoved,
+  } = orderSceneRecordsForDisplay(rawScenes, {
+    prefer: stageIsTrusted ? 'auto' : 'createdAt',
+  });
 
   const outlines = await db.stageOutlines.where('stageId').equals(stageId).toArray();
 
@@ -145,8 +145,7 @@ async function collectStageData(stageId: string) {
 // 淇濆瓨璇剧▼鍒颁簯绔?
 // ============================================================
 export async function saveStageToCloud(stageId: string) {
-  const { id, title, topic, stage, scenes, outlines } =
-    await collectStageData(stageId);
+  const { id, title, topic, stage, scenes, outlines } = await collectStageData(stageId);
 
   // ── Phase 0: Ensure the course row exists on the cloud BEFORE we publish
   // any audio. Production's sign-upload endpoint (post upstream commit
@@ -191,14 +190,17 @@ export async function saveStageToCloud(stageId: string) {
   const validation = validatePublishedAudioAssets(publishResult.scenes);
 
   if (!validation.ok || publishResult.failed.length > 0 || publishResult.missing.length > 0) {
-    console.warn('[MOBILE PUBLISH][Audio Validation Failed]', JSON.stringify({
-      stageId,
-      validationOk: validation.ok,
-      failedCount: publishResult.failed.length,
-      missingCount: publishResult.missing.length,
-      invalidIssues: validation.issues.length,
-      timestamp: new Date().toISOString(),
-    }));
+    console.warn(
+      '[MOBILE PUBLISH][Audio Validation Failed]',
+      JSON.stringify({
+        stageId,
+        validationOk: validation.ok,
+        failedCount: publishResult.failed.length,
+        missingCount: publishResult.missing.length,
+        invalidIssues: validation.issues.length,
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const failedCount = publishResult.failed.length;
     const missingCount = publishResult.missing.length;
@@ -220,9 +222,15 @@ export async function saveStageToCloud(stageId: string) {
       .join('；');
 
     const detailParts = [
-      failedCount > 0 ? `上传/生成失败 ${failedCount} 条${failedPreview ? `（${failedPreview}）` : ''}` : '',
-      missingCount > 0 ? `文字缺失 ${missingCount} 条${missingPreview ? `（${missingPreview}）` : ''}` : '',
-      invalidCount > 0 ? `校验不通过 ${invalidCount} 处${issuePreview ? `（${issuePreview}）` : ''}` : '',
+      failedCount > 0
+        ? `上传/生成失败 ${failedCount} 条${failedPreview ? `（${failedPreview}）` : ''}`
+        : '',
+      missingCount > 0
+        ? `文字缺失 ${missingCount} 条${missingPreview ? `（${missingPreview}）` : ''}`
+        : '',
+      invalidCount > 0
+        ? `校验不通过 ${invalidCount} 处${issuePreview ? `（${issuePreview}）` : ''}`
+        : '',
     ].filter(Boolean);
 
     throw new Error(
@@ -353,22 +361,20 @@ export async function importCourseFromCloud(courseId: string) {
   // ?repairOrder=createdAt entry on the classroom page (which calls
   // orderSceneRecordsForDisplay with prefer: 'createdAt') or run a
   // server-side repair script.
-  const scenesWithSeq = (scenes as Array<Record<string, unknown>>).map(
-    (s, i) => ({ ...s, order: i, seq: i }),
-  );
-  await db.transaction(
-    'rw',
-    [db.stages, db.scenes, db.stageOutlines],
-    async () => {
-      // Clear local state for this course FIRST so we don't accumulate
-      // duplicate rows when the same course is re-imported with different ids.
-      await db.scenes.where('stageId').equals(courseId).delete();
-      await db.stageOutlines.where('stageId').equals(courseId).delete();
-      await db.stages.put(stage as Parameters<typeof db.stages.put>[0]);
-      await db.scenes.bulkPut(scenesWithSeq as unknown as Parameters<typeof db.scenes.bulkPut>[0]);
-      await db.stageOutlines.bulkPut(outlines as Parameters<typeof db.stageOutlines.bulkPut>[0]);
-    },
-  );
+  const scenesWithSeq = (scenes as Array<Record<string, unknown>>).map((s, i) => ({
+    ...s,
+    order: i,
+    seq: i,
+  }));
+  await db.transaction('rw', [db.stages, db.scenes, db.stageOutlines], async () => {
+    // Clear local state for this course FIRST so we don't accumulate
+    // duplicate rows when the same course is re-imported with different ids.
+    await db.scenes.where('stageId').equals(courseId).delete();
+    await db.stageOutlines.where('stageId').equals(courseId).delete();
+    await db.stages.put(stage as Parameters<typeof db.stages.put>[0]);
+    await db.scenes.bulkPut(scenesWithSeq as unknown as Parameters<typeof db.scenes.bulkPut>[0]);
+    await db.stageOutlines.bulkPut(outlines as Parameters<typeof db.stageOutlines.bulkPut>[0]);
+  });
   log.info('[importCourseFromCloud] Replaced local state for course:', {
     courseId,
     scenesCount: scenesWithSeq.length,
@@ -439,12 +445,14 @@ export async function createStudent(input: {
   return readApiJson<StudentRecord>(response);
 }
 
-export async function importStudents(students: Array<{
-  name: string;
-  email?: string;
-  employee_no?: string;
-  note?: string;
-}>) {
+export async function importStudents(
+  students: Array<{
+    name: string;
+    email?: string;
+    employee_no?: string;
+    note?: string;
+  }>,
+) {
   const response = await fetch('/api/students', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -476,21 +484,38 @@ export async function verifyStudentAccess(courseId: string, accessCode: string) 
   return readApiJson<{ studentId: string; studentName: string }>(response);
 }
 
+export interface RecordLearningEventResult {
+  success: true;
+  recorded?: boolean;
+  reason?: string;
+  role?: string;
+}
+
 export async function recordLearningEvent(input: {
   courseId: string;
-  studentId?: string;
   eventType: 'open_course' | 'view_scene' | 'complete_course';
   sceneId?: string;
   sceneOrder?: number;
   metadata?: Record<string, unknown>;
-}) {
+  taskId?: string;
+}): Promise<RecordLearningEventResult> {
+  // 客户端请求绝不允许携带学员 ID；即使调用方误传也显式剔除
+  const { studentId: _ignored, ...payload } = input as typeof input & { studentId?: string };
+  void _ignored;
+
   const response = await fetch('/api/learning/events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify(payload),
   });
-  return readApiJson<{ success: true }>(response);
+  const data = (await response.json()) as Record<string, unknown>;
+  if (!response.ok || data.success !== true) {
+    throw new Error(typeof data.error === 'string' ? data.error : '请求失败');
+  }
+  return {
+    success: true,
+    recorded: typeof data.recorded === 'boolean' ? data.recorded : undefined,
+    reason: typeof data.reason === 'string' ? data.reason : undefined,
+    role: typeof data.role === 'string' ? data.role : undefined,
+  };
 }
-
-
-

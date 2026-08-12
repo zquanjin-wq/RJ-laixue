@@ -7,13 +7,7 @@
  */
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 
@@ -36,7 +30,10 @@ export default async function AdminHubPage() {
     .eq('id', user.id)
     .maybeSingle();
 
-  if (!profile || profile.role !== 'admin') {
+  const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
+
+  if (!isAdmin && !isTeacher) {
     redirect('/student/courses');
   }
 
@@ -51,33 +48,37 @@ export default async function AdminHubPage() {
         </header>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <Card className="rounded-lg">
-            <CardHeader>
-              <CardTitle>学员管理</CardTitle>
-              <CardDescription>
-                列出所有学员、为学员开通登录账号、重置密码或禁用账号。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button asChild>
-                <Link href="/admin/students">进入学员管理</Link>
-              </Button>
-            </CardContent>
-          </Card>
+          {isAdmin && (
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle>学员管理</CardTitle>
+                <CardDescription>
+                  列出所有学员、为学员开通登录账号、重置密码或禁用账号。
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild>
+                  <Link href="/admin/students">进入学员管理</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
-          <Card className="rounded-lg">
-            <CardHeader>
-              <CardTitle>老师管理</CardTitle>
-              <CardDescription>
-                创建可登录的老师账号。老师能创作课件、查看课件，但不能管理学员账号。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button asChild>
-                <Link href="/admin/teachers">进入老师管理</Link>
-              </Button>
-            </CardContent>
-          </Card>
+          {isAdmin && (
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle>老师管理</CardTitle>
+                <CardDescription>
+                  创建可登录的老师账号。老师能创作课件、查看课件，但不能管理学员账号。
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild>
+                  <Link href="/admin/teachers">进入老师管理</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="rounded-lg">
             <CardHeader>
@@ -93,12 +94,22 @@ export default async function AdminHubPage() {
             </CardContent>
           </Card>
 
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>学习任务</CardTitle>
+              <CardDescription>创建学习任务、指定学员、发布并获取分享链接。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/admin/learning-tasks">进入学习任务</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="rounded-lg opacity-60">
             <CardHeader>
               <CardTitle>运营报表</CardTitle>
-              <CardDescription>
-                查看学员学习完成度与课程活跃度。后续阶段提供。
-              </CardDescription>
+              <CardDescription>查看学员学习完成度与课程活跃度。后续阶段提供。</CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" disabled>

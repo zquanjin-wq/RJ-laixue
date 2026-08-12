@@ -17,11 +17,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { safeNextPath } from '@/lib/utils/safe-next';
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get('next') || '/';
+  const next = safeNextPath(searchParams.get('next'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -57,9 +58,7 @@ function LoginContent() {
       <Card className="w-full max-w-sm rounded-lg">
         <CardHeader>
           <CardTitle>登录来学</CardTitle>
-          <CardDescription>
-            账号由管理员开通。如未收到账号，请联系培训管理员。
-          </CardDescription>
+          <CardDescription>账号由管理员开通。如未收到账号，请联系培训管理员。</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4">

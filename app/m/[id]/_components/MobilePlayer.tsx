@@ -29,6 +29,7 @@ import {
   QUESTION_LIMIT,
 } from '@/lib/mobile/question-limit';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
+import { recordTaskLearningEvent } from '@/lib/utils/task-learning-events';
 import { TextScript } from './TextScript';
 import { AudioPlayer } from './AudioPlayer';
 import { AIQuestionDialog } from './AIQuestionDialog';
@@ -40,6 +41,7 @@ interface MobilePlayerProps {
   chapters: MobileChapter[];
   /** When true, always start from chapter 0 (ignore localStorage progress) */
   isShareMode?: boolean;
+  taskId?: string;
 }
 
 export function MobilePlayer({
@@ -47,6 +49,7 @@ export function MobilePlayer({
   courseTitle,
   chapters,
   isShareMode = false,
+  taskId,
 }: MobilePlayerProps) {
   // === Hydrate from localStorage ===
   const [hydrated, setHydrated] = useState(false);
@@ -104,6 +107,53 @@ export function MobilePlayer({
   const current = chapters[sceneIndex];
   const hasPrev = sceneIndex > 0;
   const hasNext = sceneIndex < chapters.length - 1;
+  const openedTaskRef = useRef(false);
+  const previousChapterRef = useRef<MobileChapter | null>(null);
+  const completedTaskRef = useRef(false);
+
+  const recordTaskEvent = useCallback(
+    (eventType: Parameters<typeof recordTaskLearningEvent>[0]['eventType'], chapter = current) => {
+      if (!taskId) return;
+      recordTaskLearningEvent({
+        taskId,
+        courseId,
+        eventType,
+        sceneId: chapter?.sceneId,
+        sceneOrder: chapter?.order,
+      }).catch(() => {});
+    },
+    [courseId, current, taskId],
+  );
+
+  useEffect(() => {
+    if (!taskId || !current) return;
+    if (!openedTaskRef.current) {
+      openedTaskRef.current = true;
+      recordTaskEvent('task_opened', current);
+    }
+    const previous = previousChapterRef.current;
+    if (previous && previous.sceneId !== current.sceneId) {
+      recordTaskEvent('scene_completed', previous);
+    }
+    recordTaskEvent('scene_started', current);
+    previousChapterRef.current = current;
+  }, [current, recordTaskEvent, taskId]);
+
+  useEffect(() => {
+    if (!taskId) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      recordTaskLearningEvent({
+        taskId,
+        courseId,
+        eventType: 'heartbeat',
+        sceneId: current?.sceneId,
+        sceneOrder: current?.order,
+        metadata: { activeSeconds: 30 },
+      }).catch(() => {});
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [courseId, current, taskId]);
 
   const goPrev = useCallback(() => {
     if (!hasPrev) return;
@@ -136,51 +186,51 @@ export function MobilePlayer({
         throw new Error('本课程提问次数已用完');
       }
 
-    const mc = getCurrentModelConfig();
+      const mc = getCurrentModelConfig();
 
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [
-          {
-            id: `user-${Date.now()}`,
-            role: 'user',
-            parts: [{ type: 'text', text: question }],
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: `user-${Date.now()}`,
+              role: 'user',
+              parts: [{ type: 'text', text: question }],
+            },
+          ],
+          // Build minimal but valid Scene objects for the AI to know the
+          // current chapter context. Type is preserved from the original
+          // scene (slide / quiz / interactive / pbl).
+          storeState: {
+            scenes: chapters.map((c) => ({
+              id: c.sceneId,
+              stageId: '',
+              title: c.title,
+              order: c.order,
+              type: c.sceneType,
+              content: { type: c.sceneType },
+            })),
+            currentSceneId: current?.sceneId ?? null,
+            mode: 'autonomous',
+            whiteboardOpen: false,
           },
-        ],
-        // Build minimal but valid Scene objects for the AI to know the
-        // current chapter context. Type is preserved from the original
-        // scene (slide / quiz / interactive / pbl).
-        storeState: {
-          scenes: chapters.map((c) => ({
-            id: c.sceneId,
-            stageId: '',
-            title: c.title,
-            order: c.order,
-            type: c.sceneType,
-            content: { type: c.sceneType },
-          })),
-          currentSceneId: current?.sceneId ?? null,
-          mode: 'autonomous',
-          whiteboardOpen: false,
-        },
-        config: {
-          // Pass empty agentIds so the server picks the user's default
-          // agent set from their profile. This is the safest path
-          // because we don't know the exact id format used here.
-          agentIds: [],
-          sessionType: 'qa',
-        },
-        directorState: { turnCount: 0 },
-        // Server-side LLM config — mirrors what use-chat-sessions sends
-        // in the PC flow so the mobile Q&A endpoint behaves identically.
-        apiKey: mc.apiKey,
-        baseUrl: mc.baseUrl,
-        model: mc.modelString,
-        providerType: mc.providerType,
-      }),
-    });
+          config: {
+            // Pass empty agentIds so the server picks the user's default
+            // agent set from their profile. This is the safest path
+            // because we don't know the exact id format used here.
+            agentIds: [],
+            sessionType: 'qa',
+          },
+          directorState: { turnCount: 0 },
+          // Server-side LLM config — mirrors what use-chat-sessions sends
+          // in the PC flow so the mobile Q&A endpoint behaves identically.
+          apiKey: mc.apiKey,
+          baseUrl: mc.baseUrl,
+          model: mc.modelString,
+          providerType: mc.providerType,
+        }),
+      });
 
       if (!res.ok) {
         throw new Error(`提问失败：HTTP ${res.status}`);
@@ -226,11 +276,50 @@ export function MobilePlayer({
       // Increment counter only after we got a successful reply
       const newCount = incrementQuestionCount(courseId);
       setQuestionsLeft(QUESTION_LIMIT - newCount);
+      if (taskId) {
+        recordTaskLearningEvent({
+          taskId,
+          courseId,
+          eventType: 'question_asked',
+          sceneId: current?.sceneId,
+          sceneOrder: current?.order,
+          metadata: { question },
+        }).catch(() => {});
+      }
 
       return combined || '（AI 没有返回内容，请重试）';
     },
-    [courseId, chapters, current],
+    [courseId, chapters, current, taskId],
   );
+
+  const completeTask = useCallback(async () => {
+    if (!taskId || !current || completedTaskRef.current) return;
+    completedTaskRef.current = true;
+    try {
+      await recordTaskLearningEvent({
+        taskId,
+        courseId,
+        eventType: 'scene_completed',
+        sceneId: current.sceneId,
+        sceneOrder: current.order,
+      });
+      const result = await recordTaskLearningEvent({
+        taskId,
+        courseId,
+        eventType: 'task_completed',
+        sceneId: current.sceneId,
+        sceneOrder: current.order,
+      });
+      if (!result.completed) {
+        completedTaskRef.current = false;
+        window.alert(
+          '\u8bf7\u5148\u5b8c\u6210\u5fc5\u5b66\u7ae0\u8282\u548c\u5fc5\u505a\u68c0\u67e5\u9898\u3002',
+        );
+      }
+    } catch {
+      completedTaskRef.current = false;
+    }
+  }, [courseId, current, taskId]);
 
   // === Loading state during hydration ===
   const heading = useMemo(() => {
@@ -282,10 +371,7 @@ export function MobilePlayer({
           <ProgressBar
             current={sceneIndex + 1}
             total={chapters.length}
-            completed={Math.min(
-              chapters.length,
-              Math.max(0, (sceneIndex + 1)),
-            )}
+            completed={Math.min(chapters.length, Math.max(0, sceneIndex + 1))}
           />
 
           <AudioPlayer
@@ -329,6 +415,17 @@ export function MobilePlayer({
               下一章 ▶
             </button>
           </div>
+          {taskId && !hasNext && (
+            <div className="px-4 pb-3">
+              <button
+                type="button"
+                onClick={() => void completeTask()}
+                className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              >
+                &#23436;&#25104;&#23398;&#20064;
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

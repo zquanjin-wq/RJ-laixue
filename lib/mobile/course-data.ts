@@ -27,6 +27,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import type { Scene } from '@/lib/types/stage';
+import { loadTaskSnapshot } from '@/lib/server/learning-tasks/snapshot-loader';
 
 export interface MobileCourse {
   id: string;
@@ -50,6 +51,7 @@ export interface MobileCourse {
 
 export async function loadMobileCourse(
   courseId: string,
+  taskId?: string,
 ): Promise<MobileCourse | null> {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -81,6 +83,34 @@ export async function loadMobileCourse(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
+
+  // Task mode: authoritative snapshot only.
+  if (taskId) {
+    const result = await loadTaskSnapshot(user.id, taskId);
+    if (!result.ok) return null;
+
+    const data = result.data;
+    const stage = data.stage as Record<string, unknown> | undefined;
+    const tvc = stage?.teacherVoiceConfig as
+      | { providerId: string; voiceId: string; modelId?: string }
+      | undefined;
+
+    return {
+      id: courseId,
+      title: (stage?.name as string) || '未命名课件',
+      topic: (stage?.topic as string) || '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      data: {
+        stage: data.stage,
+        scenes: Array.isArray(data.scenes) ? (data.scenes as Scene[]) : [],
+        outlines: Array.isArray(data.outlines) ? data.outlines : [],
+      },
+      teacherVoiceConfig: tvc
+        ? { providerId: tvc.providerId, voiceId: tvc.voiceId, modelId: tvc.modelId }
+        : undefined,
+    };
+  }
 
   // Use service_role to bypass RLS. Same pattern as the existing
   // /api/courses/[id] route.

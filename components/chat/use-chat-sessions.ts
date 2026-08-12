@@ -1099,6 +1099,14 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
           createdAt: now,
         },
       };
+      window.dispatchEvent(
+        new CustomEvent('laixue:question-asked', {
+          detail: {
+            sceneId: useStageStore.getState().currentSceneId,
+            question: content,
+          },
+        }),
+      );
 
       // Read current session data from ref (avoids stale closure AND keeps updater pure)
       const existingSession = sessionsRef.current.find((s) => s.id === sessionId);
@@ -1111,7 +1119,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
       // fails, causing the Q&A system prompt to be skipped even though the
       // message-based fallback should technically catch it.
       const sessionType: SessionType =
-        existingSession?.type === 'lecture' ? 'qa' : (existingSession?.type || 'qa');
+        existingSession?.type === 'lecture' ? 'qa' : existingSession?.type || 'qa';
 
       // Pure updater — no side effects
       setSessions((prev) => {

@@ -15,13 +15,14 @@ import { MobilePlayer } from './_components/MobilePlayer';
 
 interface PageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ share?: string; student?: string; view?: string }>;
+  searchParams: Promise<{ share?: string; student?: string; view?: string; task?: string }>;
 }
 
 export default async function MobilePlayerPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const sp = await searchParams;
   const isShareMode = sp.share === '1';
+  const taskId = sp.task;
 
   const serverSupabase = await getServerSupabase();
   const {
@@ -29,10 +30,11 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
   } = await serverSupabase.auth.getUser();
 
   if (!user) {
-    redirect(`/login?next=${encodeURIComponent(`/m/${id}`)}`);
+    const next = taskId ? `/m/${id}?task=${encodeURIComponent(taskId)}` : `/m/${id}`;
+    redirect(`/login?next=${encodeURIComponent(next)}`);
   }
 
-  const course = await loadMobileCourse(id);
+  const course = await loadMobileCourse(id, taskId);
   if (!course) {
     notFound();
   }
@@ -51,12 +53,8 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
           >
             ← 返回
           </Link>
-          <h1 className="flex-1 text-sm font-medium truncate">
-            {course.title || '未命名课件'}
-          </h1>
-          <span className="text-xs text-muted-foreground shrink-0">
-            {chapters.length} 章
-          </span>
+          <h1 className="flex-1 text-sm font-medium truncate">{course.title || '未命名课件'}</h1>
+          <span className="text-xs text-muted-foreground shrink-0">{chapters.length} 章</span>
         </div>
       </header>
 
@@ -65,6 +63,7 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
         courseTitle={course.title || '未命名课件'}
         chapters={chapters}
         isShareMode={isShareMode}
+        taskId={taskId}
       />
     </main>
   );
