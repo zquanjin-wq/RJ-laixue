@@ -10,8 +10,8 @@ import { redirect } from 'next/navigation';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 import { resolveActor } from '@/lib/server/learning-tasks/permissions';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { TaskListFilters } from './_components/task-list-filters';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,36 +25,6 @@ type TaskRow = {
   created_by: string;
   created_at: string;
 };
-
-function statusLabel(status: string) {
-  switch (status) {
-    case 'draft':
-      return '草稿';
-    case 'published':
-      return '已发布';
-    case 'closed':
-      return '已关闭';
-    case 'archived':
-      return '已归档';
-    default:
-      return status;
-  }
-}
-
-function statusBadgeVariant(status: string) {
-  switch (status) {
-    case 'draft':
-      return 'secondary';
-    case 'published':
-      return 'default';
-    case 'closed':
-      return 'destructive';
-    case 'archived':
-      return 'outline';
-    default:
-      return 'secondary';
-  }
-}
 
 export default async function AdminLearningTasksPage() {
   const serverSupabase = await getServerSupabase();
@@ -165,35 +135,21 @@ export default async function AdminLearningTasksPage() {
             </Card>
           )}
 
-          {enriched.map((t) => (
-            <article
-              key={t.id}
-              className="rounded-lg border bg-background p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
-            >
-              <div className="space-y-1 min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium truncate">{t.title || '未命名任务'}</span>
-                  <Badge variant={statusBadgeVariant(t.status) as any}>
-                    {statusLabel(t.status)}
-                  </Badge>
-                </div>
-                <div className="text-xs text-muted-foreground">课程包：{t.course_count} 门课程</div>
-                <div className="text-xs text-muted-foreground">
-                  学员 {t.learner_count} 人 · 已完成 {t.completed_count} 人
-                  {t.start_at && ` · 开始 ${new Date(t.start_at).toLocaleString('zh-CN')}`}
-                  {t.due_at && ` · 截止 ${new Date(t.due_at).toLocaleString('zh-CN')}`}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  创建于 {new Date(t.created_at).toLocaleString('zh-CN')}
-                </div>
-              </div>
-              <div className="flex gap-2 md:flex-shrink-0">
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/admin/learning-tasks/${t.id}`}>查看详情</Link>
-                </Button>
-              </div>
-            </article>
-          ))}
+          {enriched.length > 0 && (
+            <TaskListFilters
+              tasks={enriched.map((task) => ({
+                id: task.id,
+                title: task.title,
+                status: task.status as 'draft' | 'published' | 'closed' | 'archived',
+                startAt: task.start_at,
+                dueAt: task.due_at,
+                createdAt: task.created_at,
+                courseCount: task.course_count,
+                learnerCount: task.learner_count,
+                completedCount: task.completed_count,
+              }))}
+            />
+          )}
         </section>
       </div>
     </main>
