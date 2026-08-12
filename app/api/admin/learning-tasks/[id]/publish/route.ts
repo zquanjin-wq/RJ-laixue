@@ -32,6 +32,23 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
 
     const svc = getServiceSupabase();
 
+    // Gate 2A only enables authoring a course package. Publishing the package
+    // waits for 2B, when every item receives its own snapshot and learner entry.
+    const { count: courseCount } = await svc
+      .from('task_courses')
+      .select('id', { count: 'exact', head: true })
+      .eq('task_id', taskId);
+    if ((courseCount ?? 1) > 1) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: '课程组合的发布将在下一阶段开放，请先保存草稿。',
+          errorCode: 'COURSE_PACKAGE_PUBLISH_PENDING',
+        },
+        { status: 400 },
+      );
+    }
+
     // 查任务 course_id 再查课程 data 计算 canonical hash（TS 单层唯一 hash 来源）
     const { data: task } = await svc
       .from('learning_tasks')

@@ -64,9 +64,26 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       )
       .eq('task_id', taskId);
 
+    const { data: taskCourses } = await serviceSupabase
+      .from('task_courses')
+      .select('course_id, position, is_required, snapshot_id')
+      .eq('task_id', taskId)
+      .order('position');
+    const courseIds = (taskCourses ?? []).map((item) => item.course_id);
+    const { data: courses } = courseIds.length
+      ? await serviceSupabase.from('courses').select('id, title').in('id', courseIds)
+      : { data: [] };
+    const titleById = new Map((courses ?? []).map((course) => [course.id, course.title]));
     return NextResponse.json({
       success: true,
-      data: { ...task, learners: learners ?? [] },
+      data: {
+        ...task,
+        learners: learners ?? [],
+        courses: (taskCourses ?? []).map((item) => ({
+          ...item,
+          title: titleById.get(item.course_id) ?? null,
+        })),
+      },
     });
   } catch (error: unknown) {
     console.error('[admin/learning-tasks/[id]] get failed:', error);

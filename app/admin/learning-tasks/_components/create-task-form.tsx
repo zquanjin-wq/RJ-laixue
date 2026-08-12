@@ -8,13 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { toTaskTimestamp } from '@/lib/utils/task-datetime';
 
@@ -48,7 +41,7 @@ const ERROR_COPY: Record<string, string> = {
 
 export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
   const router = useRouter();
-  const [courseId, setCourseId] = useState('');
+  const [courseIds, setCourseIds] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startAt, setStartAt] = useState('');
@@ -76,7 +69,7 @@ export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError('');
-    if (!courseId || !title.trim()) {
+    if (!courseIds.length || !title.trim()) {
       setError(ERROR_COPY.MISSING_FIELDS);
       return;
     }
@@ -91,7 +84,7 @@ export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          courseId,
+          courseIds,
           title: title.trim(),
           description: description.trim() || undefined,
           startAt: toTaskTimestamp(startAt),
@@ -120,20 +113,68 @@ export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
 
   return (
     <form onSubmit={submit} className="space-y-6">
-      <div className="space-y-2">
-        <Label htmlFor="course">课程 *</Label>
-        <Select value={courseId} onValueChange={setCourseId} disabled={courses.length === 0}>
-          <SelectTrigger id="course" className="w-full md:w-96">
-            <SelectValue placeholder={courses.length === 0 ? '暂无可用课程' : '选择课程'} />
-          </SelectTrigger>
-          <SelectContent>
-            {courses.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.title || '未命名课件'}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="space-y-3">
+        <div>
+          <Label>课程组合 *</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            可选择多门课程；排序即学员后续的学习顺序。
+          </p>
+        </div>
+        <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
+          {courses.map((course) => {
+            const selected = courseIds.includes(course.id);
+            const index = courseIds.indexOf(course.id);
+            const move = (direction: -1 | 1) => {
+              const nextIndex = index + direction;
+              if (nextIndex < 0 || nextIndex >= courseIds.length) return;
+              const next = [...courseIds];
+              [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+              setCourseIds(next);
+            };
+            return (
+              <div key={course.id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={selected}
+                  onCheckedChange={() =>
+                    setCourseIds(
+                      selected
+                        ? courseIds.filter((id) => id !== course.id)
+                        : [...courseIds, course.id],
+                    )
+                  }
+                />
+                <span className="min-w-0 flex-1 truncate">{course.title || '未命名课程'}</span>
+                {selected && (
+                  <>
+                    <span className="text-xs text-muted-foreground">第 {index + 1} 门</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={index === 0}
+                      onClick={() => move(-1)}
+                    >
+                      上移
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={index === courseIds.length - 1}
+                      onClick={() => move(1)}
+                    >
+                      下移
+                    </Button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+          {courses.length === 0 && <p className="text-sm text-muted-foreground">暂无可用课程。</p>}
+        </div>
+        {courseIds.length > 0 && (
+          <p className="text-xs text-muted-foreground">已选 {courseIds.length} 门课程。</p>
+        )}
       </div>
 
       <div className="space-y-2">

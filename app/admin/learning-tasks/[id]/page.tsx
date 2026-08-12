@@ -47,6 +47,13 @@ interface TaskDetail {
   snapshot_id: string | null;
   source_task_id: string | null;
   completion_rule: unknown;
+  courses: Array<{
+    course_id: string;
+    position: number;
+    is_required: boolean;
+    snapshot_id: string | null;
+    title: string | null;
+  }>;
   learners: Array<{
     id: string;
     student_id: string;
@@ -103,6 +110,8 @@ export default function LearningTaskDetailPage() {
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [students, setStudents] = useState<StudentOption[]>([]);
   const [course, setCourse] = useState<CourseInfo | null>(null);
+  const [availableCourses, setAvailableCourses] = useState<CourseInfo[]>([]);
+  const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -138,9 +147,10 @@ export default function LearningTaskDetailPage() {
     setLoading(true);
     setError('');
     try {
-      const [taskRes, studentsRes] = await Promise.all([
+      const [taskRes, studentsRes, coursesRes] = await Promise.all([
         fetch(`/api/admin/learning-tasks/${taskId}`),
         fetch('/api/admin/students'),
+        fetch('/api/courses'),
       ]);
       const taskJson = (await taskRes.json()) as {
         success: boolean;
@@ -164,9 +174,20 @@ export default function LearningTaskDetailPage() {
       setStartAt(t.start_at ? formatForDatetimeLocal(t.start_at) : '');
       setDueAt(t.due_at ? formatForDatetimeLocal(t.due_at) : '');
       setSelectedLearners(new Set(t.learners.map((l) => l.student_id)));
+      setSelectedCourses(t.courses?.map((item) => item.course_id) ?? [t.course_id]);
 
       if (studentsJson.success && studentsJson.data) {
         setStudents(studentsJson.data);
+      }
+
+      const coursesJson = (await coursesRes.json()) as {
+        success: boolean;
+        data?: Array<{ id: string; title?: string | null }>;
+      };
+      if (coursesRes.ok && coursesJson.success) {
+        setAvailableCourses(
+          (coursesJson.data ?? []).map((item) => ({ id: item.id, title: item.title ?? null })),
+        );
       }
 
       // 课程标题
@@ -236,6 +257,29 @@ export default function LearningTaskDetailPage() {
       const json = (await res.json()) as { success: boolean; error?: string; errorCode?: string };
       if (!res.ok || !json.success) {
         setError(json.error ?? '更新学员名单失败');
+        return;
+      }
+      await load();
+    } catch {
+      setError('网络异常，请重试。');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveCoursePackage() {
+    if (!task || !selectedCourses.length) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/learning-tasks/${task.id}/courses`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ courseIds: selectedCourses }),
+      });
+      const json = (await res.json()) as { success: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        setError(json.error ?? '保存课程组合失败');
         return;
       }
       await load();
@@ -434,6 +478,86 @@ export default function LearningTaskDetailPage() {
             {isDraft && (
               <Button onClick={saveDraft} disabled={saving || !!timeError}>
                 {saving ? '保存中...' : '保存修改'}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="text-base">课程组合</CardTitle>
+            <CardDescription>
+              {isDraft
+                ? '可添加、删除或调整课程顺序；发布后组合会保留发布时版本。'
+                : '本次任务的课程组合与学习顺序。'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2 rounded-md border p-3">
+              {(isDraft
+                ? availableCourses
+                : task.courses.map((item) => ({ id: item.course_id, title: item.title }))
+              ).map((item) => {
+                const selected = selectedCourses.includes(item.id);
+                const index = selectedCourses.indexOf(item.id);
+                const move = (direction: -1 | 1) => {
+                  const nextIndex = index + direction;
+                  if (nextIndex < 0 || nextIndex >= selectedCourses.length) return;
+                  const next = [...selectedCourses];
+                  [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+                  setSelectedCourses(next);
+                };
+                return (
+                  <div key={item.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={selected}
+                      disabled={!isDraft}
+                      onCheckedChange={() =>
+                        setSelectedCourses(
+                          selected
+                            ? selectedCourses.filter((id) => id !== item.id)
+                            : [...selectedCourses, item.id],
+                        )
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate">{item.title || '未命名课程'}</span>
+                    {selected && (
+                      <>
+                        <span className="text-xs text-muted-foreground">第 {index + 1} 门</span>
+                        {isDraft && (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={index === 0}
+                              onClick={() => move(-1)}
+                            >
+                              上移
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={index === selectedCourses.length - 1}
+                              onClick={() => move(1)}
+                            >
+                              下移
+                            </Button>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              {!task.courses.length && !isDraft && (
+                <p className="text-sm text-muted-foreground">暂无课程组合记录。</p>
+              )}
+            </div>
+            {isDraft && (
+              <Button onClick={saveCoursePackage} disabled={saving || !selectedCourses.length}>
+                {saving ? '保存中...' : '保存课程组合'}
               </Button>
             )}
           </CardContent>

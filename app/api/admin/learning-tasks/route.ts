@@ -103,7 +103,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const courseId = typeof body.courseId === 'string' ? body.courseId : '';
+  const rawCourseIds = Array.isArray(body.courseIds) ? body.courseIds : [body.courseId];
+  const courseIds = [
+    ...new Set(rawCourseIds.filter((id): id is string => typeof id === 'string' && id.length > 0)),
+  ];
+  const courseId = courseIds[0] ?? '';
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const description = typeof body.description === 'string' ? body.description : undefined;
   const taskType =
@@ -151,8 +155,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const permission = await checkCoursePublishPermission(user.id, courseId);
-    if (!permission.ok) {
+    for (const selectedCourseId of courseIds) {
+      const permission = await checkCoursePublishPermission(user.id, selectedCourseId);
+      if (permission.ok) continue;
       const ec =
         permission.reason === 'course_not_found'
           ? 'COURSE_NOT_FOUND'
@@ -220,6 +225,13 @@ export async function POST(request: NextRequest) {
     if (rpcError) throw rpcError;
 
     const taskId = (rpcResult as Record<string, unknown>).task_id;
+    if (courseIds.length >= 1) {
+      const { error: packageError } = await svc.rpc('replace_task_courses', {
+        p_task_id: taskId,
+        p_course_ids: courseIds,
+      });
+      if (packageError) throw packageError;
+    }
     const { data: created } = await svc
       .from('learning_tasks')
       .select(
