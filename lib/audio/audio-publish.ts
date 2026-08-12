@@ -2,7 +2,7 @@ import type { Action, SpeechAction } from '@/lib/types/action';
 import type { Scene } from '@/lib/types/stage';
 import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
-import { uploadCourseBlob, uploadCourseBlobsConcurrently, type ConcurrentUploadTask } from '@/lib/course-assets/client';
+import { uploadCourseBlob, uploadCourseBlobsConcurrently } from '@/lib/course-assets/client';
 import { enqueueTTSFetchTask } from '@/lib/audio/tts-queue';
 
 const log = createLogger('AudioPublish');
@@ -71,16 +71,6 @@ function contentTypeForAudio(format?: string): string {
   return `audio/${normalized}`;
 }
 
-async function uploadAudioRecordToCloud(input: {
-  stageId: string;
-  audioId: string;
-  record: AudioFileRecord;
-}): Promise<string> {
-  const { stageId, record } = input;
-
-  return uploadCourseBlob(stageId, 'audio', record.blob);
-}
-
 /** Upload a raw ArrayBuffer/Blob directly to Supabase Storage. */
 async function uploadBlobToCloud(input: {
   stageId: string;
@@ -89,7 +79,11 @@ async function uploadBlobToCloud(input: {
   format: string;
 }): Promise<string> {
   const { stageId, data, format } = input;
-  return uploadCourseBlob(stageId, 'audio', new Blob([data], { type: contentTypeForAudio(format) }));
+  return uploadCourseBlob(
+    stageId,
+    'audio',
+    new Blob([data], { type: contentTypeForAudio(format) }),
+  );
 }
 
 /**
@@ -106,6 +100,11 @@ export interface TeacherVoiceConfig {
   modelId?: string;
 }
 
+export interface PublishSceneAudioAssetsOptions {
+  /** Ignore every existing audio reference and synthesize with the supplied voice. */
+  forceRegenerate?: boolean;
+}
+
 async function resolveTtsConfigForPublish(
   teacherVoiceConfig?: TeacherVoiceConfig | null,
   sceneId?: string,
@@ -119,7 +118,9 @@ async function resolveTtsConfigForPublish(
 }> {
   // ── Priority 1: stage.teacherVoiceConfig ──
   if (teacherVoiceConfig?.providerId && teacherVoiceConfig.voiceId) {
-    const providerId = `${teacherVoiceConfig.providerId}-tts`;
+    const providerId = teacherVoiceConfig.providerId.endsWith('-tts')
+      ? teacherVoiceConfig.providerId
+      : `${teacherVoiceConfig.providerId}-tts`;
     const voice = teacherVoiceConfig.voiceId;
     const modelId = teacherVoiceConfig.modelId || 'speech-2.8-hd';
 
@@ -129,7 +130,10 @@ async function resolveTtsConfigForPublish(
     try {
       const { useSettingsStore } = await import('@/lib/store/settings');
       const s = useSettingsStore.getState();
-      const cfg = s.ttsProvidersConfig as unknown as Record<string, { apiKey?: string; baseUrl?: string; customDefaultBaseUrl?: string; modelId?: string }>;
+      const cfg = s.ttsProvidersConfig as unknown as Record<
+        string,
+        { apiKey?: string; baseUrl?: string; customDefaultBaseUrl?: string; modelId?: string }
+      >;
       const providerCfg = cfg?.[providerId];
       apiKey = providerCfg?.apiKey;
       baseUrl = providerCfg?.baseUrl || providerCfg?.customDefaultBaseUrl;
@@ -137,14 +141,24 @@ async function resolveTtsConfigForPublish(
       // Settings store unavailable — TTS API may reject, but we log the source correctly.
     }
 
-    const result = { providerId, voice, modelId, apiKey, baseUrl, source: 'stage.teacherVoiceConfig' as const };
-    console.info('[MOBILE PUBLISH][TTS Voice Resolve]', JSON.stringify({
-      sceneId: sceneId ?? '(unknown)',
-      source: result.source,
-      providerId: result.providerId,
-      voiceId: result.voice,
-      modelId: result.modelId,
-    }));
+    const result = {
+      providerId,
+      voice,
+      modelId,
+      apiKey,
+      baseUrl,
+      source: 'stage.teacherVoiceConfig' as const,
+    };
+    console.info(
+      '[MOBILE PUBLISH][TTS Voice Resolve]',
+      JSON.stringify({
+        sceneId: sceneId ?? '(unknown)',
+        source: result.source,
+        providerId: result.providerId,
+        voiceId: result.voice,
+        modelId: result.modelId,
+      }),
+    );
     return result;
   }
 
@@ -155,20 +169,26 @@ async function resolveTtsConfigForPublish(
 
     const providerId = settings.ttsProviderId || 'minimax-tts';
     const voice = settings.ttsVoice || 'female-yujie';
-    const cfg = settings.ttsProvidersConfig as unknown as Record<string, { apiKey?: string; baseUrl?: string; customDefaultBaseUrl?: string; modelId?: string }>;
+    const cfg = settings.ttsProvidersConfig as unknown as Record<
+      string,
+      { apiKey?: string; baseUrl?: string; customDefaultBaseUrl?: string; modelId?: string }
+    >;
     const providerCfg = cfg?.[providerId];
     const modelId = providerCfg?.modelId || 'speech-2.8-hd';
     const apiKey = providerCfg?.apiKey;
     const baseUrl = providerCfg?.baseUrl || providerCfg?.customDefaultBaseUrl;
 
     const result = { providerId, voice, modelId, apiKey, baseUrl, source: 'settings' as const };
-    console.info('[MOBILE PUBLISH][TTS Voice Resolve]', JSON.stringify({
-      sceneId: sceneId ?? '(unknown)',
-      source: result.source,
-      providerId: result.providerId,
-      voiceId: result.voice,
-      modelId: result.modelId,
-    }));
+    console.info(
+      '[MOBILE PUBLISH][TTS Voice Resolve]',
+      JSON.stringify({
+        sceneId: sceneId ?? '(unknown)',
+        source: result.source,
+        providerId: result.providerId,
+        voiceId: result.voice,
+        modelId: result.modelId,
+      }),
+    );
     return result;
   } catch {
     // Settings store not available — fall through to hard default.
@@ -181,13 +201,16 @@ async function resolveTtsConfigForPublish(
     modelId: 'speech-2.8-hd',
     source: 'provider-default' as const,
   };
-  console.info('[MOBILE PUBLISH][TTS Voice Resolve]', JSON.stringify({
-    sceneId: sceneId ?? '(unknown)',
-    source: result.source,
-    providerId: result.providerId,
-    voiceId: result.voice,
-    modelId: result.modelId,
-  }));
+  console.info(
+    '[MOBILE PUBLISH][TTS Voice Resolve]',
+    JSON.stringify({
+      sceneId: sceneId ?? '(unknown)',
+      source: result.source,
+      providerId: result.providerId,
+      voiceId: result.voice,
+      modelId: result.modelId,
+    }),
+  );
   return result;
 }
 
@@ -268,9 +291,7 @@ function extractNarrationTextForTTS(scene: Scene, speechAction: SpeechAction): s
     | string
     | undefined;
   if (narrationText?.trim()) return narrationText.trim();
-  const content = (scene as unknown as Record<string, unknown>).content as
-    | string
-    | undefined;
+  const content = (scene as unknown as Record<string, unknown>).content as string | undefined;
   if (content?.trim()) return content.trim();
   return '';
 }
@@ -310,8 +331,9 @@ function isInteractiveScene(scene: Scene): boolean {
   const kind = (scene as unknown as Record<string, unknown>).kind as string | undefined;
   if (kind && INTERACTIVE_SCENE_KINDS.has(kind)) return true;
 
-  const interactionType = (scene as unknown as Record<string, unknown>)
-    .interactionType as string | undefined;
+  const interactionType = (scene as unknown as Record<string, unknown>).interactionType as
+    | string
+    | undefined;
   if (interactionType && INTERACTIVE_SCENE_KINDS.has(interactionType)) return true;
 
   const content = scene.content as unknown as Record<string, unknown> | undefined;
@@ -341,12 +363,16 @@ export async function publishSceneAudioAssets(
   stageId: string,
   scenes: Scene[],
   teacherVoiceConfig?: TeacherVoiceConfig | null,
+  options: PublishSceneAudioAssetsOptions = {},
 ): Promise<PublishSceneAudioAssetsResult> {
-  console.info('[MOBILE PUBLISH][Audio Assets Start]', JSON.stringify({
-    stageId,
-    totalScenes: scenes.length,
-    timestamp: new Date().toISOString(),
-  }));
+  console.info(
+    '[MOBILE PUBLISH][Audio Assets Start]',
+    JSON.stringify({
+      stageId,
+      totalScenes: scenes.length,
+      timestamp: new Date().toISOString(),
+    }),
+  );
 
   const nextScenes = structuredClone(scenes) as Scene[];
 
@@ -382,8 +408,10 @@ export async function publishSceneAudioAssets(
   }[] = [];
 
   for (const scene of nextScenes) {
-    // Skip interactive scenes — they don't need audio for mobile podcast mode.
-    if (isInteractiveScene(scene)) continue;
+    // Normal publishing skips interactive scenes for mobile podcast mode.
+    // A deliberate course revoice must still replace every teacher speech
+    // action so desktop/classroom playback cannot retain the previous voice.
+    if (!options.forceRegenerate && isInteractiveScene(scene)) continue;
 
     const actions = scene.actions ?? [];
 
@@ -400,8 +428,13 @@ export async function publishSceneAudioAssets(
       const actionId = speechAction.id;
       const audioId = speechAction.audioId;
 
+      if (options.forceRegenerate) {
+        delete speechAction.audioId;
+        delete speechAction.audioUrl;
+      }
+
       // ── Tier 1: Already has cloud URL ──
-      if (speechAction.audioUrl) {
+      if (!options.forceRegenerate && speechAction.audioUrl) {
         skipped.push({
           sceneId,
           sceneOrder,
@@ -413,7 +446,7 @@ export async function publishSceneAudioAssets(
       }
 
       // ── Tier 2: Has audioId → try IndexedDB blob ──
-      if (audioId) {
+      if (!options.forceRegenerate && audioId) {
         const record = await db.audioFiles.get(audioId);
 
         if (record?.blob) {
@@ -427,38 +460,45 @@ export async function publishSceneAudioAssets(
             blob: record.blob,
             source: 'indexeddb',
           });
-          console.info('[MOBILE PUBLISH][Audio Queued]', JSON.stringify({
-            audioId,
-            sceneId,
-            source: 'indexeddb-blob',
-            timestamp: new Date().toISOString(),
-          }));
+          console.info(
+            '[MOBILE PUBLISH][Audio Queued]',
+            JSON.stringify({
+              audioId,
+              sceneId,
+              source: 'indexeddb-blob',
+              timestamp: new Date().toISOString(),
+            }),
+          );
           continue;
         }
 
         // audioId exists but no blob in IndexedDB — fall through to Tier 3
-        console.info('[MOBILE PUBLISH][Audio Blob Missing Generate TTS]', JSON.stringify({
-          audioId,
-          sceneId,
-          timestamp: new Date().toISOString(),
-        }));
-        log.info(
-          `audioId ${audioId} has no IndexedDB blob, will regenerate TTS`,
+        console.info(
+          '[MOBILE PUBLISH][Audio Blob Missing Generate TTS]',
+          JSON.stringify({
+            audioId,
+            sceneId,
+            timestamp: new Date().toISOString(),
+          }),
         );
+        log.info(`audioId ${audioId} has no IndexedDB blob, will regenerate TTS`);
       }
 
       // ── Tier 3: No audioUrl, no blob → regenerate TTS ──
       const narrationText = extractNarrationTextForTTS(scene, speechAction);
 
-      console.info('[TTS INPUT][Scene Audio]', JSON.stringify({
-        sceneId,
-        sceneTitle: scene.title || `(order ${sceneOrder})`,
-        speechActionCount: (actions as unknown as SpeechAction[]).filter(isSpeechAction).length,
-        firstSpeechTextLength: narrationText.length,
-        fullTextLength: narrationText.length, // single-action = same as first
-        fullTextPreview: narrationText.slice(0, 120),
-        sourceField: `speechAction[${actionId}].text (individual)`,
-      }));
+      console.info(
+        '[TTS INPUT][Scene Audio]',
+        JSON.stringify({
+          sceneId,
+          sceneTitle: scene.title || `(order ${sceneOrder})`,
+          speechActionCount: (actions as unknown as SpeechAction[]).filter(isSpeechAction).length,
+          firstSpeechTextLength: narrationText.length,
+          fullTextLength: narrationText.length, // single-action = same as first
+          fullTextPreview: narrationText.slice(0, 120),
+          sourceField: `speechAction[${actionId}].text (individual)`,
+        }),
+      );
 
       if (!narrationText) {
         missing.push({
@@ -471,13 +511,17 @@ export async function publishSceneAudioAssets(
         continue;
       }
 
-      const regenAudioId = audioId || `pub_${sceneId.slice(0, 8)}_${Date.now()}`;
+      const regenAudioId = options.forceRegenerate
+        ? `voice_${sceneId.slice(0, 8)}_${actionId.slice(0, 8)}_${Date.now()}`
+        : audioId || `pub_${sceneId.slice(0, 8)}_${Date.now()}`;
 
       // Content-idempotent check: same (voice, speed, text) → reuse existing audio
       const ttsVoice = teacherVoiceConfig?.voiceId ?? 'default';
       const ttsSpeed = 1.0; // publish always uses speed 1.0
       const contentHash = ttsContentHash(ttsVoice, ttsSpeed, narrationText);
-      const existingAudio = await db.audioFiles.get(contentHash);
+      const existingAudio = options.forceRegenerate
+        ? undefined
+        : await db.audioFiles.get(contentHash);
 
       if (existingAudio?.blob) {
         speechAction.audioId = regenAudioId;
@@ -521,31 +565,34 @@ export async function publishSceneAudioAssets(
         });
 
         // Store under content hash for future idempotent reuse
-        db.audioFiles.put({
-          id: contentHash,
-          blob: new Blob([data], { type: contentTypeForAudio(format) }),
-          mimeType: contentTypeForAudio(format),
-          size: data.byteLength,
-          createdAt: Date.now(),
-        } as any).catch((e) => {
-          // Best-effort: idempotent cache failures must not block publish
-          log.warn(`Failed to cache TTS idempotent entry for hash=${contentHash}:`, e);
-        });
+        db.audioFiles
+          .put({
+            id: contentHash,
+            blob: new Blob([data], { type: contentTypeForAudio(format) }),
+            format: normalizeAudioFormat(format),
+            mimeType: contentTypeForAudio(format),
+            size: data.byteLength,
+            createdAt: Date.now(),
+          } as AudioFileRecord)
+          .catch((e) => {
+            // Best-effort: idempotent cache failures must not block publish
+            log.warn(`Failed to cache TTS idempotent entry for hash=${contentHash}:`, e);
+          });
 
-        console.info('[TTS OUTPUT][Scene Audio]', JSON.stringify({
-          sceneId,
-          audioId: regenAudioId,
-          inputTextLength: narrationText.length,
-          source: 'individual-speech-action-queued',
-          timestamp: new Date().toISOString(),
-        }));
-
-        log.info(
-          `TTS regenerated (queued for batch upload): ${regenAudioId}`,
+        console.info(
+          '[TTS OUTPUT][Scene Audio]',
+          JSON.stringify({
+            sceneId,
+            audioId: regenAudioId,
+            inputTextLength: narrationText.length,
+            source: 'individual-speech-action-queued',
+            timestamp: new Date().toISOString(),
+          }),
         );
+
+        log.info(`TTS regenerated (queued for batch upload): ${regenAudioId}`);
       } catch (error) {
-        const errMsg =
-          error instanceof Error ? error.message : String(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
         log.error(`TTS regeneration failed for ${regenAudioId}:`, errMsg);
 
         failed.push({
@@ -572,6 +619,11 @@ export async function publishSceneAudioAssets(
     if (allSpeechActions.length > 0) {
       const fullText = extractFullNarrationText(scene);
       const sceneRaw = scene as unknown as Record<string, unknown>;
+      if (options.forceRegenerate) {
+        delete sceneRaw.narrationAudioUrl;
+        delete sceneRaw.narrationAudioId;
+        delete sceneRaw.narrationAudioTextHash;
+      }
 
       // Only attempt narration TTS for short texts that fit in one API call.
       const NARRATION_MAX_CHARS = 500;
@@ -582,26 +634,32 @@ export async function publishSceneAudioAssets(
         const existingHash = sceneRaw.narrationAudioTextHash as string | undefined;
         const shouldRegenerate = !(existingUrl && existingHash === textHash);
 
-        console.info('[TTS INPUT][Scene Narration Audio]', JSON.stringify({
-          sceneId: scene.id,
-          sceneTitle: scene.title || `(order ${scene.order})`,
-          speechActionCount: allSpeechActions.length,
-          fullTextLength: fullText.length,
-          fullTextPreview: fullText.slice(0, 120),
-          textHash,
-          narrationAudioId,
-          existingNarrationAudioUrl: existingUrl ?? '(none)',
-          shouldRegenerate,
-          sourceField: 'scene.actions[*].text joined (narration, short)',
-        }));
+        console.info(
+          '[TTS INPUT][Scene Narration Audio]',
+          JSON.stringify({
+            sceneId: scene.id,
+            sceneTitle: scene.title || `(order ${scene.order})`,
+            speechActionCount: allSpeechActions.length,
+            fullTextLength: fullText.length,
+            fullTextPreview: fullText.slice(0, 120),
+            textHash,
+            narrationAudioId,
+            existingNarrationAudioUrl: existingUrl ?? '(none)',
+            shouldRegenerate,
+            sourceField: 'scene.actions[*].text joined (narration, short)',
+          }),
+        );
 
         if (!shouldRegenerate) {
-          console.info('[TTS SKIP][Scene Narration Audio]', JSON.stringify({
-            sceneId: scene.id,
-            narrationAudioId,
-            textHash,
-            reason: 'hash match — unchanged',
-          }));
+          console.info(
+            '[TTS SKIP][Scene Narration Audio]',
+            JSON.stringify({
+              sceneId: scene.id,
+              narrationAudioId,
+              textHash,
+              reason: 'hash match — unchanged',
+            }),
+          );
         } else {
           try {
             const { data: narrData, format: narrFormat } = await generateTTSForText(
@@ -622,14 +680,17 @@ export async function publishSceneAudioAssets(
             sceneRaw.narrationAudioId = narrationAudioId;
             sceneRaw.narrationAudioTextHash = textHash;
 
-            console.info('[TTS OUTPUT][Scene Narration Audio]', JSON.stringify({
-              sceneId: scene.id,
-              narrationAudioUrl: narrAudioUrl.slice(0, 80),
-              narrationAudioId,
-              inputTextLength: fullText.length,
-              textHash,
-              timestamp: new Date().toISOString(),
-            }));
+            console.info(
+              '[TTS OUTPUT][Scene Narration Audio]',
+              JSON.stringify({
+                sceneId: scene.id,
+                narrationAudioUrl: narrAudioUrl.slice(0, 80),
+                narrationAudioId,
+                inputTextLength: fullText.length,
+                textHash,
+                timestamp: new Date().toISOString(),
+              }),
+            );
 
             regenerated.push({
               sceneId: scene.id,
@@ -647,45 +708,59 @@ export async function publishSceneAudioAssets(
             // BEST-EFFORT: warn but NEVER block publish or push to failed[].
             // The mobile player will use audioSegments (speech action audios) instead.
             const errMsg = error instanceof Error ? error.message : String(error);
-            log.warn(`Narration TTS best-effort failed for scene=${scene.id} (non-blocking): ${errMsg}`);
-            console.warn('[TTS OUTPUT][Scene Narration Audio]', JSON.stringify({
-              sceneId: scene.id,
-              error: errMsg,
-              source: 'narration-audio best-effort FAILED (non-blocking)',
-              fallback: 'mobile player will use audioSegments (speech action audios)',
-              timestamp: new Date().toISOString(),
-            }));
+            log.warn(
+              `Narration TTS best-effort failed for scene=${scene.id} (non-blocking): ${errMsg}`,
+            );
+            console.warn(
+              '[TTS OUTPUT][Scene Narration Audio]',
+              JSON.stringify({
+                sceneId: scene.id,
+                error: errMsg,
+                source: 'narration-audio best-effort FAILED (non-blocking)',
+                fallback: 'mobile player will use audioSegments (speech action audios)',
+                timestamp: new Date().toISOString(),
+              }),
+            );
           }
         }
       } else if (fullText) {
         // Text too long for single TTS call — skip narration generation.
         // Mobile player uses audioSegments path (sequential speech action playback).
-        console.info('[TTS SKIP][Scene Narration Audio]', JSON.stringify({
-          sceneId: scene.id,
-          reason: `text too long (${fullText.length} chars > ${NARRATION_MAX_CHARS} limit), mobile player uses audioSegments`,
-          speechActionCount: allSpeechActions.length,
-          fallback: 'audioSegments (speechAction.audioUrl sequential playback)',
-        }));
+        console.info(
+          '[TTS SKIP][Scene Narration Audio]',
+          JSON.stringify({
+            sceneId: scene.id,
+            reason: `text too long (${fullText.length} chars > ${NARRATION_MAX_CHARS} limit), mobile player uses audioSegments`,
+            speechActionCount: allSpeechActions.length,
+            fallback: 'audioSegments (speechAction.audioUrl sequential playback)',
+          }),
+        );
       }
     }
   }
 
-  console.info('[MOBILE PUBLISH][Audio Assets Done]', JSON.stringify({
-    stageId,
-    skipped: skipped.length,
-    uploaded: uploaded.length,
-    regenerated: regenerated.length,
-    missing: missing.length,
-    failed: failed.length,
-    timestamp: new Date().toISOString(),
-  }));
+  console.info(
+    '[MOBILE PUBLISH][Audio Assets Done]',
+    JSON.stringify({
+      stageId,
+      skipped: skipped.length,
+      uploaded: uploaded.length,
+      regenerated: regenerated.length,
+      missing: missing.length,
+      failed: failed.length,
+      timestamp: new Date().toISOString(),
+    }),
+  );
 
   // ── Batch-upload all pending audio blobs (6-concurrency pool) ──
   if (pendingUploads.length > 0) {
-    console.info('[MOBILE PUBLISH][Batch Upload Start]', JSON.stringify({
-      totalPending: pendingUploads.length,
-      timestamp: new Date().toISOString(),
-    }));
+    console.info(
+      '[MOBILE PUBLISH][Batch Upload Start]',
+      JSON.stringify({
+        totalPending: pendingUploads.length,
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const tasks = pendingUploads.map((p) => ({
       id: p.audioId,
@@ -735,11 +810,14 @@ export async function publishSceneAudioAssets(
     }
     pendingUploads.length = 0;
 
-    console.info('[MOBILE PUBLISH][Batch Upload Done]', JSON.stringify({
-      uploaded: batchUploaded,
-      failed: batchFailed,
-      timestamp: new Date().toISOString(),
-    }));
+    console.info(
+      '[MOBILE PUBLISH][Batch Upload Done]',
+      JSON.stringify({
+        uploaded: batchUploaded,
+        failed: batchFailed,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 
   return {
@@ -781,9 +859,7 @@ export interface AudioAssetValidationResult {
  * Called after publishSceneAudioAssets() to verify the result before
  * saving to cloud. Also usable independently for pre-flight checks.
  */
-export function validatePublishedAudioAssets(
-  scenes: Scene[],
-): AudioAssetValidationResult {
+export function validatePublishedAudioAssets(scenes: Scene[]): AudioAssetValidationResult {
   const issues: AudioAssetValidationIssue[] = [];
   let totalLearnable = 0;
   let validCount = 0;
@@ -813,7 +889,7 @@ export function validatePublishedAudioAssets(
     }
 
     const hasAudioUrl = speechActions.some(
-      (a) => !!((a as SpeechAction & { audioUrl?: string }).audioUrl),
+      (a) => !!(a as SpeechAction & { audioUrl?: string }).audioUrl,
     );
 
     if (!hasAudioUrl) {

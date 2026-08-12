@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import path from 'node:path';
 
 const e2eAuthAlias: Record<string, string> = {};
 if (process.env.E2E_TEST_MODE === '1') {
@@ -24,6 +25,28 @@ const nextConfig: NextConfig = {
       '@openmaic/storage': './packages/@openmaic/storage/dist/index.js',
       ...e2eAuthAlias,
     },
+  },
+  // Keep webpack production builds on the same generated workspace entries as
+  // Turbopack. Without this, tsconfig's source mapping makes webpack follow
+  // the DSL source's `.js` sibling imports, which do not exist until TypeScript
+  // emits the package's dist files.
+  webpack: (config) => {
+    // `JsConfigPathsPlugin` otherwise re-applies tsconfig's source-only
+    // workspace mappings after this alias table. That is useful to tsc but
+    // invalid for webpack because the package source imports emitted `.js`
+    // siblings. Runtime bundling must use the package's generated entries.
+    config.resolve.plugins = config.resolve.plugins?.filter(
+      (plugin: { constructor?: { name?: string } }) =>
+        plugin.constructor?.name !== 'JsConfigPathsPlugin',
+    );
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@': process.cwd(),
+      '@openmaic/dsl/schema': path.resolve(process.cwd(), 'packages/@openmaic/dsl/dist/schema'),
+      '@openmaic/dsl': path.resolve(process.cwd(), 'packages/@openmaic/dsl/dist/index.js'),
+      '@openmaic/storage': path.resolve(process.cwd(), 'packages/@openmaic/storage/dist/index.js'),
+    };
+    return config;
   },
   // These agent packages do a runtime `import(specifier)` with a computed
   // specifier (to lazily load node:fs/os/path without breaking browser/Vite
