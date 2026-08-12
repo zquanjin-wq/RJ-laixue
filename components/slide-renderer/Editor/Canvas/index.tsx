@@ -171,7 +171,39 @@ export function Canvas(_props: CanvasProps) {
     setLinkDialogVisible(true);
   };
 
-  const { pasteElement, selectAllElements, deleteAllElements } = useCanvasOperations();
+  const { copyElement, cutElement, pasteElement, selectAllElements, deleteAllElements } =
+    useCanvasOperations();
+
+  useEffect(() => {
+    const handleClipboardShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '')
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === 'c') {
+        if (!activeElementIdList.length) return;
+        event.preventDefault();
+        copyElement();
+      } else if (key === 'x') {
+        if (!activeElementIdList.length) return;
+        event.preventDefault();
+        cutElement();
+      } else if (key === 'v') {
+        event.preventDefault();
+        pasteElement();
+      }
+    };
+
+    document.addEventListener('keydown', handleClipboardShortcut);
+    return () => document.removeEventListener('keydown', handleClipboardShortcut);
+  }, [activeElementIdList.length, copyElement, cutElement, pasteElement]);
 
   const contextmenus = (): ContextmenuItem[] => {
     return [

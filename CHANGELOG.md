@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pro-mode slide element clipboard** — Implement copy, cut, and paste for selected slide elements, including `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, and `Ctrl/Cmd+V`. The editor-local clipboard avoids browser permission constraints while preserving structured slide data. Pasted elements receive new IDs, retain copied group relationships under a new group ID, and offset by 20px per paste. Pro-mode clipboard actions now use the canonical slide-edit operation path, so they participate in undo/redo and auto-save through the stage store's Dexie persistence. This replaces the upstream OpenMAIC placeholder handlers that reported `Not implemented`.
+
 ## [0.3.0] - 2026-06-28
 
 ### License

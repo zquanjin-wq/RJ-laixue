@@ -60,6 +60,7 @@ export type SlideEditOperation =
       type: 'element.duplicate';
       elementIds: string[];
       idMap: Record<string, string>;
+      groupIdMap?: Record<string, string>;
       offset?: {
         x: number;
         y: number;
@@ -247,6 +248,7 @@ function applyOperationToContent(
 
         const offset = operation.offset ?? { x: 20, y: 20 };
         const elementIds = new Set(operation.elementIds);
+        const groupIdMap = new Map<string, string>();
         const duplicatedElements = draft.canvas.elements
           .filter((element) => elementIds.has(element.id))
           .map((element) => {
@@ -258,9 +260,19 @@ function applyOperationToContent(
             // keep the kernel's invariants independent of which mutation
             // shape future op consumers pick.
             const source = structuredClone(current(element)) as PPTElement;
+            const sourceGroupId = source.groupId;
+            let copiedGroupId: string | undefined;
+            if (sourceGroupId) {
+              if (!groupIdMap.has(sourceGroupId)) {
+                groupIdMap.set(sourceGroupId, crypto.randomUUID());
+              }
+              copiedGroupId =
+                operation.groupIdMap?.[sourceGroupId] ?? groupIdMap.get(sourceGroupId);
+            }
             return {
               ...source,
               id: operation.idMap[source.id],
+              ...(copiedGroupId ? { groupId: copiedGroupId } : {}),
               left: source.left + offset.x,
               top: source.top + offset.y,
             };

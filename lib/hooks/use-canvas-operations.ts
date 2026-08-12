@@ -32,6 +32,7 @@ import { ElementAlignCommands, ElementOrderCommands } from '@/lib/types/edit';
 import { getElementListRange } from '@/lib/utils/element';
 import { useOrderElement } from './use-order-element';
 import { nanoid } from 'nanoid';
+import { useSlideEditSession } from '@/components/edit/surfaces/slide/slide-edit-session';
 
 type PPTElementKey = keyof PPTElement;
 
@@ -44,6 +45,23 @@ interface UpdateElementData {
   id: string | string[];
   props: Partial<PPTElement>;
   slideId?: string;
+}
+
+interface ElementClipboardData {
+  elementIds: string[];
+  pasteCount: number;
+}
+
+let elementClipboard: ElementClipboardData | null = null;
+
+const PASTE_OFFSET = 20;
+
+function createGroupIdMap(elements: PPTElement[]): Record<string, string> {
+  return Object.fromEntries(
+    [...new Set(elements.flatMap((element) => (element.groupId ? [element.groupId] : [])))].map(
+      (groupId) => [groupId, nanoid(10)],
+    ),
+  );
 }
 
 export function useCanvasOperations() {
@@ -180,32 +198,88 @@ export function useCanvasOperations() {
 
   // Copy selected element data to clipboard
   const copyElement = () => {
-    // if (!activeElementIdList.length) return
+    if (!activeElementList.length) return false;
 
-    // const text = JSON.stringify({
-    //   type: 'elements',
-    //   data: activeElementList,
-    // })
-
-    // copyText(text).then(() => {
-    //   setEditorareaFocus(true)
-    // })
-    toast.warning('Not implemented');
+    elementClipboard = {
+      elementIds: activeElementList.map((element) => element.id),
+      pasteCount: 0,
+    };
+    _setEditorareaFocus(true);
+    toast.success(`已复制 ${activeElementList.length} 个元素`);
+    return true;
   };
 
   // Copy and delete selected elements (cut)
   const cutElement = () => {
-    // copyElement()
-    // deleteElement()
-    toast.warning('Not implemented');
+    if (!copyElement()) return;
+
+    const editSession = useSlideEditSession.getState();
+    if (editSession.history) {
+      editSession.applyOp({ type: 'element.deleteMany', elementIds: activeElementIdList });
+      setActiveElementIdList([]);
+      return;
+    }
+    deleteElement();
   };
 
-  // Attempt to paste element data from clipboard
+  // Paste element data from the editor-local clipboard. Browser clipboard
+  // access is permission-gated and cannot safely preserve the slide DSL's
+  // structured element data.
   const pasteElement = () => {
-    // readClipboard().then(text => {
-    //   pasteTextClipboardData(text)
-    // }).catch(err => toast.warning(err))
-    toast.warning('Not implemented');
+    if (!elementClipboard?.elementIds.length) {
+      toast.message('请先复制页面元素');
+      return;
+    }
+
+    const elementIds = elementClipboard.elementIds.filter((id) =>
+      currentSlide.elements.some((element) => element.id === id),
+    );
+    if (!elementIds.length) {
+      toast.message('复制的元素已不存在，请重新复制');
+      return;
+    }
+
+    elementClipboard.pasteCount += 1;
+    const idMap = Object.fromEntries(elementIds.map((id) => [id, nanoid(10)]));
+    const sourceElements = currentSlide.elements.filter((element) =>
+      elementIds.includes(element.id),
+    );
+    const groupIdMap = createGroupIdMap(sourceElements);
+    const offset = PASTE_OFFSET * elementClipboard.pasteCount;
+
+    // Professional mode owns slide changes through its operation session.
+    // This gives paste the same write-through, undo/redo, and Dexie
+    // persistence guarantees as inspector actions.
+    const editSession = useSlideEditSession.getState();
+    if (editSession.history) {
+      editSession.applyOp({
+        type: 'element.duplicate',
+        elementIds,
+        idMap,
+        groupIdMap,
+        offset: { x: offset, y: offset },
+      });
+    } else {
+      const pastedElements = currentSlide.elements
+        .filter((element) => elementIds.includes(element.id))
+        .map((element) => ({
+          ...structuredClone(element),
+          id: idMap[element.id],
+          ...(element.groupId && groupIdMap[element.groupId]
+            ? { groupId: groupIdMap[element.groupId] }
+            : {}),
+          left: element.left + offset,
+          top: element.top + offset,
+        }));
+      updateSceneData((draft) => {
+        draft.canvas.elements.push(...pastedElements);
+      });
+      addHistorySnapshot();
+    }
+
+    setActiveElementIdList(elementIds.map((id) => idMap[id]));
+    _setEditorareaFocus(true);
+    toast.success(`已粘贴 ${elementIds.length} 个元素`);
   };
 
   // Copy and immediately paste selected elements

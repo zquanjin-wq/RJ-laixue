@@ -296,6 +296,29 @@ describe('slide.update contract', () => {
 });
 
 describe('element.duplicate contract', () => {
+  test('assigns copied group members a new shared group id', () => {
+    const original = slideContent([
+      textElement({ id: 'a', groupId: 'source-group' }),
+      textElement({ id: 'b', groupId: 'source-group' }),
+    ]);
+
+    const updated = applySlideEditOperation(original, {
+      type: 'element.duplicate',
+      elementIds: ['a', 'b'],
+      idMap: { a: 'a-copy', b: 'b-copy' },
+      groupIdMap: { 'source-group': 'copied-group' },
+    });
+
+    expect(updated.canvas.elements.slice(2).map((element) => element.groupId)).toEqual([
+      'copied-group',
+      'copied-group',
+    ]);
+    expect(updated.canvas.elements.slice(0, 2).map((element) => element.groupId)).toEqual([
+      'source-group',
+      'source-group',
+    ]);
+  });
+
   test('uses the default offset {x:20, y:20} when no offset is given', () => {
     const original = slideContent([textElement({ id: 'a', left: 100, top: 50 })]);
 
