@@ -80,6 +80,64 @@ export default async function LearnTaskPage({ params }: PageProps) {
     );
   }
 
+  if ((entry.courses?.length ?? 0) > 1) {
+    return (
+      <TaskCoursePackage
+        taskId={entry.taskId}
+        title={entry.title}
+        token={token}
+        courses={entry.courses ?? []}
+      />
+    );
+  }
   const target = `/classroom/${encodeURIComponent(entry.courseId)}?task=${encodeURIComponent(entry.taskId)}&share=1`;
   redirect(target);
+}
+
+function TaskCoursePackage({
+  taskId,
+  title,
+  token,
+  courses,
+}: {
+  taskId: string;
+  title: string | null;
+  token: string;
+  courses: Array<{ courseId: string; title: string | null; position: number }>;
+}) {
+  return (
+    <main className="min-h-screen bg-background px-4 py-10">
+      <div className="mx-auto max-w-2xl space-y-6">
+        <header>
+          <p className="text-sm font-medium text-primary">学习任务</p>
+          <h1 className="mt-1 text-2xl font-semibold">{title || '课程学习任务'}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">请按顺序学习本次任务中的课程。</p>
+        </header>
+        <Card>
+          <CardContent className="space-y-3 p-5">
+            {courses.map((course) => (
+              <Link
+                key={course.courseId}
+                href={`/classroom/${encodeURIComponent(course.courseId)}?task=${encodeURIComponent(taskId)}&course=${encodeURIComponent(course.courseId)}&share=1`}
+                className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50"
+              >
+                <div>
+                  <p className="text-xs text-muted-foreground">第 {course.position} 门</p>
+                  <p className="mt-1 font-medium">{course.title || '未命名课程'}</p>
+                </div>
+                <span className="text-sm text-primary">进入学习</span>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+        <Button asChild variant="outline">
+          <Link
+            href={`/student/courses?task=${encodeURIComponent(taskId)}&token=${encodeURIComponent(token)}`}
+          >
+            返回学习首页
+          </Link>
+        </Button>
+      </div>
+    </main>
+  );
 }

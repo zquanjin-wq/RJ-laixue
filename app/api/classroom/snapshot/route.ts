@@ -12,6 +12,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   const taskId = request.nextUrl.searchParams.get('taskId');
+  const courseId = request.nextUrl.searchParams.get('courseId') || undefined;
   if (!taskId) {
     return NextResponse.json(
       { success: false, error: '缺少 taskId', errorCode: 'MISSING_TASK_ID' },
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const result = await loadTaskSnapshot(user.id, taskId);
+  const result = await loadTaskSnapshot(user.id, taskId, courseId);
 
   if (!result.ok) {
     return NextResponse.json(

@@ -12,6 +12,7 @@ export type TaskEntryResult =
       ok: true;
       taskId: string;
       courseId: string;
+      courses?: Array<{ courseId: string; title: string | null; position: number }>;
       title: string | null;
       actor: 'learner' | 'preview';
       status: 'enterable' | 'not_started_yet';
@@ -34,6 +35,22 @@ export async function resolveTaskEntry(userId: string, token: string): Promise<T
     return { ok: false, error: '任务不存在', errorCode: 'TASK_NOT_FOUND', status: 404 };
   }
 
+  const { data: taskCourses } = await svc
+    .from('task_courses')
+    .select('course_id, position')
+    .eq('task_id', task.id)
+    .order('position');
+  const packageCourseIds = (taskCourses ?? []).map((item) => item.course_id);
+  const { data: courseRows } = packageCourseIds.length
+    ? await svc.from('courses').select('id, title').in('id', packageCourseIds)
+    : { data: [] };
+  const titles = new Map((courseRows ?? []).map((course) => [course.id, course.title]));
+  const courses = (taskCourses ?? []).map((item) => ({
+    courseId: item.course_id,
+    title: titles.get(item.course_id) ?? null,
+    position: item.position,
+  }));
+
   if (task.status !== 'published') {
     return { ok: false, error: '任务不存在或未发布', errorCode: 'TASK_NOT_FOUND', status: 404 };
   }
@@ -45,6 +62,7 @@ export async function resolveTaskEntry(userId: string, token: string): Promise<T
       ok: true,
       taskId: task.id,
       courseId: task.course_id,
+      courses,
       title: task.title,
       actor: 'preview',
       status: 'enterable',
@@ -59,6 +77,7 @@ export async function resolveTaskEntry(userId: string, token: string): Promise<T
       ok: true,
       taskId: task.id,
       courseId: task.course_id,
+      courses,
       title: task.title,
       actor: 'preview',
       status: 'enterable',
@@ -106,6 +125,7 @@ export async function resolveTaskEntry(userId: string, token: string): Promise<T
       ok: true,
       taskId: task.id,
       courseId: task.course_id,
+      courses,
       title: task.title,
       actor: 'learner',
       status: 'not_started_yet',
@@ -116,6 +136,7 @@ export async function resolveTaskEntry(userId: string, token: string): Promise<T
     ok: true,
     taskId: task.id,
     courseId: task.course_id,
+    courses,
     title: task.title,
     actor: 'learner',
     status: 'enterable',

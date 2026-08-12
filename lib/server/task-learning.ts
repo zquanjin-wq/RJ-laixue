@@ -78,20 +78,32 @@ export async function recordTaskLearningEvent(
     .maybeSingle();
   if (taskError || !task)
     return { ok: false, error: '任务不存在', errorCode: 'TASK_NOT_FOUND', status: 404 };
-  if (task.status !== 'published' || task.course_id !== input.courseId || !task.snapshot_id) {
+  if (task.status !== 'published') {
     return { ok: false, error: '任务当前不可学习', errorCode: 'TASK_NOT_ACTIVE', status: 403 };
   }
+
+  const { data: taskCourse } = await svc
+    .from('task_courses')
+    .select('snapshot_id, is_required')
+    .eq('task_id', input.taskId)
+    .eq('course_id', input.courseId)
+    .maybeSingle();
+  const snapshotId =
+    taskCourse?.snapshot_id ?? (task.course_id === input.courseId ? task.snapshot_id : null);
+  if (!snapshotId)
+    return { ok: false, error: '课程不在此任务中', errorCode: 'COURSE_NOT_IN_TASK', status: 403 };
 
   const { data: snapshot } = await svc
     .from('course_snapshots')
     .select('snapshot_data')
-    .eq('id', task.snapshot_id)
+    .eq('id', snapshotId)
     .maybeSingle();
   if (!snapshot)
     return { ok: false, error: '任务快照不可用', errorCode: 'SNAPSHOT_NOT_FOUND', status: 404 };
 
   const { error: insertError } = await svc.from('task_learning_events').insert({
     task_id: input.taskId,
+    course_id: input.courseId,
     student_id: permission.studentId,
     client_event_id: input.clientEventId,
     event_type: input.eventType,
@@ -121,6 +133,7 @@ export async function recordTaskLearningEvent(
     .from('task_learning_events')
     .select('event_type, scene_id, payload')
     .eq('task_id', input.taskId)
+    .eq('course_id', input.courseId)
     .eq('student_id', permission.studentId);
   if (eventsError) throw eventsError;
 
@@ -165,7 +178,7 @@ export async function recordTaskLearningEvent(
       ? Math.max(0, Math.min(30, Math.round(input.metadata.activeSeconds)))
       : 0;
   const now = new Date().toISOString();
-  const patch: Record<string, unknown> = {
+  const coursePatch: Record<string, unknown> = {
     status: completed ? 'completed' : 'in_progress',
     progress_percent: progressPercent,
     completed_scene_count: Math.min(completedScenes.size, allScenes.length),
@@ -174,20 +187,63 @@ export async function recordTaskLearningEvent(
     last_scene_id: input.sceneId ?? null,
     mastery_percent: masteryPercent,
   };
-  if (input.eventType === 'task_opened') patch.started_at = now;
-  if (input.eventType === 'task_completed') patch.completion_requested_at = now;
-  if (completed) patch.completed_at = now;
+  if (input.eventType === 'task_opened') coursePatch.started_at = now;
+  if (completed) coursePatch.completed_at = now;
   if (activeSeconds > 0) {
-    const { data: learner } = await svc
-      .from('task_learners')
+    const { data: courseProgressRow } = await svc
+      .from('task_course_progress')
       .select('effective_seconds')
-      .eq('id', permission.taskLearnerId)
+      .eq('task_id', input.taskId)
+      .eq('student_id', permission.studentId)
+      .eq('course_id', input.courseId)
       .maybeSingle();
-    patch.effective_seconds = (learner?.effective_seconds ?? 0) + activeSeconds;
+    coursePatch.effective_seconds =
+      Number(courseProgressRow?.effective_seconds ?? 0) + activeSeconds;
   }
+  const { error: courseUpdateError } = await svc
+    .from('task_course_progress')
+    .update(coursePatch)
+    .eq('task_id', input.taskId)
+    .eq('student_id', permission.studentId)
+    .eq('course_id', input.courseId);
+  if (courseUpdateError) throw courseUpdateError;
+
+  const { data: courseProgress } = await svc
+    .from('task_course_progress')
+    .select('course_id, status, progress_percent, effective_seconds')
+    .eq('task_id', input.taskId)
+    .eq('student_id', permission.studentId);
+  const { data: requiredCourses } = await svc
+    .from('task_courses')
+    .select('course_id')
+    .eq('task_id', input.taskId)
+    .eq('is_required', true);
+  const requiredIds = new Set((requiredCourses ?? []).map((item) => item.course_id));
+  const requiredProgress = (courseProgress ?? []).filter((item) => requiredIds.has(item.course_id));
+  const taskCompleted =
+    requiredProgress.length > 0 && requiredProgress.every((item) => item.status === 'completed');
+  const taskProgress = requiredProgress.length
+    ? Math.round(
+        requiredProgress.reduce((sum, item) => sum + Number(item.progress_percent ?? 0), 0) /
+          requiredProgress.length,
+      )
+    : 0;
+  const totalEffectiveSeconds = (courseProgress ?? []).reduce(
+    (sum, item) => sum + Number(item.effective_seconds ?? 0),
+    0,
+  );
+  const taskPatch: Record<string, unknown> = {
+    status: taskCompleted ? 'completed' : 'in_progress',
+    progress_percent: taskProgress,
+    effective_seconds: totalEffectiveSeconds,
+    last_seen_at: now,
+  };
+  if (input.eventType === 'task_opened') taskPatch.started_at = now;
+  if (input.eventType === 'task_completed') taskPatch.completion_requested_at = now;
+  if (taskCompleted) taskPatch.completed_at = now;
   const { error: updateError } = await svc
     .from('task_learners')
-    .update(patch)
+    .update(taskPatch)
     .eq('id', permission.taskLearnerId);
   if (updateError) throw updateError;
 

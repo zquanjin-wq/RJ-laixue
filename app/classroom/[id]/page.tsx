@@ -161,7 +161,11 @@ export default function ClassroomDetailPage() {
   const loadTaskSnapshot = useCallback(async () => {
     if (!taskId) return false;
 
-    const res = await fetch(`/api/classroom/snapshot?taskId=${encodeURIComponent(taskId)}`);
+    const selectedCourseId =
+      new URLSearchParams(window.location.search).get('course') || classroomId;
+    const res = await fetch(
+      `/api/classroom/snapshot?taskId=${encodeURIComponent(taskId)}&courseId=${encodeURIComponent(selectedCourseId)}`,
+    );
     const json = await res.json().catch(() => ({ success: false, error: '快照加载失败' }));
 
     if (!res.ok || !json.success) {

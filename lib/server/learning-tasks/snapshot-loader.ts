@@ -29,6 +29,7 @@ export type SnapshotLoadResult =
 export async function loadTaskSnapshot(
   userId: string,
   taskId: string,
+  courseId?: string,
 ): Promise<SnapshotLoadResult> {
   const svc = getServiceSupabase();
 
@@ -121,14 +122,24 @@ export async function loadTaskSnapshot(
   }
 
   // 5. 读取快照
-  if (!task.snapshot_id) {
+  let snapshotId = task.snapshot_id;
+  if (courseId) {
+    const { data: taskCourse } = await svc
+      .from('task_courses')
+      .select('snapshot_id')
+      .eq('task_id', taskId)
+      .eq('course_id', courseId)
+      .maybeSingle();
+    snapshotId = taskCourse?.snapshot_id ?? null;
+  }
+  if (!snapshotId) {
     return { ok: false, error: '任务未绑定课程快照', errorCode: 'SNAPSHOT_MISSING', status: 500 };
   }
 
   const { data: snapshot, error: snapshotError } = await svc
     .from('course_snapshots')
     .select('snapshot_data')
-    .eq('id', task.snapshot_id)
+    .eq('id', snapshotId)
     .maybeSingle();
 
   if (snapshotError || !snapshot) {
