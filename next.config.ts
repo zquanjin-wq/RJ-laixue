@@ -10,7 +10,13 @@ if (process.env.E2E_TEST_MODE === '1') {
 
 const nextConfig: NextConfig = {
   output: process.env.VERCEL ? undefined : 'standalone',
-  transpilePackages: ['mathml2omml', 'pptxgenjs', '@openmaic/importer'],
+  transpilePackages: [
+    'mathml2omml',
+    'pptxgenjs',
+    '@openmaic/dsl',
+    '@openmaic/importer',
+    '@openmaic/storage',
+  ],
   // tsc needs the workspace source mappings in tsconfig for type checking,
   // but Turbopack must consume the built ESM entries. The source indexes import
   // sibling files as `.js`, which Turbopack does not remap to `.ts` in a
