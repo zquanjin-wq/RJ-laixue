@@ -30,6 +30,17 @@ type ReportData = {
     completionRate: number;
     questionsAsked: number;
   }>;
+  courses: Array<{
+    courseId: string;
+    title: string;
+    position: number;
+    isRequired: boolean;
+    learnerCount: number;
+    startedCount: number;
+    completedCount: number;
+    completionRate: number;
+    effectiveSeconds: number;
+  }>;
 };
 
 export function TaskReport({ taskId }: { taskId: string }) {
@@ -68,6 +79,44 @@ export function TaskReport({ taskId }: { taskId: string }) {
             <Metric label="完成率" value={`${report.overview.completionRate}%`} />
             <Metric label="有效时长" value={formatDuration(report.overview.effectiveSeconds)} />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="text-base">课程组合进度</CardTitle>
+          <CardDescription>以任务为范围查看每门课程的学习情况。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {report.courses.map((course) => (
+            <div key={course.courseId} className="rounded-md border p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-medium">
+                    第 {course.position} 门·{course.title}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {course.isRequired ? '必修' : '选修'} · 已开始 {course.startedCount}/
+                    {course.learnerCount} 人
+                  </p>
+                </div>
+                <span className="text-sm font-medium">{course.completionRate}% 完成</span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${course.completionRate}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                已完成 {course.completedCount}/{course.learnerCount} 人 · 有效时长{' '}
+                {formatDuration(course.effectiveSeconds)}
+              </p>
+            </div>
+          ))}
+          {report.courses.length === 0 && (
+            <p className="text-sm text-muted-foreground">暂无课程组合数据。</p>
+          )}
         </CardContent>
       </Card>
 

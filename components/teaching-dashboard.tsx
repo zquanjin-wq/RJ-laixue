@@ -105,8 +105,8 @@ export function TeachingDashboard() {
                 <CardDescription>所有已发布学习任务的汇总。</CardDescription>
               </div>
               <Button asChild variant="ghost" size="sm">
-                <Link href="/admin/learning-tasks">
-                  查看任务 <ChevronRight className="ml-1 size-4" />
+                <Link href="/teaching-data">
+                  进入数据中心 <ChevronRight className="ml-1 size-4" />
                 </Link>
               </Button>
             </CardHeader>

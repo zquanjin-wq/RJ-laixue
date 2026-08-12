@@ -70,19 +70,31 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       );
     }
 
-    const [{ data: learnerRows, error: learnerError }, { data: eventRows, error: eventError }] =
-      await Promise.all([
-        serviceSupabase
-          .from('task_learners')
-          .select(
-            'student_id, status, progress_percent, mastery_percent, effective_seconds, last_seen_at',
-          )
-          .eq('task_id', taskId),
-        serviceSupabase
-          .from('task_learning_events')
-          .select('student_id, event_type, scene_id')
-          .eq('task_id', taskId),
-      ]);
+    const [
+      { data: learnerRows, error: learnerError },
+      { data: eventRows, error: eventError },
+      { data: taskCourses },
+      { data: courseProgress },
+    ] = await Promise.all([
+      serviceSupabase
+        .from('task_learners')
+        .select(
+          'student_id, status, progress_percent, mastery_percent, effective_seconds, last_seen_at',
+        )
+        .eq('task_id', taskId),
+      serviceSupabase
+        .from('task_learning_events')
+        .select('student_id, event_type, scene_id')
+        .eq('task_id', taskId),
+      serviceSupabase
+        .from('task_courses')
+        .select('course_id, position, is_required')
+        .eq('task_id', taskId),
+      serviceSupabase
+        .from('task_course_progress')
+        .select('course_id, student_id, status, progress_percent, effective_seconds')
+        .eq('task_id', taskId),
+    ]);
     if (learnerError) throw learnerError;
     if (eventError) throw eventError;
 
@@ -92,6 +104,30 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       : { data: [], error: null };
     if (studentError) throw studentError;
     const names = new Map((students ?? []).map((student) => [student.id, student.name]));
+
+    const packageCourseIds = (taskCourses ?? []).map((item) => item.course_id);
+    const { data: courseRows } = packageCourseIds.length
+      ? await serviceSupabase.from('courses').select('id, title').in('id', packageCourseIds)
+      : { data: [] };
+    const courseTitles = new Map((courseRows ?? []).map((course) => [course.id, course.title]));
+    const courses = [...(taskCourses ?? [])]
+      .sort((a, b) => a.position - b.position)
+      .map((item) => {
+        const rows = (courseProgress ?? []).filter((row) => row.course_id === item.course_id);
+        const completed = rows.filter((row) => row.status === 'completed').length;
+        const started = rows.filter((row) => row.status !== 'not_started').length;
+        return {
+          courseId: item.course_id,
+          title: courseTitles.get(item.course_id) ?? '未命名课程',
+          position: item.position,
+          isRequired: item.is_required,
+          learnerCount: rows.length,
+          startedCount: started,
+          completedCount: completed,
+          completionRate: rows.length ? Math.round((completed / rows.length) * 100) : 0,
+          effectiveSeconds: rows.reduce((sum, row) => sum + Number(row.effective_seconds ?? 0), 0),
+        };
+      });
 
     const { data: snapshot, error: snapshotError } = task.snapshot_id
       ? await serviceSupabase
@@ -115,7 +151,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       scenes: snapshotSlides(snapshot?.snapshot_data),
     });
 
-    return NextResponse.json({ success: true, data: report });
+    return NextResponse.json({ success: true, data: { ...report, courses } });
   } catch (error) {
     console.error('[admin/learning-tasks/[id]/report] get failed:', error);
     return NextResponse.json(

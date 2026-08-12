@@ -90,19 +90,24 @@ export default async function AdminLearningTasksPage() {
   const tasks = tasksData ?? [];
   const hasError = !!queryError;
 
-  const courseIds = [...new Set(tasks.map((t) => t.course_id).filter(Boolean))];
   const taskIds = tasks.map((t) => t.id);
 
-  const [{ data: courses }, { data: learnerCounts }] = await Promise.all([
-    courseIds.length > 0
-      ? svc.from('courses').select('id, title').in('id', courseIds)
-      : Promise.resolve({ data: [] }),
-    taskIds.length > 0
-      ? svc.rpc('count_task_learners', { p_task_ids: taskIds })
-      : Promise.resolve({ data: [] }),
-  ]);
+  const [{ data: taskCourses }, { data: learnerCounts }, { data: learnerProgress }] =
+    await Promise.all([
+      taskIds.length > 0
+        ? svc.from('task_courses').select('task_id, course_id').in('task_id', taskIds)
+        : Promise.resolve({ data: [] }),
+      taskIds.length > 0
+        ? svc.rpc('count_task_learners', { p_task_ids: taskIds })
+        : Promise.resolve({ data: [] }),
+      taskIds.length > 0
+        ? svc.from('task_learners').select('task_id, status').in('task_id', taskIds)
+        : Promise.resolve({ data: [] }),
+    ]);
 
-  const titleByCourseId = new Map((courses ?? []).map((c) => [c.id, c.title]));
+  const courseCountByTaskId = new Map<string, number>();
+  for (const item of taskCourses ?? [])
+    courseCountByTaskId.set(item.task_id, (courseCountByTaskId.get(item.task_id) ?? 0) + 1);
   const countByTaskId = new Map(
     (learnerCounts ?? []).map((r: { task_id?: string; count?: number }) => [
       r.task_id,
@@ -112,8 +117,11 @@ export default async function AdminLearningTasksPage() {
 
   const enriched = tasks.map((t) => ({
     ...t,
-    course_title: (titleByCourseId.get(t.course_id) as string | null | undefined) ?? null,
+    course_count: courseCountByTaskId.get(t.id) ?? 1,
     learner_count: (countByTaskId.get(t.id) as number | undefined) ?? 0,
+    completed_count: (learnerProgress ?? []).filter(
+      (item) => item.task_id === t.id && item.status === 'completed',
+    ).length,
   }));
 
   return (
@@ -169,11 +177,9 @@ export default async function AdminLearningTasksPage() {
                     {statusLabel(t.status)}
                   </Badge>
                 </div>
+                <div className="text-xs text-muted-foreground">课程包：{t.course_count} 门课程</div>
                 <div className="text-xs text-muted-foreground">
-                  课程：{t.course_title || t.course_id}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  学员 {t.learner_count} 人
+                  学员 {t.learner_count} 人 · 已完成 {t.completed_count} 人
                   {t.start_at && ` · 开始 ${new Date(t.start_at).toLocaleString('zh-CN')}`}
                   {t.due_at && ` · 截止 ${new Date(t.due_at).toLocaleString('zh-CN')}`}
                 </div>
