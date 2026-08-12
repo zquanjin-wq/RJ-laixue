@@ -25,7 +25,16 @@ import { useSettingsStore } from '@/lib/store/settings';
 import { getTTSVoices, TTS_PROVIDERS } from '@/lib/audio/constants';
 import type { TTSProviderId } from '@/lib/audio/types';
 import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
-import { replaceTeacherVoice } from '@/lib/teacher/replace-teacher-voice';
+
+type Job = {
+  id: string;
+  status: string;
+  total: number;
+  completed: number;
+  message: string;
+  error?: string;
+  done: boolean;
+};
 
 export function TeacherVoiceControl({
   variant = 'roster',
@@ -33,8 +42,6 @@ export function TeacherVoiceControl({
   readonly variant?: 'roster' | 'header';
 }) {
   const stage = useStageStore((s) => s.stage);
-  const scenes = useStageStore((s) => s.scenes);
-  const outlines = useStageStore((s) => s.outlines);
   const setScenes = useStageStore((s) => s.setScenes);
   const updateStage = useStageStore((s) => s.updateStage);
   const settingsProvider = useSettingsStore((s) => s.ttsProviderId);
@@ -46,14 +53,51 @@ export function TeacherVoiceControl({
   const voices = useMemo(() => getTTSVoices(providerId), [providerId]);
   const [selectedVoice, setSelectedVoice] = useState(courseVoice?.voiceId || voices[0]?.id || '');
   const [open, setOpen] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
 
   useEffect(() => {
     if (!open) setSelectedVoice(courseVoice?.voiceId || voices[0]?.id || '');
   }, [courseVoice?.voiceId, open, voices]);
 
+  useEffect(() => {
+    if (!stage?.id || (!open && !job)) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `/api/courses/${encodeURIComponent(stage.id)}/revoice${job ? `?jobId=${encodeURIComponent(job.id)}` : ''}`,
+        );
+        const payload = await response.json();
+        const next = payload?.job as Job | null;
+        if (!next || stopped) return;
+        setJob(next);
+        if (next.status === 'succeeded') {
+          const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
+          const course = await courseResponse.json();
+          const data = course?.data;
+          if (data?.stage && Array.isArray(data.scenes) && !stopped) {
+            setScenes(data.scenes);
+            updateStage(data.stage);
+          }
+          toast.success('AI 老师音色已更新，配音已保存到云端');
+          setOpen(false);
+        } else if (next.status === 'failed' || next.status === 'conflict') {
+          toast.error(next.message || next.error || '重新配音未完成，课程仍使用原音色');
+        }
+        if (!next.done && !stopped) timer = setTimeout(poll, payload?.pollIntervalMs || 5000);
+      } catch {
+        if (!stopped) timer = setTimeout(poll, 8000);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [job?.id, setScenes, stage?.id, updateStage]);
+
+  const running = !!job && !job.done;
   const currentName =
     voices.find((voice) => voice.id === courseVoice?.voiceId)?.name ||
     courseVoice?.voiceId ||
@@ -61,10 +105,6 @@ export function TeacherVoiceControl({
 
   async function handleReplace() {
     if (!stage || !selectedVoice || selectedVoice === courseVoice?.voiceId) return;
-    const controller = new AbortController();
-    setRunning(true);
-    setAbortController(controller);
-    setProgress(null);
     try {
       const provider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
       const voice = {
@@ -72,34 +112,35 @@ export function TeacherVoiceControl({
         voiceId: selectedVoice,
         modelId: providerConfigs[providerId]?.modelId || provider?.defaultModelId || undefined,
       };
-      const result = await replaceTeacherVoice({
-        stage,
-        scenes,
-        outlines,
-        voice,
-        signal: controller.signal,
-        onProgress: ({ completed, total }) => setProgress({ completed, total }),
+      const response = await fetch(`/api/courses/${encodeURIComponent(stage.id)}/revoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice }),
       });
-      setScenes(result.scenes);
-      updateStage(result.stage);
-      setOpen(false);
-      toast.success('AI 老师音色已更新，配音已重新生成并保存到云端');
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success || !payload?.job)
+        throw new Error(payload?.error || '无法创建重新配音任务');
+      setJob(payload.job as Job);
+      toast.success('已加入服务端重新配音队列，可离开页面后再回来查看进度');
     } catch (error) {
-      toast.error(
-        controller.signal.aborted
-          ? '已停止重新配音，课程继续使用原音色'
-          : error instanceof Error
-            ? error.message
-            : '重新配音失败',
-      );
-    } finally {
-      setRunning(false);
-      setAbortController(null);
+      toast.error(error instanceof Error ? error.message : '重新配音失败');
+    }
+  }
+
+  async function cancelJob() {
+    if (!stage?.id || !job?.id) return setOpen(false);
+    const response = await fetch(
+      `/api/courses/${encodeURIComponent(stage.id)}/revoice?jobId=${encodeURIComponent(job.id)}`,
+      { method: 'DELETE' },
+    );
+    if (response.ok) {
+      setJob((current) => (current ? { ...current, status: 'cancelled', done: true } : current));
+      toast.success('已停止重新配音，课程继续使用原音色');
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !running && setOpen(next)}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <button
           type="button"
@@ -122,7 +163,7 @@ export function TeacherVoiceControl({
         <DialogHeader>
           <DialogTitle>更换 AI 老师音色</DialogTitle>
           <DialogDescription>
-            确认后会为整门课程重新生成讲解配音并上传云端。完成前将保留当前音色和音频；可随时停止，已上传的临时文件不会影响课程。
+            任务会在服务端持续生成和保存配音。你可离开页面，之后回到这里继续查看进度；完成前课程保持原音色。
           </DialogDescription>
         </DialogHeader>
         <Select value={selectedVoice} onValueChange={setSelectedVoice} disabled={running}>
@@ -138,11 +179,7 @@ export function TeacherVoiceControl({
           </SelectContent>
         </Select>
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => (running ? abortController?.abort() : setOpen(false))}
-            disabled={running && !abortController}
-          >
+          <Button variant="outline" onClick={() => (running ? void cancelJob() : setOpen(false))}>
             {running ? '停止并保留原音色' : '取消'}
           </Button>
           <Button
@@ -150,11 +187,7 @@ export function TeacherVoiceControl({
             disabled={running || !selectedVoice || selectedVoice === courseVoice?.voiceId}
           >
             {running && <Loader2 className="mr-2 size-4 animate-spin" />}
-            {running
-              ? progress
-                ? `正在生成配音 ${progress.completed}/${progress.total}…`
-                : '正在准备重新配音…'
-              : '确认更换并重新配音'}
+            {running ? `正在生成配音 ${job.completed}/${job.total}` : '确认更换并重新配音'}
           </Button>
         </DialogFooter>
       </DialogContent>

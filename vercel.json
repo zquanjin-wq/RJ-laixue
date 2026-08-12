@@ -1,11 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
- "installCommand": "npm install -g pnpm@latest && pnpm install --no-frozen-lockfile",
+  "installCommand": "npm install -g pnpm@latest && pnpm install --no-frozen-lockfile",
   "buildCommand": "pnpm build",
   "functions": {
     "app/api/**/*.ts": {
       "maxDuration": 300
     }
-  }
+  },
+  "crons": [{ "path": "/api/cron/course-revoice", "schedule": "* * * * *" }]
 }
