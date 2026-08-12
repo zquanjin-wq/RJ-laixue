@@ -29,7 +29,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { StageMode } from '@/lib/types/stage';
-import { TeacherVoiceControl } from '@/components/edit/TeacherVoiceControl';
 
 interface HeaderControlsProps {
   readonly mode?: StageMode;
@@ -114,7 +113,6 @@ export function HeaderControls({
   // anchors identically too.
   return (
     <div className="flex items-center gap-4">
-      {mode === 'edit' && <TeacherVoiceControl />}
       <div
         className={cn(
           'shrink-0 flex items-center gap-1 backdrop-blur-md shadow-sm rounded-full',

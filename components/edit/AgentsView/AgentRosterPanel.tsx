@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import type { GeneratedAgentConfig } from '@/lib/types/stage';
 import { useAgentRoster } from './useAgentRoster';
 import { AvatarPicker } from './AvatarPicker';
+import { TeacherVoiceControl } from '@/components/edit/TeacherVoiceControl';
 
 const PERSONA_MAX = 2000;
 
@@ -256,6 +257,7 @@ function TeacherCard({ agent, open, onToggle, onUpdate }: TeacherCardProps) {
             borderColor="#e9d8fb"
             onUpdate={(id, persona) => onUpdate(id, { persona })}
           />
+          <TeacherVoiceControl />
         </div>
       )}
     </div>

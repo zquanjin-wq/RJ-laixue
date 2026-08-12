@@ -27,7 +27,11 @@ import type { TTSProviderId } from '@/lib/audio/types';
 import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
 import { replaceTeacherVoice } from '@/lib/teacher/replace-teacher-voice';
 
-export function TeacherVoiceControl() {
+export function TeacherVoiceControl({
+  variant = 'roster',
+}: {
+  readonly variant?: 'roster' | 'header';
+}) {
   const stage = useStageStore((s) => s.stage);
   const scenes = useStageStore((s) => s.scenes);
   const outlines = useStageStore((s) => s.outlines);
@@ -98,11 +102,20 @@ export function TeacherVoiceControl() {
     <Dialog open={open} onOpenChange={(next) => !running && setOpen(next)}>
       <DialogTrigger asChild>
         <button
-          className="shrink-0 inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-full border border-violet-200/70 bg-white/60 px-3 text-xs text-violet-700 shadow-sm backdrop-blur-md hover:border-violet-400 dark:border-violet-700/60 dark:bg-gray-800/60 dark:text-violet-300"
+          type="button"
+          onClick={(event) => event.stopPropagation()}
+          className={
+            variant === 'roster'
+              ? 'inline-flex w-full items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-400 hover:bg-violet-50 dark:border-violet-700/60 dark:bg-gray-900 dark:text-violet-300'
+              : 'shrink-0 inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-full border border-violet-200/70 bg-white/60 px-3 text-xs text-violet-700 shadow-sm backdrop-blur-md hover:border-violet-400 dark:border-violet-700/60 dark:bg-gray-800/60 dark:text-violet-300'
+          }
           title="重新选择 AI 老师音色"
         >
           <Volume2 className="size-3.5" />
-          <span className="truncate">{currentName}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {variant === 'roster' ? `课程音色：${currentName}` : currentName}
+          </span>
+          {variant === 'roster' && <span className="text-[11px] text-violet-500">更换</span>}
         </button>
       </DialogTrigger>
       <DialogContent>
