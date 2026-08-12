@@ -228,35 +228,19 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     expect(signUploadIdx).toBeGreaterThanOrEqual(0);
   });
 
-  it('probe failure (500): non-fatal — Phase 0 swallows error and Phase 1 still runs', async () => {
-    // 1) Phase 0 probe GET → 500 (cloud unreachable or transient)
+  it('probe failure (500): aborts before any asset upload', async () => {
     enqueueResponse(500, { success: false, error: 'internal_error' });
-    // 2) Phase 1 sign-upload POST → 200 (Phase 1 proceeds unchanged)
-    enqueueResponse(200, { success: true, data: { path: 'x', token: 't', publicUrl: 'u' } });
-    // 3) Phase 3 final POST → 200
-    enqueueResponse(200, { success: true, data: { id: 'stage-new-1' } });
 
-    // Non-2xx responses on Phase 1 audio validation/publishing would still
-    // throw under the existing rules; we only assert that a 500 on the
-    // Phase 0 probe does NOT abort the save. (Any later failure in Phase 1
-    // bubbles up as before — the fix card accepted that semantic.)
-    await expect(saveStageToCloud('stage-new-1')).resolves.toBeDefined();
+    await expect(saveStageToCloud('stage-new-1')).rejects.toThrow('Course preparation failed');
 
-    // The probe GET happened...
     const probeIdx = findCall((c) => c.method === 'GET' && c.url === '/api/courses/stage-new-1');
     expect(probeIdx).toBeGreaterThanOrEqual(0);
-
-    // ...and we did NOT POST /api/courses for Phase 0 (only Phase 3 fires).
-    const postsToCourses = fetchCalls.filter(
-      (c) => c.method === 'POST' && c.url === '/api/courses',
+    expect(fetchCalls.filter((c) => c.method === 'POST' && c.url === '/api/courses')).toHaveLength(
+      0,
     );
-    expect(postsToCourses).toHaveLength(1);
-
-    // sign-upload still fires after the (failed) probe.
-    const signUploadIdx = findCall(
-      (c) => c.method === 'POST' && c.url === '/api/course-assets/sign-upload',
+    expect(findCall((c) => c.method === 'POST' && c.url === '/api/course-assets/sign-upload')).toBe(
+      -1,
     );
-    expect(signUploadIdx).toBeGreaterThan(probeIdx);
   });
 });
 

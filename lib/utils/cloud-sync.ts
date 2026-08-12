@@ -46,35 +46,27 @@ async function ensureCourseRowOnCloud(
   scenes: unknown,
   outlines: unknown,
 ): Promise<void> {
-  try {
-    const probe = await fetch(`/api/courses/${encodeURIComponent(id)}`, { method: 'GET' });
-    if (probe.status !== 404) {
-      // 200 → row exists; 401/403/etc → caller cannot self-create, but
-      // /api/courses POST has its own ownership gate, so let it speak.
-      return;
-    }
-    log.info('Phase 0: course row missing on cloud — upserting full row', { id });
-    const create = await fetch('/api/courses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id,
-        title,
-        topic,
-        // Full payload — matches the historical Phase 3 save so an interrupted
-        // save leaves a populated (if slightly stale) row on the cloud,
-        // not a blank stub.
-        data: { stage, scenes, outlines },
-      }),
-    });
-    await readApiJson(create);
-    log.info('Phase 0: course row upserted', { id });
-  } catch (error) {
-    log.warn('Phase 0: probe/upsert failed (continuing with Phase 1)', {
-      id,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const probe = await fetch(`/api/courses/${encodeURIComponent(id)}`, { method: 'GET' });
+  if (!probe.ok && probe.status !== 404) {
+    throw new Error(`Course preparation failed: cloud probe returned HTTP ${probe.status}`);
   }
+  if (probe.status !== 404) return;
+  log.info('Phase 0: course row missing on cloud — upserting full row', { id });
+  const create = await fetch('/api/courses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id,
+      title,
+      topic,
+      // Full payload — matches the historical Phase 3 save so an interrupted
+      // save leaves a populated (if slightly stale) row on the cloud,
+      // not a blank stub.
+      data: { stage, scenes, outlines },
+    }),
+  });
+  await readApiJson(create);
+  log.info('Phase 0: course row upserted', { id });
 }
 // ============================================================
 // 浠?IndexedDB 璇诲彇瀹屾暣璇剧▼鏁版嵁

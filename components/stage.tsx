@@ -120,6 +120,16 @@ export function Stage({
   const editorAutoOpen = searchParams?.get('editor') === '1';
   const toggleHandler = editorAutoOpen ? handleToggleEditMode : undefined;
 
+  if (!stage) {
+    return (
+      <div className="flex flex-1 items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center text-muted-foreground">
+          <p className="mb-2 text-base font-medium">课程内容暂未加载</p>
+          <p className="text-sm">请刷新页面或返回课程列表重新打开。</p>
+        </div>
+      </div>
+    );
+  }
   // Mode swap choreography — a clean opacity cross-fade. Both roots layer
   // via `absolute inset-0` so they coexist for the ~280ms window without
   // one popping out before the other arrives. The outgoing root keeps

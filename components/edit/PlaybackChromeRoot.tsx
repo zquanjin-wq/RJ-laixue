@@ -250,7 +250,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     // DEFAULT_AGENTS / saved IndexedDB agents). Read straight from stage so the
     // teacher's voice cannot regress to a stale registry entry.
     const teacherVoiceConfigForDiscussion = useMemo(() => {
-      if (!stage.teacherVoiceConfig) return undefined;
+      if (!stage?.teacherVoiceConfig) return undefined;
       const cfg: {
         providerId: import('@/lib/audio/types').TTSProviderId;
         voiceId: string;
