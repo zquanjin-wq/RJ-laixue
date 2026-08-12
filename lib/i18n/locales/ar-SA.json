@@ -133,6 +133,7 @@
     "voiceLabel": "الصوت",
     "voiceLoading": "جارٍ التحميل...",
     "voiceAutoAssign": "سيتم تعيين الأصوات تلقائيًا",
+    "voiceImmutableHint": "لا يمكن تغيير صوت المعلم بالذكاء الاصطناعي أو استبداله بعد إنشاء الدورة.",
     "searchVoice": "البحث عن الأصوات",
     "noMatchingVoices": "لا توجد أصوات مطابقة",
     "noVoice": "لا يوجد صوت"

@@ -133,6 +133,7 @@
     "voiceLabel": "Voice",
     "voiceLoading": "Loading...",
     "voiceAutoAssign": "Voices will be auto-assigned",
+    "voiceImmutableHint": "The AI teacher's voice cannot be changed or replaced after the course is generated.",
     "searchVoice": "Search voices",
     "noMatchingVoices": "No matching voices",
     "noVoice": "No voice"

@@ -880,6 +880,11 @@ export function AgentBar() {
                   />
                 </div>
               )}
+              {teacherAgent && (
+                <p className="px-2.5 pb-1.5 -mt-1 text-[10px] text-muted-foreground/60">
+                  {t('agentBar.voiceImmutableHint')}
+                </p>
+              )}
 
               {/* Mode tabs */}
               <div className="flex rounded-lg border bg-muted/30 p-0.5 mb-2">

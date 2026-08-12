@@ -133,6 +133,7 @@
     "voiceLabel": "音色",
     "voiceLoading": "加载中...",
     "voiceAutoAssign": "音色将自动分配",
+    "voiceImmutableHint": "AI教师音色在课程生成后，不支持修改或替换！",
     "searchVoice": "搜索音色",
     "noMatchingVoices": "没有匹配音色",
     "noVoice": "无可用音色"

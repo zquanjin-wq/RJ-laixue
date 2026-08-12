@@ -133,6 +133,7 @@
     "voiceLabel": "음성",
     "voiceLoading": "로딩 중...",
     "voiceAutoAssign": "음성이 자동으로 배정됩니다",
+    "voiceImmutableHint": "AI 교사의 음성은 과정을 생성한 후 변경하거나 교체할 수 없습니다.",
     "searchVoice": "음성 검색",
     "noMatchingVoices": "일치하는 음성 없음",
     "noVoice": "음성 없음"

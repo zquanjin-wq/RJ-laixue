@@ -133,6 +133,7 @@
     "voiceLabel": "聲線",
     "voiceLoading": "載入中...",
     "voiceAutoAssign": "聲線將自動分配",
+    "voiceImmutableHint": "AI 老師聲線在課程生成後，不支援修改或替換！",
     "noMatchingVoices": "沒有符合的聲音",
     "noVoice": "無可用音色",
     "searchVoice": "搜尋聲音"

@@ -133,6 +133,7 @@
     "voiceLabel": "Voz",
     "voiceLoading": "Carregando...",
     "voiceAutoAssign": "As vozes serão atribuídas automaticamente",
+    "voiceImmutableHint": "A voz do professor de IA não pode ser alterada ou substituída após a geração do curso.",
     "searchVoice": "Pesquisar vozes",
     "noMatchingVoices": "Nenhuma voz correspondente",
     "noVoice": "Sem voz"

@@ -133,6 +133,7 @@
     "voiceLabel": "ボイス",
     "voiceLoading": "読み込み中...",
     "voiceAutoAssign": "ボイスは自動的に割り当てられます",
+    "voiceImmutableHint": "コース生成後は、AI教師のボイスを変更・置換できません。",
     "searchVoice": "音色を検索",
     "noMatchingVoices": "一致する音色はありません",
     "noVoice": "音声なし"

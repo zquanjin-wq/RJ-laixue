@@ -133,6 +133,7 @@
     "voiceLabel": "Голос",
     "voiceLoading": "Загрузка...",
     "voiceAutoAssign": "Голоса будут назначены автоматически",
+    "voiceImmutableHint": "После создания курса голос AI-преподавателя нельзя изменить или заменить.",
     "searchVoice": "Поиск голосов",
     "noMatchingVoices": "Подходящих голосов нет",
     "noVoice": "Нет голоса"
