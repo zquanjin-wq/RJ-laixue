@@ -13,6 +13,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+let shouldFailAudioPublish = false;
+let shouldThrowAudioPublish = false;
+
 // Mock the heavy modules that saveStageToCloud reaches into. We keep
 // behaviour pinned to a single Phase 1 fetch (a sign-upload POST) so the
 // test can assert ordering across Phase 0 and Phase 1.
@@ -65,6 +68,19 @@ vi.mock('@/lib/audio/audio-publish', () => ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ stageId }),
     });
+    if (shouldThrowAudioPublish) {
+      throw new Error('network timeout');
+    }
+    if (shouldFailAudioPublish) {
+      return {
+        uploaded: [],
+        skipped: [],
+        missing: [],
+        failed: [{ audioId: 'audio-failed', sceneId: 'scene-1', error: 'tts unavailable' }],
+        regenerated: [],
+        scenes,
+      };
+    }
     return {
       uploaded: [],
       skipped: [],
@@ -198,7 +214,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     expect(createPayload.data.outlines).toHaveLength(1);
   });
 
-  it('existing course: GET 200 → no Phase 0 POST; sign-upload fires directly', async () => {
+  it('existing course: writes a recoverable draft before sign-upload', async () => {
     // 1) Phase 0 probe GET → 200 (row exists)
     enqueueResponse(200, { success: true, data: { id: 'stage-new-1' } });
     // 2) Phase 1 sign-upload POST → 200
@@ -219,7 +235,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     const postsToCourses = fetchCalls.filter(
       (c) => c.method === 'POST' && c.url === '/api/courses',
     );
-    expect(postsToCourses).toHaveLength(1);
+    expect(postsToCourses).toHaveLength(2);
 
     // sign-upload still fires (Phase 1 is unchanged).
     const signUploadIdx = findCall(
@@ -228,6 +244,25 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     expect(signUploadIdx).toBeGreaterThanOrEqual(0);
   });
 
+  it('audio failure: leaves a recoverable draft and skips final write', async () => {
+    enqueueResponse(200, { success: true, data: { id: 'stage-new-1' } });
+    shouldFailAudioPublish = true;
+
+    await expect(saveStageToCloud('stage-new-1')).rejects.toMatchObject({ draftSaved: true });
+
+    const coursePosts = fetchCalls.filter(
+      (call) => call.method === 'POST' && call.url === '/api/courses',
+    );
+    expect(coursePosts).toHaveLength(1);
+    expect(JSON.parse(coursePosts[0].body ?? '{}').saveState).toBe('draft');
+  });
+  it('audio publisher exception: marks the saved draft as recoverable', async () => {
+    enqueueResponse(200, { success: true, data: { id: 'stage-new-1' } });
+    shouldThrowAudioPublish = true;
+
+    await expect(saveStageToCloud('stage-new-1')).rejects.toMatchObject({ draftSaved: true });
+    expect(fetchCalls.filter((call) => call.url === '/api/courses')).toHaveLength(1);
+  });
   it('probe failure (500): aborts before any asset upload', async () => {
     enqueueResponse(500, { success: false, error: 'internal_error' });
 

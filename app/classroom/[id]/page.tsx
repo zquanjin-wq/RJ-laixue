@@ -1002,7 +1002,11 @@ export default function ClassroomDetailPage() {
                         setSaveCloudMessage('✅ 保存成功');
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                       } catch (e: any) {
-                        setSaveCloudMessage('❌ 保存失败：' + (e.message || '未知错误'));
+                        setSaveCloudMessage(
+                          e.draftSaved
+                            ? '⚠️ 草稿已保存，语音资源未完成；请重试保存'
+                            : '❌ 保存失败：' + (e.message || '未知错误'),
+                        );
                       } finally {
                         setIsSavingToCloud(false);
                       }

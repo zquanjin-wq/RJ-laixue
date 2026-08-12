@@ -34,9 +34,8 @@ async function readApiJson<T>(response: Response): Promise<T> {
  * finds the row in place.
  *
  * `POST /api/courses` is itself an upsert, so calling it on an already-saved
- * course is a no-op safe re-run. Errors here are non-fatal: we log and
- * continue, so the user still sees the original failure mode if the cloud
- * itself is unreachable.
+ * course is a no-op safe re-run. The draft write is required before resource upload so later failures remain
+ * recoverable.
  */
 async function ensureCourseRowOnCloud(
   id: string,
@@ -50,7 +49,6 @@ async function ensureCourseRowOnCloud(
   if (!probe.ok && probe.status !== 404) {
     throw new Error(`Course preparation failed: cloud probe returned HTTP ${probe.status}`);
   }
-  if (probe.status !== 404) return;
   log.info('Phase 0: course row missing on cloud — upserting full row', { id });
   const create = await fetch('/api/courses', {
     method: 'POST',
@@ -62,6 +60,7 @@ async function ensureCourseRowOnCloud(
       // Full payload — matches the historical Phase 3 save so an interrupted
       // save leaves a populated (if slightly stale) row on the cloud,
       // not a blank stub.
+      saveState: 'draft',
       data: { stage, scenes, outlines },
     }),
   });
@@ -165,11 +164,21 @@ export async function saveStageToCloud(stageId: string) {
     | { providerId?: string; voiceId?: string; modelId?: string }
     | undefined;
 
-  const publishResult = await publishSceneAudioAssets(
-    stageId,
-    scenes as any,
-    teacherVoiceConfig ?? null,
-  );
+  let publishResult: PublishSceneAudioAssetsResult;
+  try {
+    publishResult = await publishSceneAudioAssets(
+      stageId,
+      scenes as any,
+      teacherVoiceConfig ?? null,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const draftError = new Error(
+      `保存失败：语音资源发布异常（${message}）。草稿已保存，请重试语音发布。`,
+    ) as Error & { draftSaved?: boolean };
+    draftError.draftSaved = true;
+    throw draftError;
+  }
 
   log.info('Audio publish result', {
     uploaded: publishResult.uploaded.length,
@@ -226,9 +235,18 @@ export async function saveStageToCloud(stageId: string) {
         : '',
     ].filter(Boolean);
 
-    throw new Error(
-      `保存失败：课程语音资源未发布完整。${detailParts.join('；')}。请检查语音生成后重新保存。`,
-    );
+    if (publishResult.scenes.length > 0) {
+      const withSeq = publishResult.scenes.map((scene: any, index: number) => ({
+        ...scene,
+        seq: scene.seq ?? index,
+      }));
+      await db.scenes.bulkPut(withSeq);
+    }
+    const draftError = new Error(
+      `保存失败：课程语音资源未发布完整。${detailParts.join('；')}。草稿已保存，请重试语音发布。`,
+    ) as Error & { draftSaved?: boolean };
+    draftError.draftSaved = true;
+    throw draftError;
   }
 
   // ── Phase 3: Externalize every remaining base64 asset before the JSON write.
@@ -249,6 +267,7 @@ export async function saveStageToCloud(stageId: string) {
       id,
       title,
       topic,
+      saveState: 'ready',
       data: {
         stage: stageToSave,
         scenes: scenesToSave,

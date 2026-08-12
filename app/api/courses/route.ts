@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, title, topic, data } = body;
+    const { id, title, topic, data, saveState = 'ready' } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
       stage,
       scenes,
       outlines,
+      saveState: saveState === 'draft' ? 'draft' : 'ready',
       audioGeneration: {
         attempted: false,
         skipped: true,
