@@ -42,6 +42,8 @@ export function TeacherVoiceControl({
   readonly variant?: 'roster' | 'header';
 }) {
   const stage = useStageStore((s) => s.stage);
+  const scenes = useStageStore((s) => s.scenes);
+  const outlines = useStageStore((s) => s.outlines);
   const setScenes = useStageStore((s) => s.setScenes);
   const updateStage = useStageStore((s) => s.updateStage);
   const settingsProvider = useSettingsStore((s) => s.ttsProviderId);
@@ -121,6 +123,28 @@ export function TeacherVoiceControl({
         voiceId: selectedVoice,
         modelId: providerConfigs[providerId]?.modelId || provider?.defaultModelId || undefined,
       };
+      // Imported/local course packages do not have a cloud row yet. Persist a
+      // lightweight draft with the selected *course* voice before asking the
+      // server to create its durable revoice job. The job then replaces all
+      // speech URLs atomically on completion, so foreign package audio is
+      // never published as a finished course.
+      const stageWithVoice = { ...stage, teacherVoiceConfig: voice };
+      const draftResponse = await fetch('/api/courses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: stage.id,
+          title: stage.name || '',
+          topic: '',
+          saveState: 'draft',
+          data: { stage: stageWithVoice, scenes, outlines },
+        }),
+      });
+      const draftPayload = await draftResponse.json().catch(() => null);
+      if (!draftResponse.ok || !draftPayload?.success) {
+        throw new Error(draftPayload?.error || '无法准备云端课程');
+      }
+      updateStage(stageWithVoice);
       const response = await fetch(`/api/courses/${encodeURIComponent(stage.id)}/revoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
