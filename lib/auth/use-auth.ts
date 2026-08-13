@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 
@@ -48,13 +48,22 @@ export function useAuth() {
     error: null,
   });
 
+  const loadedOnce = useRef(false);
+
   const loadSession = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
 
-      const session = data.session;
+      // A backgrounded tab can briefly expose no cookie-backed session while
+      // the browser restores its storage. Give Supabase one refresh attempt
+      // before treating that transient state as an actual sign-out.
+      let session = data.session;
+      if (!session && loadedOnce.current) {
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        session = refreshed.session;
+      }
       const user = session?.user ?? null;
       const profile = user ? await fetchProfile(user) : null;
 
@@ -67,6 +76,8 @@ export function useAuth() {
         loading: false,
         error: error instanceof Error ? error.message : 'Failed to load session',
       });
+    } finally {
+      loadedOnce.current = true;
     }
   }, []);
 
@@ -82,9 +93,15 @@ export function useAuth() {
       loadSession();
     });
 
+    const restoreVisibleTab = () => {
+      if (document.visibilityState === 'visible') void loadSession();
+    };
+    document.addEventListener('visibilitychange', restoreVisibleTab);
+
     return () => {
       cancelled = true;
       data.subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', restoreVisibleTab);
     };
   }, [loadSession]);
 
@@ -95,4 +112,3 @@ export function useAuth() {
 
   return { ...state, signOut, reload: loadSession };
 }
-

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Volume2 } from 'lucide-react';
+import { Clock3, Loader2, Volume2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -60,7 +60,7 @@ export function TeacherVoiceControl({
   }, [courseVoice?.voiceId, open, voices]);
 
   useEffect(() => {
-    if (!stage?.id || (!open && !job)) return;
+    if (!stage?.id) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
@@ -85,7 +85,9 @@ export function TeacherVoiceControl({
         } else if (next.status === 'failed' || next.status === 'conflict') {
           toast.error(next.message || next.error || '重新配音未完成，课程仍使用原音色');
         }
-        if (!next.done && !stopped) timer = setTimeout(poll, payload?.pollIntervalMs || 5000);
+        if ((!next.done || open) && !stopped) {
+          timer = setTimeout(poll, payload?.pollIntervalMs || 5000);
+        }
       } catch {
         if (!stopped) timer = setTimeout(poll, 8000);
       }
@@ -95,7 +97,7 @@ export function TeacherVoiceControl({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [job?.id, setScenes, stage?.id, updateStage]);
+  }, [job?.id, open, setScenes, stage?.id, updateStage]);
 
   const running = !!job && !job.done;
   const currentName =
@@ -156,6 +158,16 @@ export function TeacherVoiceControl({
           <span className="min-w-0 flex-1 truncate">
             {variant === 'roster' ? `课程音色：${currentName}` : currentName}
           </span>
+          {variant === 'roster' && job && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-violet-600">
+              {running ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Clock3 className="size-3" />
+              )}
+              {running ? `重配音 ${job.completed}/${job.total}` : '查看任务'}
+            </span>
+          )}
           {variant === 'roster' && <span className="text-[11px] text-violet-500">更换</span>}
         </button>
       </DialogTrigger>

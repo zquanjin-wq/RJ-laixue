@@ -62,10 +62,14 @@ export default function ClassroomDetailPage() {
   // admins on the post-generation page (where ?editor=1 isn't set).
   const canSave = profile?.role === 'admin' || profile?.role === 'teacher';
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (authLoading || user) return;
+    // Do not bounce a backgrounded/restored browser tab to /login on its
+    // first transient null session. useAuth retries a cookie refresh first.
+    const timeout = window.setTimeout(() => {
       const returnUrl = window.location.pathname + window.location.search;
       window.location.assign(`/login?next=${encodeURIComponent(returnUrl)}`);
-    }
+    }, 1800);
+    return () => window.clearTimeout(timeout);
   }, [authLoading, user]);
 
   // ── Mobile auto-redirect ──────────────────────────────────────
