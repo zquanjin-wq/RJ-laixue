@@ -51,7 +51,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
   let course = await ownedCourse(id, auth.user.id);
   if (course === 'forbidden') return apiError('FORBIDDEN', 403, '只有课程创建者可以更换音色');
-  if (!course || course === 'forbidden') return apiError('NOT_FOUND', 404, '课程不存在');
+  if (!course) return apiError('NOT_FOUND', 404, '课程不存在');
   const data = course.data as {
     stage?: Record<string, unknown>;
     scenes?: Record<string, unknown>[];
