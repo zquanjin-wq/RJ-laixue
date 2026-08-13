@@ -101,6 +101,20 @@ export async function createCourseRevoiceJob(input: {
   }
   const items = speechItems(input.snapshot.scenes);
   if (!items.length) throw new Error('课程中没有可重新生成的讲解配音。');
+  // One course can only have one active replacement. This is enforced on the
+  // server as well as in the UI so double-clicks and multiple tabs cannot
+  // create competing jobs that race to overwrite the course.
+  const service = getServiceSupabase();
+  const { data: active, error: activeError } = await service
+    .from('course_revoice_jobs')
+    .select('*')
+    .eq('course_id', input.courseId)
+    .in('status', ['queued', 'running'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (activeError) throw activeError;
+  if (active) return active as CourseRevoiceJob;
   const job = {
     id: nanoid(16),
     course_id: input.courseId,
@@ -115,7 +129,7 @@ export async function createCourseRevoiceJob(input: {
     failed_items: 0,
     message: '已加入重新配音队列',
   };
-  const { error } = await getServiceSupabase().from('course_revoice_jobs').insert(job);
+  const { error } = await service.from('course_revoice_jobs').insert(job);
   if (error) throw new Error(`创建重新配音任务失败：${error.message}`);
   return job;
 }

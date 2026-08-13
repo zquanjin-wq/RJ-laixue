@@ -65,7 +65,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     sourceUpdatedAt: course.updated_at,
   });
   after(() => runCourseRevoiceJob(job.id).catch(() => undefined));
-  return apiSuccess({ job: present(job), pollIntervalMs: 5000 }, 202);
+  return apiSuccess(
+    { job: present(job), pollIntervalMs: 5000 },
+    job.status === 'queued' ? 202 : 200,
+  );
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {

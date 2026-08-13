@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clock3, Loader2, Volume2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -54,6 +54,8 @@ export function TeacherVoiceControl({
   const [selectedVoice, setSelectedVoice] = useState(courseVoice?.voiceId || voices[0]?.id || '');
   const [open, setOpen] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
+  const jobStatuses = useRef(new Map<string, string>());
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     if (!open) setSelectedVoice(courseVoice?.voiceId || voices[0]?.id || '');
@@ -71,8 +73,13 @@ export function TeacherVoiceControl({
         const payload = await response.json();
         const next = payload?.job as Job | null;
         if (!next || stopped) return;
+        const priorStatus = jobStatuses.current.get(next.id);
+        jobStatuses.current.set(next.id, next.status);
         setJob(next);
-        if (next.status === 'succeeded') {
+        // A completed task loaded for the first time is history, not a new
+        // completion. Only notify/close when this mounted UI observes the
+        // same active job transition into succeeded.
+        if (next.status === 'succeeded' && priorStatus && priorStatus !== 'succeeded') {
           const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
           const course = await courseResponse.json();
           const data = course?.data;
@@ -99,14 +106,15 @@ export function TeacherVoiceControl({
     };
   }, [job?.id, open, setScenes, stage?.id, updateStage]);
 
-  const running = !!job && !job.done;
+  const running = starting || (!!job && !job.done);
   const currentName =
     voices.find((voice) => voice.id === courseVoice?.voiceId)?.name ||
     courseVoice?.voiceId ||
     '未设置';
 
   async function handleReplace() {
-    if (!stage || !selectedVoice || selectedVoice === courseVoice?.voiceId) return;
+    if (!stage || starting || !selectedVoice || selectedVoice === courseVoice?.voiceId) return;
+    setStarting(true);
     try {
       const provider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
       const voice = {
@@ -122,10 +130,17 @@ export function TeacherVoiceControl({
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success || !payload?.job)
         throw new Error(payload?.error || '无法创建重新配音任务');
+      jobStatuses.current.set(payload.job.id, payload.job.status);
       setJob(payload.job as Job);
-      toast.success('已加入服务端重新配音队列，可离开页面后再回来查看进度');
+      toast.success(
+        payload.job.done
+          ? '该课程已经使用所选音色'
+          : '已加入服务端重新配音队列，可离开页面后再回来查看进度',
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '重新配音失败');
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -146,17 +161,18 @@ export function TeacherVoiceControl({
       <DialogTrigger asChild>
         <button
           type="button"
+          disabled={running}
           onClick={(event) => event.stopPropagation()}
           className={
             variant === 'roster'
-              ? 'inline-flex w-full items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-400 hover:bg-violet-50 dark:border-violet-700/60 dark:bg-gray-900 dark:text-violet-300'
+              ? 'inline-flex w-full items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-400 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-75 dark:border-violet-700/60 dark:bg-gray-900 dark:text-violet-300'
               : 'shrink-0 inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-full border border-violet-200/70 bg-white/60 px-3 text-xs text-violet-700 shadow-sm backdrop-blur-md hover:border-violet-400 dark:border-violet-700/60 dark:bg-gray-800/60 dark:text-violet-300'
           }
-          title="重新选择 AI 老师音色"
+          title={running ? '重新配音进行中，暂不能再次更换音色' : `当前使用：${currentName}`}
         >
           <Volume2 className="size-3.5" />
           <span className="min-w-0 flex-1 truncate">
-            {variant === 'roster' ? `课程音色：${currentName}` : currentName}
+            {variant === 'roster' ? `当前使用：${currentName}` : currentName}
           </span>
           {variant === 'roster' && job && (
             <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-violet-600">
@@ -168,7 +184,9 @@ export function TeacherVoiceControl({
               {running ? `重配音 ${job.completed}/${job.total}` : '查看任务'}
             </span>
           )}
-          {variant === 'roster' && <span className="text-[11px] text-violet-500">更换</span>}
+          {variant === 'roster' && !running && (
+            <span className="text-[11px] text-violet-500">更换</span>
+          )}
         </button>
       </DialogTrigger>
       <DialogContent>
