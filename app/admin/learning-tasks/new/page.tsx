@@ -46,15 +46,6 @@ export default async function NewLearningTaskPage() {
     })
     .map((c) => ({ id: c.id, title: c.title }));
 
-  // 拉取学员候选
-  const { data: studentsData } = await svc
-    .from('students')
-    .select('id, name, email, disabled_at')
-    .is('disabled_at', null)
-    .order('created_at', { ascending: false });
-
-  const students = studentsData ?? [];
-
   return (
     <main className="min-h-screen bg-background px-4 py-10">
       <div className="mx-auto max-w-3xl space-y-6">
@@ -71,7 +62,7 @@ export default async function NewLearningTaskPage() {
         </header>
 
         <div className="rounded-lg border bg-background p-6">
-          <CreateTaskForm courses={courses} students={students} />
+          <CreateTaskForm courses={courses} />
         </div>
       </div>
     </main>

@@ -63,6 +63,13 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         'id, student_id, status, progress_percent, completed_scene_count, total_scene_count, assigned_at',
       )
       .eq('task_id', taskId);
+    const learnerIds = (learners ?? []).map((learner) => learner.student_id);
+    const { data: learnerProfiles } = learnerIds.length
+      ? await serviceSupabase.from('students').select('id, name, email').in('id', learnerIds)
+      : { data: [] };
+    const learnerProfileById = new Map(
+      (learnerProfiles ?? []).map((learner) => [learner.id, learner]),
+    );
 
     const { data: taskCourses } = await serviceSupabase
       .from('task_courses')
@@ -78,7 +85,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       success: true,
       data: {
         ...task,
-        learners: learners ?? [],
+        learners: (learners ?? []).map((learner) => ({
+          ...learner,
+          name: learnerProfileById.get(learner.student_id)?.name ?? '未知人员',
+          email: learnerProfileById.get(learner.student_id)?.email ?? null,
+        })),
         courses: (taskCourses ?? []).map((item) => ({
           ...item,
           title: titleById.get(item.course_id) ?? null,

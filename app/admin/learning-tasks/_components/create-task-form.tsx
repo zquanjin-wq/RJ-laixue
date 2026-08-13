@@ -10,22 +10,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { toTaskTimestamp } from '@/lib/utils/task-datetime';
+import { LearnerPicker } from './learner-picker';
 
 interface CourseOption {
   id: string;
   title: string | null;
 }
 
-interface StudentOption {
-  id: string;
-  name: string;
-  email: string | null;
-  disabled_at: string | null;
-}
-
 interface CreateTaskFormProps {
   courses: CourseOption[];
-  students: StudentOption[];
 }
 
 const ERROR_COPY: Record<string, string> = {
@@ -39,7 +32,7 @@ const ERROR_COPY: Record<string, string> = {
   INTERNAL_ERROR: '服务器异常，请重试。',
 };
 
-export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
+export function CreateTaskForm({ courses }: CreateTaskFormProps) {
   const router = useRouter();
   const [courseIds, setCourseIds] = useState<string[]>([]);
   const [title, setTitle] = useState('');
@@ -49,8 +42,6 @@ export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
   const [selectedLearners, setSelectedLearners] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const activeStudents = useMemo(() => students.filter((s) => !s.disabled_at), [students]);
 
   const timeError = useMemo(() => {
     if (!startAt || !dueAt) return '';
@@ -223,27 +214,13 @@ export function CreateTaskForm({ courses, students }: CreateTaskFormProps) {
 
       <div className="space-y-2">
         <Label>学员名单</Label>
-        {activeStudents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无可选学员。</p>
-        ) : (
-          <div className="rounded-md border p-3 space-y-2 max-h-64 overflow-y-auto">
-            {activeStudents.map((s) => (
-              <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                <Checkbox
-                  checked={selectedLearners.has(s.id)}
-                  onCheckedChange={() => toggleLearner(s.id)}
-                />
-                <span>{s.name}</span>
-                {s.email && <span className="text-muted-foreground text-xs">({s.email})</span>}
-              </label>
-            ))}
-          </div>
-        )}
-        {selectedLearners.size > 0 && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            已选择 <Badge variant="secondary">{selectedLearners.size}</Badge> 位学员
-          </div>
-        )}
+        <p className="text-xs text-muted-foreground">
+          按姓名或邮箱搜索，逐页选择参与本任务的人员。
+        </p>
+        <LearnerPicker
+          selectedIds={Array.from(selectedLearners)}
+          onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
+        />
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

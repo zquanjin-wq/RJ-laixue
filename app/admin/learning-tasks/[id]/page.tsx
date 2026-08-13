@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { LearnerPicker } from '../_components/learner-picker';
 import { TaskReport } from '@/app/admin/learning-tasks/_components/task-report';
 import { TaskAiBrief } from '@/app/admin/learning-tasks/_components/task-ai-brief';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -62,13 +63,9 @@ interface TaskDetail {
     completed_scene_count: number;
     total_scene_count: number;
     assigned_at: string;
+    name: string;
+    email: string | null;
   }>;
-}
-
-interface StudentOption {
-  id: string;
-  name: string;
-  email: string | null;
 }
 
 interface CourseInfo {
@@ -108,7 +105,6 @@ export default function LearningTaskDetailPage() {
   const taskId = params.id as string;
 
   const [task, setTask] = useState<TaskDetail | null>(null);
-  const [students, setStudents] = useState<StudentOption[]>([]);
   const [course, setCourse] = useState<CourseInfo | null>(null);
   const [availableCourses, setAvailableCourses] = useState<CourseInfo[]>([]);
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
@@ -147,19 +143,14 @@ export default function LearningTaskDetailPage() {
     setLoading(true);
     setError('');
     try {
-      const [taskRes, studentsRes, coursesRes] = await Promise.all([
+      const [taskRes, coursesRes] = await Promise.all([
         fetch(`/api/admin/learning-tasks/${taskId}`),
-        fetch('/api/admin/students'),
         fetch('/api/courses'),
       ]);
       const taskJson = (await taskRes.json()) as {
         success: boolean;
         data?: TaskDetail;
         error?: string;
-      };
-      const studentsJson = (await studentsRes.json()) as {
-        success: boolean;
-        data?: StudentOption[];
       };
 
       if (!taskRes.ok || !taskJson.success || !taskJson.data) {
@@ -175,10 +166,6 @@ export default function LearningTaskDetailPage() {
       setDueAt(t.due_at ? formatForDatetimeLocal(t.due_at) : '');
       setSelectedLearners(new Set(t.learners.map((l) => l.student_id)));
       setSelectedCourses(t.courses?.map((item) => item.course_id) ?? [t.course_id]);
-
-      if (studentsJson.success && studentsJson.data) {
-        setStudents(studentsJson.data);
-      }
 
       const coursesJson = (await coursesRes.json()) as {
         success: boolean;
@@ -354,19 +341,6 @@ export default function LearningTaskDetailPage() {
     navigator.clipboard.writeText(publishResult.link).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
-  function toggleLearner(id: string) {
-    setSelectedLearners((prev) => {
-      if (isPublished && assignedLearnerIds.has(id)) {
-        return prev;
-      }
-
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
     });
   }
 
@@ -567,27 +541,23 @@ export default function LearningTaskDetailPage() {
           <CardHeader>
             <CardTitle className="text-base">学员名单</CardTitle>
             <CardDescription>
-              {isDraft ? '选择参与本次任务的学员。' : '已发布任务的学员名单已冻结。'}
+              {isDraft
+                ? '选择参与本次任务的人员。'
+                : '已发布任务可继续增补人员，已分配人员保留学习记录。'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {students.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无可选学员。</p>
-            ) : (
-              <div className="rounded-md border p-3 space-y-2 max-h-64 overflow-y-auto">
-                {students.map((s) => (
-                  <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Checkbox
-                      checked={selectedLearners.has(s.id)}
-                      onCheckedChange={() => toggleLearner(s.id)}
-                      disabled={!canUpdateLearners || (isPublished && assignedLearnerIds.has(s.id))}
-                    />
-                    <span>{s.name}</span>
-                    {s.email && <span className="text-muted-foreground text-xs">({s.email})</span>}
-                  </label>
-                ))}
-              </div>
-            )}
+            <LearnerPicker
+              selectedIds={Array.from(selectedLearners)}
+              onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
+              initialLearners={task.learners.map((learner) => ({
+                id: learner.student_id,
+                name: learner.name,
+                email: learner.email,
+              }))}
+              lockedIds={isPublished ? Array.from(assignedLearnerIds) : []}
+              disabled={!canUpdateLearners}
+            />
             {canUpdateLearners && (
               <Button onClick={saveLearners} disabled={saving}>
                 {saving ? '保存中...' : '更新学员名单'}

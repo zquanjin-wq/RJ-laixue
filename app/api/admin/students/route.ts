@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 import { resolveActor } from '@/lib/server/learning-tasks/permissions';
 
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
     const serverSupabase = await getServerSupabase();
     const {
@@ -30,19 +30,37 @@ export async function GET(_request: NextRequest) {
     }
 
     const svc = getServiceSupabase();
+    const searchParams = request.nextUrl.searchParams;
+    const keyword = searchParams.get('q')?.trim() ?? '';
+    const page = Math.max(1, Number(searchParams.get('page') ?? '1') || 1);
+    const pageSize = Math.min(50, Math.max(10, Number(searchParams.get('pageSize') ?? '20') || 20));
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
     let query = svc
       .from('students')
-      .select('id, name, email, disabled_at')
-      .order('created_at', { ascending: false });
+      .select('id, name, email, disabled_at', { count: 'exact' })
+      .order('name', { ascending: true })
+      .range(from, to);
 
     if (actor.role === 'teacher') {
       query = query.is('disabled_at', null);
     }
 
-    const { data, error } = await query;
+    if (keyword) {
+      query = query.or(`name.ilike.%${keyword}%,email.ilike.%${keyword}%`);
+    }
+
+    const { data, error, count } = await query;
     if (error) throw error;
 
-    return NextResponse.json({ success: true, data: data ?? [] });
+    return NextResponse.json({
+      success: true,
+      data: data ?? [],
+      page,
+      pageSize,
+      total: count ?? 0,
+    });
   } catch (error: unknown) {
     console.error('[admin/students] list failed:', error);
     return NextResponse.json(
