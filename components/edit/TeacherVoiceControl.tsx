@@ -217,7 +217,11 @@ export function TeacherVoiceControl({
             disabled={running || !selectedVoice || selectedVoice === courseVoice?.voiceId}
           >
             {running && <Loader2 className="mr-2 size-4 animate-spin" />}
-            {running ? `正在生成配音 ${job.completed}/${job.total}` : '确认更换并重新配音'}
+            {running
+              ? job
+                ? `正在生成配音 ${job.completed}/${job.total}`
+                : '正在创建重新配音任务'
+              : '确认更换并重新配音'}
           </Button>
         </DialogFooter>
       </DialogContent>
