@@ -145,7 +145,10 @@ export function TeacherVoiceControl({
       jobStatuses.current.set(payload.job.id, payload.job.status);
       setJob(payload.job as Job);
       const acceptedVoice = payload.job.voice || voice;
-      updateStage({ ...stage, teacherVoiceConfig: acceptedVoice });
+      updateStage(
+        { teacherVoiceConfig: acceptedVoice } as Partial<typeof stage> &
+          Record<'teacherVoiceConfig', StageTeacherVoiceConfig>,
+      );
       toast.success(
         payload.job.done
           ? '该课程已经使用所选音色'
