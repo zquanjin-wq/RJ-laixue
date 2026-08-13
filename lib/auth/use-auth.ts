@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
+import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 
 export type UserRole = 'admin' | 'teacher' | 'learner';
@@ -50,8 +50,8 @@ export function useAuth() {
 
   const loadedOnce = useRef(false);
 
-  const loadSession = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
+  const loadSession = useCallback(async (showLoading = true) => {
+    if (showLoading) setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
@@ -89,19 +89,29 @@ export function useAuth() {
     };
     load();
 
-    const { data } = supabase.auth.onAuthStateChange(() => {
-      loadSession();
-    });
+    const { data } = supabase.auth.onAuthStateChange(
+      (event: AuthChangeEvent, session: Session | null) => {
+        if (event === 'TOKEN_REFRESHED') {
+          // Refreshing a valid token is normal when the tab becomes active.
+          // Keep the current profile and rendered page in place.
+          setState((prev) => ({ ...prev, session, user: session?.user ?? prev.user }));
+          return;
+        }
 
-    const restoreVisibleTab = () => {
-      if (document.visibilityState === 'visible') void loadSession();
-    };
-    document.addEventListener('visibilitychange', restoreVisibleTab);
+        if (event === 'SIGNED_OUT') {
+          setState({ user: null, session: null, profile: null, loading: false, error: null });
+          return;
+        }
+
+        // SIGNED_IN / USER_UPDATED may change the actor or role, so refresh
+        // the profile without flickering the existing page.
+        void loadSession(false);
+      },
+    );
 
     return () => {
       cancelled = true;
       data.subscription.unsubscribe();
-      document.removeEventListener('visibilitychange', restoreVisibleTab);
     };
   }, [loadSession]);
 
