@@ -15,7 +15,13 @@ import { MobilePlayer } from './_components/MobilePlayer';
 
 interface PageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ share?: string; student?: string; view?: string; task?: string }>;
+  searchParams: Promise<{
+    share?: string;
+    student?: string;
+    view?: string;
+    task?: string;
+    token?: string;
+  }>;
 }
 
 export default async function MobilePlayerPage({ params, searchParams }: PageProps) {
@@ -23,6 +29,7 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
   const sp = await searchParams;
   const isShareMode = sp.share === '1';
   const taskId = sp.task;
+  const taskToken = sp.token;
 
   const serverSupabase = await getServerSupabase();
   const {
@@ -30,7 +37,9 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
   } = await serverSupabase.auth.getUser();
 
   if (!user) {
-    const next = taskId ? `/m/${id}?task=${encodeURIComponent(taskId)}` : `/m/${id}`;
+    const next = taskId
+      ? `/m/${id}?task=${encodeURIComponent(taskId)}${taskToken ? `&token=${encodeURIComponent(taskToken)}` : ''}`
+      : `/m/${id}`;
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
 
@@ -47,7 +56,7 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b">
         <div className="mx-auto max-w-md flex items-center gap-3 px-4 py-3">
           <Link
-            href="/m"
+            href={taskId && taskToken ? `/learn/${encodeURIComponent(taskToken)}` : '/m'}
             className="text-sm text-muted-foreground hover:text-foreground"
             aria-label="返回课程列表"
           >

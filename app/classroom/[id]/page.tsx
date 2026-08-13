@@ -34,6 +34,7 @@ export default function ClassroomDetailPage() {
   const viewMode = searchParams.get('view') === '1';
   const explicitSceneId = searchParams.get('sceneId') || undefined;
   const taskId = searchParams.get('task') || undefined;
+  const taskToken = searchParams.get('token') || undefined;
   // Temporary repair entry: ?repairOrder=createdAt
   // Forces scenes to be re-sorted by createdAt/updatedAt/id, normalized to
   // seq=order=index, and re-uploaded to cloud. See loadClassroom for logic.
@@ -97,6 +98,7 @@ export default function ClassroomDetailPage() {
     if (isShareMode) params.set('share', '1');
     if (viewMode) params.set('view', '1');
     if (taskId) params.set('task', taskId);
+    if (taskToken) params.set('token', taskToken);
     const qs = params.toString();
     const target = `/m/${classroomId}${qs ? `?${qs}` : ''}`;
 
@@ -121,6 +123,7 @@ export default function ClassroomDetailPage() {
     router,
     profile,
     taskId,
+    taskToken,
   ]);
 
   // When the URL says ?editor=1, flip the stage store into 'edit'
@@ -974,6 +977,15 @@ export default function ClassroomDetailPage() {
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
+              {taskId && readOnlyShare && taskToken && (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/learn/${encodeURIComponent(taskToken)}`)}
+                  className="fixed left-6 top-6 z-50 rounded-full border bg-background/95 px-4 py-2 text-sm font-medium shadow-sm backdrop-blur hover:bg-muted"
+                >
+                  返回任务课程列表
+                </button>
+              )}
               {taskId && readOnlyShare && (
                 <button
                   type="button"

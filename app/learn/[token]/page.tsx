@@ -90,7 +90,7 @@ export default async function LearnTaskPage({ params }: PageProps) {
       />
     );
   }
-  const target = `/classroom/${encodeURIComponent(entry.courseId)}?task=${encodeURIComponent(entry.taskId)}&share=1`;
+  const target = `/classroom/${encodeURIComponent(entry.courseId)}?task=${encodeURIComponent(entry.taskId)}&token=${encodeURIComponent(token)}&share=1`;
   redirect(target);
 }
 
@@ -118,7 +118,7 @@ function TaskCoursePackage({
             {courses.map((course) => (
               <Link
                 key={course.courseId}
-                href={`/classroom/${encodeURIComponent(course.courseId)}?task=${encodeURIComponent(taskId)}&course=${encodeURIComponent(course.courseId)}&share=1`}
+                href={`/classroom/${encodeURIComponent(course.courseId)}?task=${encodeURIComponent(taskId)}&token=${encodeURIComponent(token)}&course=${encodeURIComponent(course.courseId)}&share=1`}
                 className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50"
               >
                 <div>
