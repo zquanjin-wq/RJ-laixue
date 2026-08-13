@@ -2,7 +2,7 @@
 
 **编号**: MIG-EO-M1-1  
 **日期**: 2026-08-13  
-**状态**: 🟡 本地修复与回归通过；等待将修复提交到 EdgeOne 所连接分支后重新部署。  
+**状态**: 🟡 修复已推送至 EdgeOne Preview 分支；等待重新部署。  
 **生产影响**: 无
 
 ## 1. EdgeOne 首次构建证据
@@ -39,8 +39,8 @@ at position 551 (line 24 column 7)
 
 ## 5. 下一步与门禁
 
-1. 将本次单文件修复提交到 EdgeOne 所连接的非生产分支，或由负责人手工同步到该分支。
-2. 触发同一 EdgeOne 项目重新部署。
+1. 已推送分支：`origin/migration/edgeone-m1`，提交 `fa21142723704e12b71d3abaa53d93769fbde194`。
+2. 将 EdgeOne 项目的部署分支切换为 `migration/edgeone-m1`，或从该分支手动创建 Preview 部署。
 3. 验收点：越过 `StaticAssetsBuilder` JSON 解析阶段，记录完整构建耗时、最终部署包体与 Preview URL。
 4. 若下一次失败指向其他 JSONC 文件，按同样原则只转换被 EdgeOne 读取的配置文件，并在每次修改后执行本地生产构建。
 
@@ -48,5 +48,4 @@ at position 551 (line 24 column 7)
 
 - 未绑定自定义域名，未修改 Cloudflare DNS。
 - 未写入 EdgeOne Secret，未使用 Production Supabase。
-- 未提交、未推送、未创建远程分支；等待负责人明确授权。
-
+- 已在负责人授权后创建并推送非生产分支；未合并 `main`，未触发生产 DNS 或生产环境变量变更。
