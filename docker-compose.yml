@@ -1,15 +1,50 @@
 services:
-  openmaic:
-    build: .
-    ports:
-      - "3000:3000"
+  laixue:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?set in .env.deploy}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?set in .env.deploy}
+    image: laixue:${LAIXUE_IMAGE_TAG:-local}
+    expose:
+      - "3000"
     env_file:
-      - .env.local
+      - .env.deploy
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
     volumes:
-      # Optional: mount server-providers.yml for provider config
-      # - ./server-providers.yml:/app/server-providers.yml:ro
-      - openmaic-data:/app/data
+      - laixue-data:/app/data
     restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      laixue:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
 volumes:
-  openmaic-data:
+  laixue-data:

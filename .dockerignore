@@ -33,3 +33,6 @@ logs
 data
 docs
 .claude
+.tmp-*
+*.log
+tsconfig.tsbuildinfo

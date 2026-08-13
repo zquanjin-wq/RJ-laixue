@@ -1,0 +1,24 @@
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	encode zstd gzip
+
+	@api path /api/*
+	header @api Cache-Control "no-store"
+
+	reverse_proxy laixue:3000 {
+		flush_interval -1
+		transport http {
+			dial_timeout 10s
+			response_header_timeout 10m
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
