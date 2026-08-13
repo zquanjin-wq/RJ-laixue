@@ -977,23 +977,26 @@ export default function ClassroomDetailPage() {
           ) : (
             <>
               <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
-              {taskId && readOnlyShare && taskToken && (
-                <button
-                  type="button"
-                  onClick={() => router.push(`/learn/${encodeURIComponent(taskToken)}`)}
-                  className="fixed left-6 top-6 z-50 rounded-full border bg-background/95 px-4 py-2 text-sm font-medium shadow-sm backdrop-blur hover:bg-muted"
-                >
-                  返回任务课程列表
-                </button>
-              )}
               {taskId && readOnlyShare && (
-                <button
-                  type="button"
-                  onClick={() => void completeTask()}
-                  className="fixed bottom-6 left-6 z-50 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg"
-                >
-                  &#23436;&#25104;&#23398;&#20064;
-                </button>
+                <div className="fixed right-60 top-6 z-50 flex items-center gap-2">
+                  {taskToken && (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/learn/${encodeURIComponent(taskToken)}`)}
+                      className="rounded-full border bg-background/95 px-3 py-2 text-sm font-medium shadow-sm backdrop-blur hover:bg-muted"
+                    >
+                      返回任务列表
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void completeTask()}
+                    title="完成任务前，需完成任务内的必学课程和必做检查题。"
+                    className="rounded-full bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+                  >
+                    提交完成任务
+                  </button>
+                </div>
               )}
               {/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
     the same course via /student/courses doesn't see a 'save to cloud'
