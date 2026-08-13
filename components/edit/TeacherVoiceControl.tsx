@@ -121,7 +121,6 @@ export function TeacherVoiceControl({
 
   async function handleReplace() {
     if (!stage || starting || !selectedVoice) return;
-    if (selectedVoice === courseVoice?.voiceId && (!job || job.status === 'succeeded')) return;
     setStarting(true);
     try {
       const provider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
@@ -257,8 +256,7 @@ export function TeacherVoiceControl({
             onClick={handleReplace}
             disabled={
               running ||
-              !selectedVoice ||
-              (selectedVoice === courseVoice?.voiceId && (!job || job.status === 'succeeded'))
+              !selectedVoice
             }
           >
             {running && <Loader2 className="mr-2 size-4 animate-spin" />}

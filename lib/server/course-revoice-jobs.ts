@@ -12,6 +12,7 @@ import {
 } from '@/lib/server/provider-config';
 import { getServiceSupabase } from '@/lib/supabase/server';
 import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
+import { fingerprintSpeechVoice, speechVoiceMatches } from '@/lib/audio/voice-fingerprint';
 
 export type CourseRevoiceStatus =
   | 'queued'
@@ -48,13 +49,17 @@ export type CourseRevoiceJob = {
   updated_at: string;
 };
 
+export function isRevoiceNoopError(error: unknown): boolean {
+  return error instanceof Error && error.message === '所有讲解配音已符合所选音色，无需重新生成。';
+}
+
 // Keep a full run below the shared MiniMax default of 15 requests/minute.
 // A one-minute lease after each batch prevents the cron runner and the initial
 // request from together exceeding that provider quota.
 const WORK_BATCH_SIZE = 12;
 const WORK_CONCURRENCY = 3;
 
-function speechItems(scenes: Json[]): RevoiceItem[] {
+function speechItems(scenes: Json[], targetVoice: StageTeacherVoiceConfig): RevoiceItem[] {
   return scenes.flatMap((scene) => {
     const sceneId = typeof scene.id === 'string' ? scene.id : '';
     const actions = Array.isArray(scene.actions) ? (scene.actions as Json[]) : [];
@@ -66,6 +71,10 @@ function speechItems(scenes: Json[]): RevoiceItem[] {
         !sceneId
       )
         return [];
+      // A missing fingerprint is deliberately treated as untrusted. This makes
+      // the first revoice of historical/imported content establish a reliable
+      // baseline; every later voice change touches only changed lines.
+      if (speechVoiceMatches(action.audioVoiceFingerprint, action.text, targetVoice)) return [];
       return [
         {
           sceneId,
@@ -104,8 +113,8 @@ export async function createCourseRevoiceJob(input: {
   sourceUpdatedAt: string;
 }) {
   const voice = assertServerRevoiceVoice(input.voice);
-  const items = speechItems(input.snapshot.scenes);
-  if (!items.length) throw new Error('课程中没有可重新生成的讲解配音。');
+  const items = speechItems(input.snapshot.scenes, voice);
+  if (!items.length) throw new Error('所有讲解配音已符合所选音色，无需重新生成。');
   // One course can only have one active replacement. This is enforced on the
   // server as well as in the UI so double-clicks and multiple tabs cannot
   // create competing jobs that race to overwrite the course.
@@ -240,7 +249,14 @@ function applyResults(snapshot: CourseRevoiceJob['snapshot'], items: RevoiceItem
       (action, index) => {
         const key = `${scene.id}:${typeof action.id === 'string' ? action.id : `${scene.id}-${index}`}`;
         const item = byAction.get(key);
-        return item ? { ...action, audioId: item.audioId, audioUrl: item.audioUrl } : action;
+        return item
+          ? {
+              ...action,
+              audioId: item.audioId,
+              audioUrl: item.audioUrl,
+              audioVoiceFingerprint: fingerprintSpeechVoice(item.text, snapshot.stage.teacherVoiceConfig as StageTeacherVoiceConfig),
+            }
+          : action;
       },
     ),
   }));

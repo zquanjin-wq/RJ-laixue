@@ -7,6 +7,7 @@ import {
   getCourseRevoiceJob,
   runCourseRevoiceJob,
   assertServerRevoiceVoice,
+  isRevoiceNoopError,
 } from '@/lib/server/course-revoice-jobs';
 import { getServiceSupabase } from '@/lib/supabase/server';
 import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
@@ -74,6 +75,21 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (isRevoiceNoopError(error)) {
+      return apiSuccess({
+        job: {
+          id: `noop-${id}`,
+          status: 'succeeded',
+          total: 0,
+          completed: 0,
+          failed: 0,
+          message,
+          voice: body.voice,
+          done: true,
+        },
+        pollIntervalMs: 0,
+      });
+    }
     console.error('[course-revoice] create job failed', {
       courseId: id,
       userId: auth.user.id,
