@@ -37,6 +37,38 @@ describe('externalizeCourseAssets', () => {
     expect(result.converted).toEqual({ images: 0, audio: 0 });
   });
 
+  it('removes speech audio copied from another course before it can be republished', async () => {
+    const stage = {
+      teacherVoiceConfig: { providerId: 'minimax-tts', voiceId: 'male-qingnian' },
+    };
+    const scenes = [{
+      actions: [{
+        type: 'speech',
+        audioId: 'tts_s1_reused-action',
+        audioUrl: 'https://assets.example/storage/v1/object/public/course-assets/courses/other-course/audio/old.mp3',
+      }],
+    }];
+
+    const result = await externalizeCourseAssets('course-4', stage, scenes);
+    const speech = (result.scenes[0].actions as Array<Record<string, unknown>>)[0];
+
+    expect(speech.audioUrl).toBeUndefined();
+    expect(speech.audioId).toBeUndefined();
+    expect(result.foreignAudioRemoved).toBe(1);
+    expect(scenes[0].actions[0].audioUrl).toContain('other-course');
+  });
+
+  it('refuses to preserve a foreign audio URL when the course voice is unknown', async () => {
+    await expect(
+      externalizeCourseAssets('course-5', {}, [{
+        actions: [{
+          type: 'speech',
+          audioUrl: 'https://assets.example/courses/other-course/audio/old.mp3',
+        }],
+      }]),
+    ).rejects.toThrow('课堂阵容');
+  });
+
   it('externalizes nested canvas media and reuses a single upload for duplicate data URIs', async () => {
     uploadCourseDataUri.mockClear();
     const inlineImage = 'data:image/png;base64,NESTED';

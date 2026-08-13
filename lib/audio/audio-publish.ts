@@ -50,6 +50,20 @@ export interface PublishSceneAudioAssetsResult {
   regenerated: RegeneratedAudioItem[];
 }
 
+/**
+ * Course audio lives under `courses/<courseId>/audio/`. A URL in another
+ * course's namespace is never a reusable asset: keeping it would make this
+ * course play the other course's narration (and potentially its voice).
+ */
+function audioUrlBelongsToCourse(audioUrl: string, courseId: string): boolean {
+  const match = audioUrl.match(/\/courses\/([^/?#]+)\/audio\//i);
+  return !match || decodeURIComponent(match[1]) === courseId;
+}
+
+function hasUsableTeacherVoice(config?: TeacherVoiceConfig | null): boolean {
+  return !!config?.providerId && !!config.voiceId;
+}
+
 function isSpeechAction(action: Action): action is SpeechAction {
   return action.type === 'speech';
 }
@@ -386,6 +400,31 @@ export async function publishSceneAudioAssets(
 
   const nextScenes = structuredClone(scenes) as Scene[];
 
+  // Never preserve an audio file owned by a different course.  Do this before
+  // the normal Tier-1 shortcut so a copied scene cannot silently retain a
+  // foreign voice.  Regeneration must use an explicit course voice; falling
+  // back to the editor's local default here was the source of mixed voices.
+  let foreignAudioCount = 0;
+  for (const scene of nextScenes) {
+    for (const action of scene.actions ?? []) {
+      if (!isSpeechAction(action)) continue;
+      const speech = action as SpeechAction & { audioId?: string; audioUrl?: string };
+      if (speech.audioUrl && !audioUrlBelongsToCourse(speech.audioUrl, stageId)) {
+        delete speech.audioId;
+        delete speech.audioUrl;
+        foreignAudioCount++;
+      }
+    }
+  }
+  if (foreignAudioCount > 0 && !hasUsableTeacherVoice(teacherVoiceConfig)) {
+    throw new Error(
+      '检测到来自其他课程的配音。请先在“课堂阵容 → AI教师”中选定本课音色，再保存或重新配音。',
+    );
+  }
+  if (foreignAudioCount > 0) {
+    log.warn(`Removed ${foreignAudioCount} foreign course audio references before publish`);
+  }
+
   const uploaded: PublishedAudioItem[] = [];
   const skipped: PublishedAudioItem[] = [];
   const missing: MissingAudioItem[] = [];
@@ -474,8 +513,13 @@ export async function publishSceneAudioAssets(
         continue;
       }
 
-      // ── Tier 2: Has audioId → try IndexedDB blob ──
-      if (!options.forceRegenerate && audioId) {
+      // ── Tier 2: Has a course-scoped audioId → try IndexedDB blob ──
+      // Legacy `tts_s...` keys are shared by every course in one browser. They
+      // cannot prove ownership after a copied/reordered scene, so treating
+      // their IndexedDB blob as uploadable can transplant another course's
+      // voice. Only an explicitly course-scoped cache key is safe to upload.
+      const hasCourseScopedAudioId = !!audioId && audioId.startsWith(`course_${stageId}_`);
+      if (!options.forceRegenerate && audioId && hasCourseScopedAudioId) {
         const record = await db.audioFiles.get(audioId);
 
         if (record?.blob) {
@@ -511,6 +555,9 @@ export async function publishSceneAudioAssets(
           }),
         );
         log.info(`audioId ${audioId} has no IndexedDB blob, will regenerate TTS`);
+      }
+      if (!options.forceRegenerate && audioId && !hasCourseScopedAudioId) {
+        log.info(`Ignoring unscoped local audio cache key ${audioId}; will regenerate TTS`);
       }
 
       // ── Tier 3: No audioUrl, no blob → regenerate TTS ──

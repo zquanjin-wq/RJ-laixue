@@ -13,7 +13,7 @@ import type {
   UserRequirements,
 } from '@/lib/types/generation';
 import type { AgentInfo } from '@/lib/generation/generation-pipeline';
-import type { Scene } from '@/lib/types/stage';
+import type { Scene, Stage } from '@/lib/types/stage';
 import type { Action, SpeechAction } from '@/lib/types/action';
 import { splitLongSpeechActions } from '@/lib/audio/tts-utils';
 import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
@@ -31,6 +31,7 @@ import {
 } from '@/lib/generation/generation-retry';
 import { saveStageToCloud } from '@/lib/utils/cloud-sync';
 import { toast } from 'sonner';
+import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
 
 const log = createLogger('SceneGenerator');
 
@@ -405,24 +406,36 @@ export async function generateAndStoreTTS(
   retryOptions?: ClientRetryOptions<TTSApiResponse>,
 ): Promise<void> {
   const settings = useSettingsStore.getState();
-  if (settings.ttsProviderId === 'browser-native-tts') return;
+  const courseVoice = (
+    useStageStore.getState().stage as
+      | (Stage & { teacherVoiceConfig?: StageTeacherVoiceConfig })
+      | null
+  )?.teacherVoiceConfig;
+  // A scene-level regeneration belongs to the course, not the browser that
+  // happens to edit it. Requiring a persisted course voice prevents one page
+  // from being regenerated with a different teacher's global default.
+  if (!courseVoice?.providerId || !courseVoice.voiceId) {
+    throw new Error('请先在“课堂阵容 → AI教师”中选定本课音色，再重新生成配音。');
+  }
+  const providerId = courseVoice.providerId as import('@/lib/audio/types').TTSProviderId;
+  if (providerId === 'browser-native-tts') return;
   // Don't server-generate against a disabled/unconfigured provider (#665).
   if (
     !isTTSProviderEnabled(
-      settings.ttsProviderId,
-      settings.ttsProvidersConfig?.[settings.ttsProviderId],
+      providerId,
+      settings.ttsProvidersConfig?.[providerId],
     )
   )
     return;
 
-  const ttsProviderConfig = settings.ttsProvidersConfig?.[settings.ttsProviderId];
+  const ttsProviderConfig = settings.ttsProvidersConfig?.[providerId];
   // Narration is the teacher's voice — resolve it from the teacher agent profile
   // through the single resolver (registers + references by id for stable timbre).
   const teacher = pickNarratorAgent(useAgentRegistry.getState().listAgents());
   const providerOptions = await resolveAgentVoiceOptions(teacher, {
-    providerId: settings.ttsProviderId,
+    providerId,
     providerConfig: ttsProviderConfig,
-    voiceId: settings.ttsVoice,
+    voiceId: courseVoice.voiceId,
     language,
   });
   const data = await withGenerationRetry(
@@ -434,9 +447,9 @@ export async function generateAndStoreTTS(
           body: JSON.stringify({
             text,
             audioId,
-            ttsProviderId: settings.ttsProviderId,
-            ttsModelId: ttsProviderConfig?.modelId,
-            ttsVoice: settings.ttsVoice,
+            ttsProviderId: providerId,
+            ttsModelId: courseVoice.modelId || ttsProviderConfig?.modelId,
+            ttsVoice: courseVoice.voiceId,
             ttsSpeed: settings.ttsSpeed,
             ttsApiKey: ttsProviderConfig?.apiKey || undefined,
             ttsBaseUrl:

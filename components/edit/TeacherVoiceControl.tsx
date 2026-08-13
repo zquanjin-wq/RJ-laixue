@@ -107,10 +107,9 @@ export function TeacherVoiceControl({
   }, [job?.id, open, setScenes, stage?.id, updateStage]);
 
   const running = starting || (!!job && !job.done);
-  const currentName =
-    voices.find((voice) => voice.id === courseVoice?.voiceId)?.name ||
-    courseVoice?.voiceId ||
-    '未设置';
+  const currentName = courseVoice?.voiceId
+    ? voices.find((voice) => voice.id === courseVoice.voiceId)?.name || courseVoice.voiceId
+    : '未设置';
 
   async function handleReplace() {
     if (!stage || starting || !selectedVoice || selectedVoice === courseVoice?.voiceId) return;
@@ -194,6 +193,7 @@ export function TeacherVoiceControl({
           <DialogTitle>更换 AI 老师音色</DialogTitle>
           <DialogDescription>
             任务会在服务端持续生成和保存配音。你可离开页面，之后回到这里继续查看进度；完成前课程保持原音色。
+            {!courseVoice?.voiceId && ' 此课程尚未固定音色，请先选择一次，之后所有页面会使用同一音色。'}
           </DialogDescription>
         </DialogHeader>
         <Select value={selectedVoice} onValueChange={setSelectedVoice} disabled={running}>
