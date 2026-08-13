@@ -115,6 +115,7 @@ describe('prepareCourseForAssetUploads', () => {
       const post = calls.find((call) => call.init?.method === 'POST');
       expect(post).toBeDefined();
       expect(JSON.parse(String(post?.init?.body)).id).toBe('import-course');
+      expect(calls.filter((call) => call.init?.method === 'POST')).toHaveLength(2);
     } finally {
       globalThis.fetch = originalFetch;
     }

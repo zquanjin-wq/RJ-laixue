@@ -51,6 +51,26 @@ export async function prepareCourseForAssetUploads(
   const assetNamespace = input.forceCourseNamespace || probe.status !== 404
     ? input.id
     : pendingAssetNamespace();
+
+  // A revoice task for an imported course owns the final course id from the
+  // outset. Create a minimal row before requesting upload signatures: the
+  // sign-upload API deliberately refuses `courses/<id>/...` paths whose
+  // course row does not exist. This shell contains no scene payload or inline
+  // assets, so it remains comfortably below the deployment request limit.
+  if (input.forceCourseNamespace && probe.status === 404) {
+    const shell = await fetch('/api/courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: input.id,
+        title: input.title,
+        topic: input.topic,
+        saveState: 'draft',
+        data: { stage: input.stage, scenes: [], outlines: [] },
+      }),
+    });
+    await readCourseResponse(shell);
+  }
   const externalized = await externalizeCourseAssets(assetNamespace, input.stage, input.scenes);
 
   const create = await fetch('/api/courses', {
