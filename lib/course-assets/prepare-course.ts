@@ -9,6 +9,8 @@ export interface CourseAssetPreparationInput {
   stage: RecordLike;
   scenes: RecordLike[];
   outlines: unknown;
+  /** Revoice preparation already owns the final course id, so avoid a pending namespace. */
+  forceCourseNamespace?: boolean;
 }
 
 async function readCourseResponse(response: Response): Promise<void> {
@@ -46,7 +48,9 @@ export async function prepareCourseForAssetUploads(
     throw new Error(`Course preparation failed: cloud probe returned HTTP ${probe.status}`);
   }
 
-  const assetNamespace = probe.status === 404 ? pendingAssetNamespace() : input.id;
+  const assetNamespace = input.forceCourseNamespace || probe.status !== 404
+    ? input.id
+    : pendingAssetNamespace();
   const externalized = await externalizeCourseAssets(assetNamespace, input.stage, input.scenes);
 
   const create = await fetch('/api/courses', {

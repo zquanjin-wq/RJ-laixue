@@ -9,6 +9,7 @@ const { uploadCourseDataUri } = vi.hoisted(() => ({
 vi.mock('@/lib/course-assets/client', () => ({ uploadCourseDataUri }));
 
 import { externalizeCourseAssets } from '@/lib/course-assets/externalize';
+import { prepareCourseForAssetUploads } from '@/lib/course-assets/prepare-course';
 
 describe('externalizeCourseAssets', () => {
   it('replaces all supported data URIs without mutating the local course', async () => {
@@ -87,5 +88,35 @@ describe('externalizeCourseAssets', () => {
     expect(elements[0].props?.src).toMatch(/^https:\/\//);
     expect(elements[1].src).toMatch(/^https:\/\//);
     expect((scene.content.canvas.elements[0].props?.src)).toBe(inlineImage);
+  });
+});
+
+describe('prepareCourseForAssetUploads', () => {
+  it('uses the final course namespace for revoice preparation of a new import', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(
+        init?.method === 'POST' ? JSON.stringify({ success: true }) : '',
+        { status: init?.method === 'POST' ? 200 : 404 },
+      );
+    }) as typeof fetch;
+    try {
+      await prepareCourseForAssetUploads({
+        id: 'import-course',
+        title: '导入课',
+        topic: '',
+        stage: { teacherVoiceConfig: { providerId: 'minimax-tts', voiceId: 'male-qingnian' } },
+        scenes: [],
+        outlines: [],
+        forceCourseNamespace: true,
+      });
+      const post = calls.find((call) => call.init?.method === 'POST');
+      expect(post).toBeDefined();
+      expect(JSON.parse(String(post?.init?.body)).id).toBe('import-course');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
