@@ -124,6 +124,7 @@ export function useImportClassroom(onSuccess?: () => void) {
           const meta = manifest.mediaIndex[zipPath];
           const record: AudioFileRecord = {
             id: newId,
+            stageId: newStageId,
             blob,
             format: meta.format || 'mp3',
             duration: meta.duration,

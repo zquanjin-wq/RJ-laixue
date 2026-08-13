@@ -34,6 +34,7 @@ type Job = {
   message: string;
   error?: string;
   done: boolean;
+  voice: StageTeacherVoiceConfig;
 };
 
 export function TeacherVoiceControl({
@@ -57,6 +58,7 @@ export function TeacherVoiceControl({
   const [open, setOpen] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const jobStatuses = useRef(new Map<string, string>());
+  const syncedJobs = useRef(new Set<string>());
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
@@ -78,23 +80,26 @@ export function TeacherVoiceControl({
         const priorStatus = jobStatuses.current.get(next.id);
         jobStatuses.current.set(next.id, next.status);
         setJob(next);
-        // A completed task loaded for the first time is history, not a new
-        // completion. Only notify/close when this mounted UI observes the
-        // same active job transition into succeeded.
-        if (next.status === 'succeeded' && priorStatus && priorStatus !== 'succeeded') {
+        if (next.status === 'succeeded' && !syncedJobs.current.has(next.id)) {
+          syncedJobs.current.add(next.id);
           const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
           const course = await courseResponse.json();
-          const data = course?.data;
+          const data = course?.data?.data;
           if (data?.stage && Array.isArray(data.scenes) && !stopped) {
             setScenes(data.scenes);
             updateStage(data.stage);
           }
-          toast.success('AI 老师音色已更新，配音已保存到云端');
-          setOpen(false);
-        } else if (next.status === 'failed' || next.status === 'conflict') {
+          if (priorStatus && priorStatus !== 'succeeded') {
+            toast.success('AI 老师音色已更新，配音已保存到云端');
+            setOpen(false);
+          }
+        } else if (
+          (next.status === 'failed' || next.status === 'conflict') &&
+          priorStatus !== next.status
+        ) {
           toast.error(next.message || next.error || '重新配音未完成，课程仍使用原音色');
         }
-        if ((!next.done || open) && !stopped) {
+        if (!next.done && !stopped) {
           timer = setTimeout(poll, payload?.pollIntervalMs || 5000);
         }
       } catch {
@@ -114,7 +119,8 @@ export function TeacherVoiceControl({
     : '未设置';
 
   async function handleReplace() {
-    if (!stage || starting || !selectedVoice || selectedVoice === courseVoice?.voiceId) return;
+    if (!stage || starting || !selectedVoice) return;
+    if (selectedVoice === courseVoice?.voiceId && (!job || job.status === 'succeeded')) return;
     setStarting(true);
     try {
       const provider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
@@ -123,42 +129,27 @@ export function TeacherVoiceControl({
         voiceId: selectedVoice,
         modelId: providerConfigs[providerId]?.modelId || provider?.defaultModelId || undefined,
       };
-      // Imported/local course packages do not have a cloud row yet. Persist a
-      // lightweight draft with the selected *course* voice before asking the
-      // server to create its durable revoice job. The job then replaces all
-      // speech URLs atomically on completion, so foreign package audio is
-      // never published as a finished course.
       const stageWithVoice = { ...stage, teacherVoiceConfig: voice };
-      const draftResponse = await fetch('/api/courses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: stage.id,
-          title: stage.name || '',
-          topic: '',
-          saveState: 'draft',
-          data: { stage: stageWithVoice, scenes, outlines },
-        }),
-      });
-      const draftPayload = await draftResponse.json().catch(() => null);
-      if (!draftResponse.ok || !draftPayload?.success) {
-        throw new Error(draftPayload?.error || '无法准备云端课程');
-      }
-      updateStage(stageWithVoice);
       const response = await fetch(`/api/courses/${encodeURIComponent(stage.id)}/revoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voice }),
+        body: JSON.stringify({
+          voice,
+          title: stage.name || '',
+          snapshot: { stage: stageWithVoice, scenes, outlines },
+        }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success || !payload?.job)
         throw new Error(payload?.error || '无法创建重新配音任务');
       jobStatuses.current.set(payload.job.id, payload.job.status);
       setJob(payload.job as Job);
+      const acceptedVoice = payload.job.voice || voice;
+      updateStage({ ...stage, teacherVoiceConfig: acceptedVoice });
       toast.success(
         payload.job.done
           ? '该课程已经使用所选音色'
-          : '已加入服务端重新配音队列，可离开页面后再回来查看进度',
+          : '已加入重新配音队列；离开页面会暂停，返回后自动继续',
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '重新配音失败');
@@ -184,14 +175,13 @@ export function TeacherVoiceControl({
       <DialogTrigger asChild>
         <button
           type="button"
-          disabled={running}
           onClick={(event) => event.stopPropagation()}
           className={
             variant === 'roster'
               ? 'inline-flex w-full items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-400 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-75 dark:border-violet-700/60 dark:bg-gray-900 dark:text-violet-300'
               : 'shrink-0 inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-full border border-violet-200/70 bg-white/60 px-3 text-xs text-violet-700 shadow-sm backdrop-blur-md hover:border-violet-400 dark:border-violet-700/60 dark:bg-gray-800/60 dark:text-violet-300'
           }
-          title={running ? '重新配音进行中，暂不能再次更换音色' : `当前使用：${currentName}`}
+          title={running ? '重新配音进行中，点击查看进度' : `当前使用：${currentName}`}
         >
           <Volume2 className="size-3.5" />
           <span className="min-w-0 flex-1 truncate">
@@ -216,7 +206,7 @@ export function TeacherVoiceControl({
         <DialogHeader>
           <DialogTitle>更换 AI 老师音色</DialogTitle>
           <DialogDescription>
-            任务会在服务端持续生成和保存配音。你可离开页面，之后回到这里继续查看进度；完成前课程保持原音色。
+            当前部署下，保持页面打开会持续生成；离开后任务会暂停，返回本页将自动继续。完成前课程保持原音色。
             {!courseVoice?.voiceId && ' 此课程尚未固定音色，请先选择一次，之后所有页面会使用同一音色。'}
           </DialogDescription>
         </DialogHeader>
@@ -238,7 +228,11 @@ export function TeacherVoiceControl({
           </Button>
           <Button
             onClick={handleReplace}
-            disabled={running || !selectedVoice || selectedVoice === courseVoice?.voiceId}
+            disabled={
+              running ||
+              !selectedVoice ||
+              (selectedVoice === courseVoice?.voiceId && (!job || job.status === 'succeeded'))
+            }
           >
             {running && <Loader2 className="mr-2 size-4 animate-spin" />}
             {running

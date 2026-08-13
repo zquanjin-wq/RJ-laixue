@@ -493,6 +493,7 @@ export async function generateAndStoreTTS(
   const blob = new Blob([bytes], { type: `audio/${data.format}` });
   await db.audioFiles.put({
     id: audioId,
+    stageId: useStageStore.getState().stage?.id,
     blob,
     format: data.format,
     createdAt: Date.now(),

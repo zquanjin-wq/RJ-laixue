@@ -27,6 +27,25 @@ create index if not exists course_revoice_jobs_pending_idx
   where status in ('queued', 'running');
 create index if not exists course_revoice_jobs_owner_idx
   on public.course_revoice_jobs (requested_by, course_id, created_at desc);
+-- Older deployments briefly allowed concurrent active rows. Keep the newest
+-- one active and close the rest before installing the invariant.
+with ranked_active as (
+  select id,
+         row_number() over (partition by course_id order by created_at desc, id desc) as rn
+  from public.course_revoice_jobs
+  where status in ('queued', 'running')
+)
+update public.course_revoice_jobs j
+set status = 'cancelled',
+    message = '已由较新的重新配音任务取代',
+    completed_at = now(),
+    locked_until = null,
+    updated_at = now()
+from ranked_active r
+where j.id = r.id and r.rn > 1;
+create unique index if not exists course_revoice_jobs_one_active_per_course_idx
+  on public.course_revoice_jobs (course_id)
+  where status in ('queued', 'running');
 
 alter table public.course_revoice_jobs enable row level security;
 
@@ -59,3 +78,51 @@ end;
 $$;
 
 revoke all on function public.claim_course_revoice_job(text) from public;
+
+-- Commit is all-or-nothing: a cancelled job can never update the course, and
+-- an edited course can never be overwritten by an old snapshot.
+create or replace function public.commit_course_revoice_job(
+  p_job_id text,
+  p_course_id text,
+  p_source_updated_at timestamptz,
+  p_course_data jsonb
+)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_updated integer := 0;
+begin
+  if not exists (
+    select 1 from public.course_revoice_jobs
+    where id = p_job_id and course_id = p_course_id and status = 'running'
+    for update
+  ) then
+    return 'cancelled';
+  end if;
+
+  update public.courses
+  set data = p_course_data,
+      updated_at = now()
+  where id = p_course_id
+    and updated_at = p_source_updated_at;
+  get diagnostics v_course_updated = row_count;
+
+  update public.course_revoice_jobs
+  set status = case when v_course_updated = 1 then 'succeeded' else 'conflict' end,
+      message = case
+        when v_course_updated = 1 then '重新配音已完成并保存到云端'
+        else '课程在生成期间已被编辑，未覆盖新内容'
+      end,
+      completed_at = now(),
+      locked_until = null,
+      updated_at = now()
+  where id = p_job_id and status = 'running';
+
+  return case when v_course_updated = 1 then 'succeeded' else 'conflict' end;
+end;
+$$;
+
+revoke all on function public.commit_course_revoice_job(text, text, timestamptz, jsonb) from public;

@@ -82,6 +82,20 @@ function normalizeProviderId(providerId: string) {
   return providerId.endsWith('-tts') ? providerId : `${providerId}-tts`;
 }
 
+export function assertServerRevoiceVoice(voice: StageTeacherVoiceConfig) {
+  const providerId = normalizeProviderId(voice.providerId);
+  if (
+    providerId === 'browser-native-tts' ||
+    !isServerConfiguredProvider('tts', providerId) ||
+    isServerTTSProviderDisabled(providerId)
+  ) {
+    throw new Error(
+      '该音色不是服务器托管音色，暂不支持整课后台生成。请选择平台提供的 AI 音色。',
+    );
+  }
+  return { ...voice, providerId };
+}
+
 export async function createCourseRevoiceJob(input: {
   courseId: string;
   userId: string;
@@ -89,16 +103,7 @@ export async function createCourseRevoiceJob(input: {
   snapshot: CourseRevoiceJob['snapshot'];
   sourceUpdatedAt: string;
 }) {
-  const providerId = normalizeProviderId(input.voice.providerId);
-  if (
-    providerId === 'browser-native-tts' ||
-    !isServerConfiguredProvider('tts', providerId) ||
-    isServerTTSProviderDisabled(providerId)
-  ) {
-    throw new Error(
-      '该音色不是服务器托管音色，暂不支持离开页面后继续生成。请选择平台提供的 AI 音色。',
-    );
-  }
+  const voice = assertServerRevoiceVoice(input.voice);
   const items = speechItems(input.snapshot.scenes);
   if (!items.length) throw new Error('课程中没有可重新生成的讲解配音。');
   // One course can only have one active replacement. This is enforced on the
@@ -120,7 +125,7 @@ export async function createCourseRevoiceJob(input: {
     course_id: input.courseId,
     requested_by: input.userId,
     status: 'queued' as const,
-    voice: { ...input.voice, providerId },
+    voice,
     snapshot: input.snapshot,
     source_updated_at: input.sourceUpdatedAt,
     items,
@@ -130,6 +135,15 @@ export async function createCourseRevoiceJob(input: {
     message: '已加入重新配音队列',
   };
   const { error } = await service.from('course_revoice_jobs').insert(job);
+  if (error?.code === '23505') {
+    const { data: concurrent } = await service
+      .from('course_revoice_jobs')
+      .select('*')
+      .eq('course_id', input.courseId)
+      .in('status', ['queued', 'running'])
+      .maybeSingle();
+    if (concurrent) return concurrent as CourseRevoiceJob;
+  }
   if (error) throw new Error(`创建重新配音任务失败：${error.message}`);
   return job;
 }
@@ -201,6 +215,19 @@ async function synthesize(job: CourseRevoiceJob, item: RevoiceItem) {
   return uploadAudio(job.course_id, job.id, item, result.audio, result.format);
 }
 
+async function synthesizeWithRetry(job: CourseRevoiceJob, item: RevoiceItem) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await synthesize(job, item);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+  throw lastError;
+}
+
 function applyResults(snapshot: CourseRevoiceJob['snapshot'], items: RevoiceItem[]) {
   const byAction = new Map(
     items
@@ -241,7 +268,7 @@ export async function runCourseRevoiceJob(jobId: string) {
           (candidate) => candidate.sceneId === item.sceneId && candidate.actionId === item.actionId,
         );
         try {
-          const audio = await synthesize(job, item);
+          const audio = await synthesizeWithRetry(job, item);
           nextItems[index] = { ...item, ...audio, status: 'done' };
         } catch (error) {
           nextItems[index] = {
@@ -290,41 +317,41 @@ export async function runCourseRevoiceJob(jobId: string) {
     { ...job.snapshot, stage: { ...job.snapshot.stage, teacherVoiceConfig: job.voice } },
     nextItems,
   );
-  const { data: updated, error: updateError } = await service
-    .from('courses')
-    .update({
-      data: {
-        stage: final.stage,
-        scenes: final.scenes,
-        outlines: job.snapshot.outlines,
-        saveState: 'ready',
-        audioGeneration: {
-          attempted: true,
-          completedAt: new Date().toISOString(),
-          source: 'server-revoice-job',
-        },
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', job.course_id)
-    .eq('updated_at', job.source_updated_at)
-    .select('id')
-    .maybeSingle();
-  if (updateError) throw updateError;
-  const conflict = !updated;
-  await service
+  const courseData = {
+    stage: final.stage,
+    scenes: final.scenes,
+    outlines: job.snapshot.outlines,
+    saveState: 'ready',
+    audioGeneration: {
+      attempted: true,
+      completedAt: new Date().toISOString(),
+      source: 'server-revoice-job',
+    },
+  };
+  // Persist final item progress before the atomic course commit. The RPC locks
+  // the job row and only updates the course while its status is still running.
+  const { error: progressError } = await service
     .from('course_revoice_jobs')
-    .update({
-      items: nextItems,
-      completed_items: completed,
-      status: conflict ? 'conflict' : 'succeeded',
-      message: conflict ? '课程在生成期间已被编辑，未覆盖新内容' : '重新配音已完成并保存到云端',
-      completed_at: new Date().toISOString(),
-      locked_until: null,
-    })
+    .update({ items: nextItems, completed_items: completed })
     .eq('id', job.id)
     .eq('status', 'running');
-  return { ...job, status: conflict ? ('conflict' as const) : ('succeeded' as const) };
+  if (progressError) throw progressError;
+  const { data: commitStatus, error: commitError } = await service.rpc(
+    'commit_course_revoice_job',
+    {
+      p_job_id: job.id,
+      p_course_id: job.course_id,
+      p_source_updated_at: job.source_updated_at,
+      p_course_data: courseData,
+    },
+  );
+  if (commitError) throw commitError;
+  const status = commitStatus === 'succeeded'
+    ? 'succeeded'
+    : commitStatus === 'conflict'
+      ? 'conflict'
+      : 'cancelled';
+  return { ...job, status: status as CourseRevoiceStatus };
 }
 
 export async function runNextCourseRevoiceJob() {

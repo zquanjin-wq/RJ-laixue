@@ -6,6 +6,7 @@ import {
   createCourseRevoiceJob,
   getCourseRevoiceJob,
   runCourseRevoiceJob,
+  assertServerRevoiceVoice,
 } from '@/lib/server/course-revoice-jobs';
 import { getServiceSupabase } from '@/lib/supabase/server';
 import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
@@ -40,12 +41,46 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const limit = rateLimitByUser(auth.user.id, 'course-revoice-start', 3, 60_000);
   if (!limit.ok) return limit.response;
   const { id } = await context.params;
-  const course = await ownedCourse(id, auth.user.id);
-  if (!course) return apiError('NOT_FOUND', 404, '课程不存在');
-  if (course === 'forbidden') return apiError('FORBIDDEN', 403, '只有课程创建者可以更换音色');
-  const body = (await request.json()) as { voice?: StageTeacherVoiceConfig };
+  const body = (await request.json()) as {
+    voice?: StageTeacherVoiceConfig;
+    snapshot?: { stage?: Record<string, unknown>; scenes?: Record<string, unknown>[]; outlines?: unknown[] };
+    title?: string;
+    topic?: string;
+  };
   if (!body.voice?.providerId || !body.voice?.voiceId)
     return apiError('INVALID_REQUEST', 400, '音色参数无效');
+  try {
+    assertServerRevoiceVoice(body.voice);
+  } catch (error) {
+    return apiError('INVALID_REQUEST', 400, error instanceof Error ? error.message : '音色不可用');
+  }
+  let course = await ownedCourse(id, auth.user.id);
+  if (course === 'forbidden') return apiError('FORBIDDEN', 403, '只有课程创建者可以更换音色');
+  if (!course) {
+    if (!body.snapshot?.stage || !Array.isArray(body.snapshot.scenes)) {
+      return apiError('NOT_FOUND', 404, '课程不存在，且未提供可恢复的课程快照');
+    }
+    const service = getServiceSupabase();
+    const now = new Date().toISOString();
+    const stage = { ...body.snapshot.stage, teacherVoiceConfig: body.voice };
+    const { error } = await service.from('courses').insert({
+      id,
+      title: body.title || (typeof stage.name === 'string' ? stage.name : ''),
+      topic: body.topic || '',
+      created_by: auth.user.id,
+      data: {
+        stage,
+        scenes: body.snapshot.scenes,
+        outlines: Array.isArray(body.snapshot.outlines) ? body.snapshot.outlines : [],
+        saveState: 'draft',
+        audioGeneration: { attempted: false, source: 'revoice-preparation' },
+      },
+      updated_at: now,
+    });
+    if (error) return apiError('INTERNAL_ERROR', 500, `无法准备云端课程：${error.message}`);
+    course = await ownedCourse(id, auth.user.id);
+  }
+  if (!course || course === 'forbidden') return apiError('NOT_FOUND', 404, '课程不存在');
   const data = course.data as {
     stage?: Record<string, unknown>;
     scenes?: Record<string, unknown>[];
@@ -53,11 +88,18 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   };
   if (!data.stage || !Array.isArray(data.scenes))
     return apiError('INVALID_REQUEST', 400, '课程内容不完整，无法重新配音');
+  const submittedSnapshot = body.snapshot?.stage && Array.isArray(body.snapshot.scenes)
+    ? {
+        stage: { ...body.snapshot.stage, teacherVoiceConfig: body.voice },
+        scenes: body.snapshot.scenes,
+        outlines: Array.isArray(body.snapshot.outlines) ? body.snapshot.outlines : [],
+      }
+    : null;
   const job = await createCourseRevoiceJob({
     courseId: id,
     userId: auth.user.id,
     voice: body.voice,
-    snapshot: {
+    snapshot: submittedSnapshot ?? {
       stage: data.stage,
       scenes: data.scenes,
       outlines: Array.isArray(data.outlines) ? data.outlines : [],
@@ -119,6 +161,7 @@ function present(job: {
   failed_items: number;
   message: string;
   error?: string | null;
+  voice: StageTeacherVoiceConfig;
 }) {
   return {
     id: job.id,
@@ -128,6 +171,7 @@ function present(job: {
     failed: job.failed_items,
     message: job.message,
     error: job.error ?? undefined,
+    voice: job.voice,
     done: ['succeeded', 'failed', 'cancelled', 'conflict'].includes(job.status),
   };
 }

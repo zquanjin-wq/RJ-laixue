@@ -513,16 +513,13 @@ export async function publishSceneAudioAssets(
         continue;
       }
 
-      // ── Tier 2: Has a course-scoped audioId → try IndexedDB blob ──
-      // Legacy `tts_s...` keys are shared by every course in one browser. They
-      // cannot prove ownership after a copied/reordered scene, so treating
-      // their IndexedDB blob as uploadable can transplant another course's
-      // voice. Only an explicitly course-scoped cache key is safe to upload.
-      const hasCourseScopedAudioId = !!audioId && audioId.startsWith(`course_${stageId}_`);
-      if (!options.forceRegenerate && audioId && hasCourseScopedAudioId) {
+      // ── Tier 2: Has an ownership-tagged local blob → upload ──
+      // Generated and imported courses use different key formats. Ownership
+      // therefore lives on the cache record instead of being inferred from id.
+      if (!options.forceRegenerate && audioId) {
         const record = await db.audioFiles.get(audioId);
 
-        if (record?.blob) {
+        if (record?.blob && record.stageId === stageId) {
           // Defer upload to batch pool (flushed at end of function).
           pendingUploads.push({
             speechAction,
@@ -554,10 +551,7 @@ export async function publishSceneAudioAssets(
             timestamp: new Date().toISOString(),
           }),
         );
-        log.info(`audioId ${audioId} has no IndexedDB blob, will regenerate TTS`);
-      }
-      if (!options.forceRegenerate && audioId && !hasCourseScopedAudioId) {
-        log.info(`Ignoring unscoped local audio cache key ${audioId}; will regenerate TTS`);
+        log.info(`audioId ${audioId} is missing or belongs to another course; will regenerate TTS`);
       }
 
       // ── Tier 3: No audioUrl, no blob → regenerate TTS ──
@@ -646,6 +640,7 @@ export async function publishSceneAudioAssets(
         db.audioFiles
           .put({
             id: contentHash,
+            stageId,
             blob: new Blob([data], { type: contentTypeForAudio(format) }),
             format: normalizeAudioFormat(format),
             mimeType: contentTypeForAudio(format),

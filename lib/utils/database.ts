@@ -101,6 +101,8 @@ export interface SceneRecord {
  */
 export interface AudioFileRecord {
   id: string; // Primary key (audioId)
+  /** Owning course. Absent only on legacy cache records. */
+  stageId?: string;
   blob: Blob; // Audio binary data
   duration?: number; // Duration (seconds)
   format: string; // mp3, wav, etc.
