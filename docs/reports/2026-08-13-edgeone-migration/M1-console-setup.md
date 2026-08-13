@@ -1,6 +1,6 @@
 # M1 EdgeOne Makers Preview：控制台配置单
 
-**用途**: 首次 Preview POC。此配置不绑定生产域名、不写入生产 Secret、不代表中国大陆生产可用。  
+**用途**: 首次 Preview POC。此配置不绑定生产域名、不写入生产 Secret、不代表中国大陆生产可用。
 **依据**: EdgeOne Makers Git 导入与 Next.js 框架文档；项目当前 `package.json`、`pnpm-lock.yaml` 和 `next.config.ts`。
 
 ## 1. 创建项目
@@ -48,4 +48,3 @@ AI、TTS、PDF、图像和视频提供商密钥只在对应 M1 路由验证前�
 - 不绑定 `laixue.work`、不修改 Cloudflare DNS、不开中国大陆生产区域。
 - 不导入 Production Supabase 或 Production 提供商密钥。
 - 不取消 Vercel 部署、域名或账单。
-
