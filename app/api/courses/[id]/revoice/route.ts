@@ -62,7 +62,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     const service = getServiceSupabase();
     const now = new Date().toISOString();
-    const stage = { ...body.snapshot.stage, teacherVoiceConfig: body.voice };
+    const stage: Record<string, unknown> = {
+      ...body.snapshot.stage,
+      teacherVoiceConfig: body.voice,
+    };
     const { error } = await service.from('courses').insert({
       id,
       title: body.title || (typeof stage.name === 'string' ? stage.name : ''),
