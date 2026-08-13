@@ -98,17 +98,30 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         outlines: Array.isArray(body.snapshot.outlines) ? body.snapshot.outlines : [],
       }
     : null;
-  const job = await createCourseRevoiceJob({
-    courseId: id,
-    userId: auth.user.id,
-    voice: body.voice,
-    snapshot: submittedSnapshot ?? {
-      stage: data.stage,
-      scenes: data.scenes,
-      outlines: Array.isArray(data.outlines) ? data.outlines : [],
-    },
-    sourceUpdatedAt: course.updated_at,
-  });
+  let job;
+  try {
+    job = await createCourseRevoiceJob({
+      courseId: id,
+      userId: auth.user.id,
+      voice: body.voice,
+      snapshot: submittedSnapshot ?? {
+        stage: data.stage,
+        scenes: data.scenes,
+        outlines: Array.isArray(data.outlines) ? data.outlines : [],
+      },
+      sourceUpdatedAt: course.updated_at,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[course-revoice] create job failed', {
+      courseId: id,
+      userId: auth.user.id,
+      providerId: body.voice.providerId,
+      voiceId: body.voice.voiceId,
+      message,
+    });
+    return apiError('INTERNAL_ERROR', 500, `无法创建重新配音任务：${message}`);
+  }
   after(() => runCourseRevoiceJob(job.id).catch(() => undefined));
   return apiSuccess(
     { job: present(job), pollIntervalMs: 5000 },
