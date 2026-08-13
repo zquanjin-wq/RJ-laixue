@@ -4,6 +4,8 @@ import { db, type AudioFileRecord } from '@/lib/utils/database';
 import { createLogger } from '@/lib/logger';
 import { uploadCourseBlob, uploadCourseBlobsConcurrently } from '@/lib/course-assets/client';
 import { enqueueTTSFetchTask } from '@/lib/audio/tts-queue';
+import { fingerprintSpeechVoice } from '@/lib/audio/voice-fingerprint';
+import type { StageTeacherVoiceConfig } from '@/lib/teacher/apply-teacher-voice';
 
 const log = createLogger('AudioPublish');
 
@@ -62,6 +64,16 @@ function audioUrlBelongsToCourse(audioUrl: string, courseId: string): boolean {
 
 function hasUsableTeacherVoice(config?: TeacherVoiceConfig | null): boolean {
   return !!config?.providerId && !!config.voiceId;
+}
+
+function markSpeechVoice(
+  action: SpeechAction,
+  text: string,
+  config?: TeacherVoiceConfig | null,
+): void {
+  if (!hasUsableTeacherVoice(config)) return;
+  (action as SpeechAction & { audioVoiceFingerprint?: unknown }).audioVoiceFingerprint =
+    fingerprintSpeechVoice(text, config as StageTeacherVoiceConfig);
 }
 
 function isSpeechAction(action: Action): action is SpeechAction {
@@ -449,11 +461,25 @@ export async function publishSceneAudioAssets(
   };
 
   /**
-   * Compute a content hash for TTS idempotency: same (voice, speed, text)
+   * Compute a content hash for TTS idempotency. Course namespace, provider,
+   * model, voice, speed and text must all match: a browser cache entry may
+   * never be reused by another course or a different TTS model.
    * → same hash → skip re-generation. Uses simple djb2 for speed.
    */
-  function ttsContentHash(voice: string, speed: number, text: string): string {
-    const key = `v:${voice}|s:${speed}|t:${text}`;
+  function ttsContentHash(
+    voice: string,
+    speed: number,
+    text: string,
+    config?: TeacherVoiceConfig | null,
+  ): string {
+    const key = [
+      `course:${stageId}`,
+      `provider:${config?.providerId ?? 'default'}`,
+      `model:${config?.modelId ?? 'default'}`,
+      `voice:${voice}`,
+      `speed:${speed}`,
+      `text:${text}`,
+    ].join('|');
     let hash = 5381;
     for (let i = 0; i < key.length; i++) {
       hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
@@ -589,13 +615,14 @@ export async function publishSceneAudioAssets(
       // Content-idempotent check: same (voice, speed, text) → reuse existing audio
       const ttsVoice = teacherVoiceConfig?.voiceId ?? 'default';
       const ttsSpeed = 1.0; // publish always uses speed 1.0
-      const contentHash = ttsContentHash(ttsVoice, ttsSpeed, narrationText);
+      const contentHash = ttsContentHash(ttsVoice, ttsSpeed, narrationText, teacherVoiceConfig);
       const existingAudio = options.forceRegenerate
         ? undefined
         : await db.audioFiles.get(contentHash);
 
       if (existingAudio?.blob) {
         speechAction.audioId = regenAudioId;
+        markSpeechVoice(speechAction, narrationText, teacherVoiceConfig);
         pendingUploads.push({
           speechAction,
           sceneId,
@@ -625,6 +652,7 @@ export async function publishSceneAudioAssets(
 
         // Defer upload to batch pool (flushed at end of function).
         speechAction.audioId = regenAudioId;
+        markSpeechVoice(speechAction, narrationText, teacherVoiceConfig);
         pendingUploads.push({
           speechAction,
           sceneId,
