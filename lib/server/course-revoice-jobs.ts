@@ -30,6 +30,8 @@ type RevoiceItem = {
   audioId?: string;
   audioUrl?: string;
   error?: string;
+  /** Number of exhausted provider retry cycles. Kept with the durable job. */
+  attempts?: number;
 };
 export type CourseRevoiceJob = {
   id: string;
@@ -58,6 +60,7 @@ export function isRevoiceNoopError(error: unknown): boolean {
 // request from together exceeding that provider quota.
 const WORK_BATCH_SIZE = 12;
 const WORK_CONCURRENCY = 3;
+const MAX_ITEM_ATTEMPTS = 3;
 
 function speechItems(scenes: Json[], targetVoice: StageTeacherVoiceConfig): RevoiceItem[] {
   return scenes.flatMap((scene) => {
@@ -287,9 +290,14 @@ export async function runCourseRevoiceJob(jobId: string) {
           const audio = await synthesizeWithRetry(job, item);
           nextItems[index] = { ...item, ...audio, status: 'done' };
         } catch (error) {
+          const attempts = (item.attempts ?? 0) + 1;
           nextItems[index] = {
             ...item,
-            status: 'failed',
+            // A transient provider/network failure must not discard an entire
+            // course. Keep this item queued for a later lease; a genuinely
+            // bad item still fails decisively after a bounded number of cycles.
+            status: attempts >= MAX_ITEM_ATTEMPTS ? 'failed' : 'queued',
+            attempts,
             error: error instanceof Error ? error.message : String(error),
           };
         }
@@ -317,12 +325,15 @@ export async function runCourseRevoiceJob(jobId: string) {
     return { ...job, status: 'failed' as const };
   }
   if (remaining) {
+    const retrying = nextItems.filter((item) => item.status === 'queued' && item.attempts).length;
     await service
       .from('course_revoice_jobs')
       .update({
         items: nextItems,
         completed_items: completed,
-        message: `正在生成配音 ${completed}/${job.total_items}`,
+        message: retrying
+          ? `正在重试配音 ${completed}/${job.total_items}`
+          : `正在生成配音 ${completed}/${job.total_items}`,
         locked_until: new Date(Date.now() + 60_000).toISOString(),
       })
       .eq('id', job.id)
