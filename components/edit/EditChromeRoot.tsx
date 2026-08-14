@@ -52,8 +52,10 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
   const stage = useStageStore((state) => state.stage);
   const { profile } = useAuth();
   const [savingToCloud, setSavingToCloud] = useState(false);
-  const canSaveToCloud = profile?.role === 'admin' || profile?.role === 'teacher';
   const editorAutoOpen = searchParams?.get('editor') === '1';
+  const canSaveToCloud =
+    Boolean(stage) &&
+    (editorAutoOpen || profile?.role === 'admin' || profile?.role === 'teacher');
 
   // Mark the body while edit mode is mounted, so the editor-scoped CSS
   // rule in globals.css that pins `body.padding-right` to 0 only fires
