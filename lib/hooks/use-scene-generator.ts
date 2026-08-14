@@ -424,8 +424,9 @@ export async function generateAndStoreTTS(
   const normalizedProviderId = rawProviderId.endsWith('-tts')
     ? rawProviderId
     : `${rawProviderId}-tts`;
+  const providerConfigsById = settings.ttsProvidersConfig as Partial<Record<string, unknown>>;
   const providerId = (
-    settings.ttsProvidersConfig?.[rawProviderId]
+    providerConfigsById[rawProviderId]
       ? rawProviderId
       : normalizedProviderId
   ) as import('@/lib/audio/types').TTSProviderId;
