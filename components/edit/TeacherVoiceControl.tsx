@@ -81,6 +81,27 @@ export function TeacherVoiceControl({
         const priorStatus = jobStatuses.current.get(next.id);
         jobStatuses.current.set(next.id, next.status);
         setJob(next);
+        // The cloud course deliberately keeps its previous committed voice
+        // until every replacement clip succeeds. After a page refresh, the
+        // in-flight target otherwise exists only on the job row and the editor
+        // incorrectly says “not configured”. Project that target back into the
+        // local course state so timeline-created speech uses the same voice.
+        if (!next.done && next.voice?.providerId && next.voice.voiceId) {
+          const currentStage = useStageStore.getState().stage as
+            | (Record<string, unknown> & { teacherVoiceConfig?: StageTeacherVoiceConfig })
+            | null;
+          const currentVoice = currentStage?.teacherVoiceConfig;
+          if (
+            currentVoice?.providerId !== next.voice.providerId ||
+            currentVoice?.voiceId !== next.voice.voiceId ||
+            currentVoice?.modelId !== next.voice.modelId
+          ) {
+            updateStage(
+              { teacherVoiceConfig: next.voice } as Partial<typeof stage> &
+                Record<'teacherVoiceConfig', StageTeacherVoiceConfig>,
+            );
+          }
+        }
         if (next.status === 'succeeded' && !syncedJobs.current.has(next.id)) {
           syncedJobs.current.add(next.id);
           const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
@@ -95,9 +116,16 @@ export function TeacherVoiceControl({
             setOpen(false);
           }
         } else if (
-          (next.status === 'failed' || next.status === 'conflict') &&
+          (next.status === 'failed' || next.status === 'cancelled' || next.status === 'conflict') &&
           priorStatus !== next.status
         ) {
+          // A cancelled/conflicted task never committed its target voice.
+          // Reload the last cloud snapshot so the temporary local projection
+          // above cannot be mistaken for an applied course setting.
+          const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
+          const course = await courseResponse.json().catch(() => null);
+          const data = course?.data?.data;
+          if (data?.stage && !stopped) updateStage(data.stage);
           toast.error(next.message || next.error || '重新配音未完成，课程仍使用原音色');
         }
         if (!next.done && !stopped) {
@@ -118,6 +146,9 @@ export function TeacherVoiceControl({
   const currentName = courseVoice?.voiceId
     ? voices.find((voice) => voice.id === courseVoice.voiceId)?.name || courseVoice.voiceId
     : '未设置';
+  const pendingName = job?.voice?.voiceId
+    ? voices.find((voice) => voice.id === job.voice.voiceId)?.name || job.voice.voiceId
+    : currentName;
 
   async function handleReplace() {
     if (!stage || starting || !selectedVoice) return;
@@ -211,7 +242,13 @@ export function TeacherVoiceControl({
         >
           <Volume2 className="size-3.5" />
           <span className="min-w-0 flex-1 truncate">
-            {variant === 'roster' ? `当前使用：${currentName}` : currentName}
+            {variant === 'roster'
+              ? running
+                ? `正在切换至：${pendingName}`
+                : `当前使用：${currentName}`
+              : running
+                ? `切换至 ${pendingName}`
+                : currentName}
           </span>
           {variant === 'roster' && job && (
             <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-violet-600">
