@@ -141,6 +141,7 @@ export default function ClassroomDetailPage() {
 
   const { loadFromStorage } = useStageStore();
   const generationComplete = useStageStore((s) => s.generationComplete);
+  const stageMode = useStageStore((s) => s.mode);
   const scenes = useStageStore((s) => s.scenes);
   const currentSceneId = useStageStore((s) => s.currentSceneId);
 
@@ -1001,46 +1002,51 @@ export default function ClassroomDetailPage() {
               {/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
     the same course via /student/courses doesn't see a 'save to cloud'
     affordance they shouldn't be using. */}
-              {!readOnlyShare && !viewMode && canSave && generationComplete && (
-                <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
-                  {saveCloudMessage && (
-                    <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
-                      {saveCloudMessage}
-                    </div>
-                  )}
+              {!readOnlyShare &&
+                !viewMode &&
+                canSave &&
+                generationComplete &&
+                !editorAutoOpen &&
+                stageMode !== 'edit' && (
+                  <div className="fixed right-6 top-24 z-50 flex flex-col items-end gap-2">
+                    {saveCloudMessage && (
+                      <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
+                        {saveCloudMessage}
+                      </div>
+                    )}
 
-                  <button
-                    onClick={async () => {
-                      if (isSavingToCloud) return;
+                    <button
+                      onClick={async () => {
+                        if (isSavingToCloud) return;
 
-                      setIsSavingToCloud(true);
-                      setSaveCloudMessage('正在保存到云端，请稍候...');
+                        setIsSavingToCloud(true);
+                        setSaveCloudMessage('正在保存到云端，请稍候...');
 
-                      try {
-                        await saveStageToCloud(classroomId);
-                        setSaveCloudMessage('✅ 保存成功');
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      } catch (e: any) {
-                        setSaveCloudMessage(
-                          e.draftSaved
-                            ? '⚠️ 草稿已保存，语音资源未完成；请重试保存'
-                            : '❌ 保存失败：' + (e.message || '未知错误'),
-                        );
-                      } finally {
-                        setIsSavingToCloud(false);
-                      }
-                    }}
-                    disabled={isSavingToCloud}
-                    className={`rounded-full px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition-opacity ${
-                      isSavingToCloud
-                        ? 'cursor-not-allowed bg-primary/70 opacity-70'
-                        : 'bg-primary hover:opacity-90'
-                    }`}
-                  >
-                    {isSavingToCloud ? '⏳ 保存中...' : '☁️ 保存到云端'}
-                  </button>
-                </div>
-              )}
+                        try {
+                          await saveStageToCloud(classroomId);
+                          setSaveCloudMessage('✅ 保存成功');
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        } catch (e: any) {
+                          setSaveCloudMessage(
+                            e.draftSaved
+                              ? '⚠️ 草稿已保存，语音资源未完成；请重试保存'
+                              : '❌ 保存失败：' + (e.message || '未知错误'),
+                          );
+                        } finally {
+                          setIsSavingToCloud(false);
+                        }
+                      }}
+                      disabled={isSavingToCloud}
+                      className={`rounded-full px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition-opacity ${
+                        isSavingToCloud
+                          ? 'cursor-not-allowed bg-primary/70 opacity-70'
+                          : 'bg-primary hover:opacity-90'
+                      }`}
+                    >
+                      {isSavingToCloud ? '⏳ 保存中...' : '☁️ 保存到云端'}
+                    </button>
+                  </div>
+                )}
             </>
           )}
         </div>

@@ -15,6 +15,9 @@ import { HintRail } from './HintRail';
 
 interface EditShellProps {
   readonly scene: Scene;
+  /** The course-level title displayed and edited in the command bar. */
+  readonly courseTitle: string;
+  readonly onCourseTitleChange?: (title: string) => Promise<void>;
   /**
    * Optional left-side navigator slot. In v0 this is the SlideNavRail
    * passed from Stage when mode === 'edit'. Surface code never imports
@@ -73,6 +76,8 @@ const LEFT_RAIL_DELAY = CHROME_STAGGER * 2;
  */
 export function EditShell({
   scene,
+  courseTitle,
+  onCourseTitleChange,
   leftRail,
   commandTrailing,
   rightRail,
@@ -98,7 +103,8 @@ export function EditShell({
           while the rest of the chrome stays mounted. */}
       <SurfaceStateRunner key={scene.type} surface={surface} onChange={setState} />
       <Frame
-        title={scene.title}
+        title={courseTitle}
+        onTitleChange={onCourseTitleChange}
         leftRail={leftRail}
         history={state?.history}
         commands={state?.commands}
@@ -222,6 +228,7 @@ function surfaceStateEqual(a: SurfaceState, b: SurfaceState | null): boolean {
 
 interface FrameProps {
   readonly title: string;
+  readonly onTitleChange?: (title: string) => Promise<void>;
   readonly leftRail?: ReactNode;
   readonly history?: React.ComponentProps<typeof CommandBar>['history'];
   readonly commands?: React.ComponentProps<typeof CommandBar>['commands'];
@@ -233,6 +240,7 @@ interface FrameProps {
 
 function Frame({
   title,
+  onTitleChange,
   leftRail,
   history,
   commands,
@@ -270,7 +278,13 @@ function Frame({
           animate={cmdAnimate}
           transition={{ ...stepTransition, delay: prefersReducedMotion ? 0 : COMMANDBAR_DELAY }}
         >
-          <CommandBar title={title} history={history} commands={commands} trailing={trailing} />
+          <CommandBar
+            title={title}
+            onTitleChange={onTitleChange}
+            history={history}
+            commands={commands}
+            trailing={trailing}
+          />
         </motion.div>
       }
       leftSlot={
