@@ -417,18 +417,26 @@ export async function generateAndStoreTTS(
   if (!courseVoice?.providerId || !courseVoice.voiceId) {
     throw new Error('请先在“课堂阵容 → AI教师”中选定本课音色，再重新生成配音。');
   }
-  const providerId = courseVoice.providerId as import('@/lib/audio/types').TTSProviderId;
+  // Early course versions persisted e.g. `minimax`, whereas TTS endpoints
+  // require `minimax-tts`. Whole-course revoice already normalizes this; the
+  // per-line editor path must use the exact same identity.
+  const rawProviderId = courseVoice.providerId;
+  const normalizedProviderId = rawProviderId.endsWith('-tts')
+    ? rawProviderId
+    : `${rawProviderId}-tts`;
+  const providerId = (
+    settings.ttsProvidersConfig?.[rawProviderId]
+      ? rawProviderId
+      : normalizedProviderId
+  ) as import('@/lib/audio/types').TTSProviderId;
   if (providerId === 'browser-native-tts') return;
-  // Don't server-generate against a disabled/unconfigured provider (#665).
-  if (
-    !isTTSProviderEnabled(
-      providerId,
-      settings.ttsProvidersConfig?.[providerId],
-    )
-  )
-    return;
 
   const ttsProviderConfig = settings.ttsProvidersConfig?.[providerId];
+  // The voice is a persisted course choice. Do not silently skip it merely
+  // because this browser has not finished hydrating the server-managed
+  // provider list: /api/generate/tts resolves managed credentials on the
+  // server. A genuinely disabled or unsupported provider returns its real
+  // diagnostic from that endpoint instead.
   // Narration is the teacher's voice — resolve it from the teacher agent profile
   // through the single resolver (registers + references by id for stable timbre).
   const teacher = pickNarratorAgent(useAgentRegistry.getState().listAgents());

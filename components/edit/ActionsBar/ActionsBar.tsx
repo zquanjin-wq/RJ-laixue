@@ -21,6 +21,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { toast } from 'sonner';
 import {
   ChevronDown,
   ChevronLeft,
@@ -357,7 +358,14 @@ function SpeechTtsBar({
       } else {
         setStatus('none');
       }
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'TTS generation failed';
+      console.error('[timeline-tts] single line regeneration failed', {
+        sceneOrder,
+        actionId,
+        message,
+      });
+      toast.error(`重新生成配音失败：${message}`);
       setStatus('error');
     }
   };
@@ -1006,6 +1014,7 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
     // Stamp audioId only for lines that actually synthesized — a skipped/failed
     // line must not get an id pointing at a blob that was never written.
     const okIds = new Set<string>();
+    const failures: string[] = [];
     try {
       for (const a of speeches) {
         if (!a.id) continue;
@@ -1016,8 +1025,10 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
             language,
           );
           if (id) okIds.add(a.id);
-        } catch {
-          /* skip a failed line, keep going */
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : 'TTS generation failed');
+          // Keep the remaining lines going; the summary below tells the
+          // teacher why this batch was incomplete.
         }
       }
       if (okIds.size > 0) {
@@ -1029,6 +1040,11 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
           }
           return next;
         });
+      }
+      if (failures.length > 0) {
+        toast.error(
+          `有 ${failures.length} 段配音未生成：${failures[0]}`,
+        );
       }
     } finally {
       setRegenAll(false);
