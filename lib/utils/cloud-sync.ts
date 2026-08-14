@@ -122,7 +122,7 @@ export async function saveStageToCloud(stageId: string) {
         stage = {
           ...(stage as unknown as Record<string, unknown>),
           teacherVoiceConfig: cloudVoice,
-        } as typeof stage;
+        } as unknown as typeof stage;
         await db.stages.update(id, { teacherVoiceConfig: cloudVoice } as never);
         log.info('[CloudSync] Restored course teacher voice before save', {
           stageId: id,
