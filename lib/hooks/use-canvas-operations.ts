@@ -48,7 +48,7 @@ interface UpdateElementData {
 }
 
 interface ElementClipboardData {
-  elementIds: string[];
+  elements: PPTElement[];
   pasteCount: number;
 }
 
@@ -62,6 +62,21 @@ function createGroupIdMap(elements: PPTElement[]): Record<string, string> {
       (groupId) => [groupId, nanoid(10)],
     ),
   );
+}
+
+function createPastedElements(elements: PPTElement[], pasteCount: number): PPTElement[] {
+  const groupIdMap = createGroupIdMap(elements);
+  const offset = PASTE_OFFSET * pasteCount;
+
+  return elements.map((element) => ({
+    ...structuredClone(element),
+    id: nanoid(10),
+    ...(element.groupId && groupIdMap[element.groupId]
+      ? { groupId: groupIdMap[element.groupId] }
+      : {}),
+    left: element.left + offset,
+    top: element.top + offset,
+  }));
 }
 
 export function useCanvasOperations() {
@@ -201,7 +216,7 @@ export function useCanvasOperations() {
     if (!activeElementList.length) return false;
 
     elementClipboard = {
-      elementIds: activeElementList.map((element) => element.id),
+      elements: structuredClone(activeElementList),
       pasteCount: 0,
     };
     _setEditorareaFocus(true);
@@ -226,26 +241,16 @@ export function useCanvasOperations() {
   // access is permission-gated and cannot safely preserve the slide DSL's
   // structured element data.
   const pasteElement = () => {
-    if (!elementClipboard?.elementIds.length) {
+    if (!elementClipboard?.elements.length) {
       toast.message('请先复制页面元素');
       return;
     }
 
-    const elementIds = elementClipboard.elementIds.filter((id) =>
-      currentSlide.elements.some((element) => element.id === id),
-    );
-    if (!elementIds.length) {
-      toast.message('复制的元素已不存在，请重新复制');
-      return;
-    }
-
     elementClipboard.pasteCount += 1;
-    const idMap = Object.fromEntries(elementIds.map((id) => [id, nanoid(10)]));
-    const sourceElements = currentSlide.elements.filter((element) =>
-      elementIds.includes(element.id),
+    const pastedElements = createPastedElements(
+      elementClipboard.elements,
+      elementClipboard.pasteCount,
     );
-    const groupIdMap = createGroupIdMap(sourceElements);
-    const offset = PASTE_OFFSET * elementClipboard.pasteCount;
 
     // Professional mode owns slide changes through its operation session.
     // This gives paste the same write-through, undo/redo, and Dexie
@@ -253,33 +258,19 @@ export function useCanvasOperations() {
     const editSession = useSlideEditSession.getState();
     if (editSession.history) {
       editSession.applyOp({
-        type: 'element.duplicate',
-        elementIds,
-        idMap,
-        groupIdMap,
-        offset: { x: offset, y: offset },
+        type: 'element.addMany',
+        elements: pastedElements,
       });
     } else {
-      const pastedElements = currentSlide.elements
-        .filter((element) => elementIds.includes(element.id))
-        .map((element) => ({
-          ...structuredClone(element),
-          id: idMap[element.id],
-          ...(element.groupId && groupIdMap[element.groupId]
-            ? { groupId: groupIdMap[element.groupId] }
-            : {}),
-          left: element.left + offset,
-          top: element.top + offset,
-        }));
       updateSceneData((draft) => {
         draft.canvas.elements.push(...pastedElements);
       });
       addHistorySnapshot();
     }
 
-    setActiveElementIdList(elementIds.map((id) => idMap[id]));
+    setActiveElementIdList(pastedElements.map((element) => element.id));
     _setEditorareaFocus(true);
-    toast.success(`已粘贴 ${elementIds.length} 个元素`);
+    toast.success(`已粘贴 ${pastedElements.length} 个元素`);
   };
 
   // Copy and immediately paste selected elements

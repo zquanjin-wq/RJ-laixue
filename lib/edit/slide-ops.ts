@@ -34,6 +34,11 @@ export type SlideEditOperation =
       index?: number;
     }
   | {
+      type: 'element.addMany';
+      elements: PPTElement[];
+      index?: number;
+    }
+  | {
       type: 'element.update';
       elementId: string;
       patch: ElementPatch;
@@ -177,6 +182,23 @@ function applyOperationToContent(
             ? Math.max(0, Math.min(operation.index, draft.canvas.elements.length))
             : draft.canvas.elements.length;
         draft.canvas.elements.splice(index, 0, cloneElement(operation.element));
+        return;
+      }
+      case 'element.addMany': {
+        const ids = operation.elements.map((element) => element.id);
+        if (new Set(ids).size !== ids.length) {
+          throw new Error('element.addMany: elements must have unique ids');
+        }
+        const existingIds = new Set(draft.canvas.elements.map((element) => element.id));
+        const collisions = ids.filter((id) => existingIds.has(id));
+        if (collisions.length > 0) {
+          throw new Error(`element.addMany: ids already exist [${collisions.join(', ')}]`);
+        }
+        const index =
+          typeof operation.index === 'number'
+            ? Math.max(0, Math.min(operation.index, draft.canvas.elements.length))
+            : draft.canvas.elements.length;
+        draft.canvas.elements.splice(index, 0, ...operation.elements.map(cloneElement));
         return;
       }
       case 'element.update': {

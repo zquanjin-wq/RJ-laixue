@@ -162,6 +162,44 @@ describe('applySlideEditOperation', () => {
     expect(original.canvas.elements).toHaveLength(1);
   });
 
+  test('adds clipboard snapshots independently from the target slide', () => {
+    const original = slideContent([textElement({ id: 'target-element' })]);
+    const clipboardElements = [
+      textElement({ id: 'copied-title', left: 140, top: 120, content: '<p>Copied</p>' }),
+      textElement({ id: 'copied-caption', left: 180, top: 240, groupId: 'copied-group' }),
+    ];
+
+    const updated = applySlideEditOperation(original, {
+      type: 'element.addMany',
+      elements: clipboardElements,
+    });
+
+    expect(updated.canvas.elements.map((element) => element.id)).toEqual([
+      'target-element',
+      'copied-title',
+      'copied-caption',
+    ]);
+    expect(updated.canvas.elements[1]).toMatchObject({
+      content: '<p>Copied</p>',
+      left: 140,
+      top: 120,
+    });
+    expect(updated.canvas.elements[2]?.groupId).toBe('copied-group');
+    expect(updated.canvas.elements[1]).not.toBe(clipboardElements[0]);
+  });
+
+  test('rejects duplicate clipboard ids before modifying the slide', () => {
+    const original = slideContent([textElement({ id: 'target-element' })]);
+
+    expect(() =>
+      applySlideEditOperation(original, {
+        type: 'element.addMany',
+        elements: [textElement({ id: 'target-element' })],
+      }),
+    ).toThrow(/already exist/);
+    expect(original.canvas.elements).toHaveLength(1);
+  });
+
   test('deletes multiple selected elements and clears their animations', () => {
     const original = slideContent([
       textElement({ id: 'title' }),
