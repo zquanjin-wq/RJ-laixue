@@ -160,18 +160,23 @@ export async function createCourseRevoiceJob(input: {
   return job;
 }
 
-export async function getCourseRevoiceJob(jobId: string, userId: string) {
+/**
+ * Loads a job by id. Authorization belongs to the course route: a course
+ * owner/admin may inspect the course's active job even when another editor
+ * originally started it.
+ */
+export async function getCourseRevoiceJob(jobId: string) {
   const { data, error } = await getServiceSupabase()
     .from('course_revoice_jobs')
     .select('*')
     .eq('id', jobId)
-    .eq('requested_by', userId)
     .maybeSingle();
   if (error) throw error;
   return data as CourseRevoiceJob | null;
 }
 
-export async function cancelCourseRevoiceJob(jobId: string, userId: string) {
+/** Cancellation is authorized by the course route before this mutation runs. */
+export async function cancelCourseRevoiceJob(jobId: string) {
   const { data, error } = await getServiceSupabase()
     .from('course_revoice_jobs')
     .update({
@@ -181,7 +186,6 @@ export async function cancelCourseRevoiceJob(jobId: string, userId: string) {
       locked_until: null,
     })
     .eq('id', jobId)
-    .eq('requested_by', userId)
     .in('status', ['queued', 'running'])
     .select('*')
     .maybeSingle();

@@ -392,7 +392,9 @@ export function AudioPlayer({
           }));
           const localAudioId = currentSegment?.audioId;
           if (localAudioId && !localFallbackUrl) {
-            const objectUrl = await audioObjectUrl(localAudioId);
+            // Local IndexedDB is shared by every course in this browser. Never
+            // fall back to a blob unless it belongs to the course being played.
+            const objectUrl = await audioObjectUrl(localAudioId, stageId);
             if (objectUrl) {
               localFallbackUrlRef.current = objectUrl;
               setLocalFallbackUrl(objectUrl);

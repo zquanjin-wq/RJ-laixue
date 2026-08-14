@@ -176,6 +176,25 @@ export function setAudioIdById(actions: Action[], id: string, audioId: string): 
   return index < 0 ? actions : setAudioId(actions, index, audioId);
 }
 
+/**
+ * A locally regenerated clip supersedes any previously published URL. Keeping
+ * that URL would make preview/playback and the next save prefer stale audio.
+ */
+export function setRegeneratedAudioById(actions: Action[], id: string, audioId: string): Action[] {
+  const index = actions.findIndex((a) => a.id === id);
+  const action = actions[index];
+  if (!action || action.type !== 'speech') return actions;
+  const next = actions.slice();
+  const regenerated = { ...action, audioId } as Action & {
+    audioUrl?: string;
+    audioVoiceFingerprint?: unknown;
+  };
+  delete regenerated.audioUrl;
+  delete regenerated.audioVoiceFingerprint;
+  next[index] = regenerated;
+  return next;
+}
+
 /** Set a discussion's `topic` by id (no-op for a missing id / non-discussion). */
 export function setDiscussionTopicById(actions: Action[], id: string, topic: string): Action[] {
   const index = actions.findIndex((a) => a.id === id);

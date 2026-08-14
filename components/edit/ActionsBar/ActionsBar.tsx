@@ -66,7 +66,7 @@ import {
   moveById,
   moveByIdDir,
   removeById,
-  setAudioIdById,
+  setRegeneratedAudioById,
   setDiscussionAgentById,
   setDiscussionPromptById,
   setDiscussionTopicById,
@@ -255,6 +255,7 @@ type TtsStatus = 'none' | 'ready' | 'generating' | 'error';
 function SpeechTtsBar({
   actionId,
   audioId,
+  stageId,
   sceneOrder,
   language,
   text,
@@ -265,6 +266,7 @@ function SpeechTtsBar({
 }: {
   actionId: string;
   audioId?: string;
+  stageId: string;
   sceneOrder: number;
   language?: string;
   text: string;
@@ -294,7 +296,7 @@ function SpeechTtsBar({
 
   // The audio's real key: the action's stamped audioId, else the canonical
   // derived key (resolveSpeechAudioId is the single source of truth).
-  const lookupId = resolveSpeechAudioId(sceneOrder, { id: actionId, audioId });
+  const lookupId = resolveSpeechAudioId(stageId, sceneOrder, { id: actionId, audioId });
 
   const stopPreview = useCallback(() => {
     audioRef.current?.pause();
@@ -313,7 +315,7 @@ function SpeechTtsBar({
           if (alive) setStatus('ready');
           return;
         }
-        const has = await audioExists(lookupId);
+        const has = await audioExists(lookupId, stageId);
         if (alive) setStatus((s) => (s === 'generating' ? s : has ? 'ready' : 'none'));
       } catch {
         /* IndexedDB read failed — leave status as-is (as before this change) */
@@ -330,7 +332,7 @@ function SpeechTtsBar({
     return () => {
       alive = false;
     };
-  }, [lookupId, audioUrl, refreshKey, regenerating]);
+  }, [lookupId, stageId, audioUrl, refreshKey, regenerating]);
 
   useEffect(() => () => stopPreview(), [stopPreview]);
 
@@ -338,7 +340,7 @@ function SpeechTtsBar({
     stopPreview();
     let src = audioUrl ?? null;
     if (!src) {
-      src = await audioObjectUrl(lookupId);
+      src = await audioObjectUrl(lookupId, stageId);
       objUrlRef.current = src;
     }
     if (!src) return;
@@ -351,7 +353,7 @@ function SpeechTtsBar({
   const regenerate = async () => {
     setStatus('generating');
     try {
-      const id = await regenerateSpeechAudio(sceneOrder, { id: actionId, text }, language);
+      const id = await regenerateSpeechAudio(stageId, sceneOrder, { id: actionId, text }, language);
       if (id) {
         onGenerated();
         setStatus('ready');
@@ -422,6 +424,7 @@ function SpeechClip({
   index,
   actionId,
   audioId,
+  stageId,
   sceneOrder,
   language,
   autoFocus,
@@ -444,6 +447,7 @@ function SpeechClip({
   index: number;
   actionId: string;
   audioId?: string;
+  stageId: string;
   sceneOrder: number;
   language?: string;
   autoFocus: boolean;
@@ -541,6 +545,7 @@ function SpeechClip({
         <SpeechTtsBar
           actionId={actionId}
           audioId={audioId}
+          stageId={stageId}
           sceneOrder={sceneOrder}
           language={language}
           text={val}
@@ -933,6 +938,7 @@ function DropZone({
 export function ActionsBar({ sceneId }: { sceneId: string }) {
   const { t } = useI18n();
   const scene = useStageStore((s) => s.scenes.find((x) => x.id === sceneId));
+  const stageId = useStageStore((s) => s.stage?.id ?? '');
   const actions = scene?.actions ?? EMPTY;
   const sceneOrder = scene?.order ?? 0;
   // Element-bound cues (spotlight / laser) point at slide elements, so they only
@@ -1020,6 +1026,7 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
         if (!a.id) continue;
         try {
           const id = await regenerateSpeechAudio(
+            stageId,
             order,
             { id: a.id, text: (a as { text?: string }).text ?? '' },
             language,
@@ -1036,7 +1043,7 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
           let next = cur;
           for (const a of cur) {
             if (a.type === 'speech' && a.id && okIds.has(a.id))
-              next = setAudioIdById(next, a.id, speechAudioId(order, a.id));
+              next = setRegeneratedAudioById(next, a.id, speechAudioId(stageId, order, a.id));
           }
           return next;
         });
@@ -1054,7 +1061,7 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
       // batchPending flag) instead of getting stuck in 生成中.
       setTtsRefresh((n) => n + 1);
     }
-  }, [regenAll, sceneId, language, commit]);
+  }, [regenAll, sceneId, stageId, language, commit]);
 
   // Height drag-resize (top edge).
   const sectionRef = useRef<HTMLElement>(null);
@@ -1321,6 +1328,7 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
                               index={si}
                               actionId={key}
                               audioId={(action as { audioId?: string }).audioId}
+                              stageId={stageId}
                               sceneOrder={sceneOrder}
                               language={language}
                               ttsActive={ttsActive}
@@ -1339,14 +1347,18 @@ export function ActionsBar({ sceneId }: { sceneId: string }) {
                                 // Re-check status only AFTER the blob is gone, so
                                 // the status row can't race the async delete and
                                 // briefly still read "voiced".
-                                void discardSpeechAudio(sceneOrder, {
+                                void discardSpeechAudio(stageId, sceneOrder, {
                                   id: key,
                                   audioId: prevAudioId,
                                 }).finally(() => setTtsRefresh((n) => n + 1));
                               }}
                               onGenerated={() =>
                                 commit((cur) =>
-                                  setAudioIdById(cur, key, speechAudioId(sceneOrder, key)),
+                                  setRegeneratedAudioById(
+                                    cur,
+                                    key,
+                                    speechAudioId(stageId, sceneOrder, key),
+                                  ),
                                 )
                               }
                               onDelete={() => commit((cur) => removeById(cur, key))}

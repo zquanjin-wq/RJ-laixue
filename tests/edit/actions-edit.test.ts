@@ -14,6 +14,7 @@ import {
   removeById,
   setAudioId,
   setAudioIdById,
+  setRegeneratedAudioById,
   setDiscussionAgentById,
   setDiscussionPromptById,
   setDiscussionTopicById,
@@ -175,6 +176,29 @@ describe('setSpeechText / setElementId', () => {
     const xs = [A('a', 'speech'), A('b', 'spotlight')];
     expect((setAudioId(xs, 0, 'tts_a')[0] as { audioId?: string }).audioId).toBe('tts_a');
     expect(setAudioId(xs, 1, 'tts_b')).toBe(xs); // no-op for non-speech
+  });
+  test('setRegeneratedAudioById replaces a published clip instead of retaining its stale URL', () => {
+    const xs: Action[] = [
+      {
+        id: 'a',
+        type: 'speech',
+        text: 'old',
+        audioId: 'old-local-id',
+        audioUrl: 'https://cdn.example/old.mp3',
+        audioVoiceFingerprint: 'old-voice',
+      } as Action,
+      A('b', 'spotlight'),
+    ];
+    const out = setRegeneratedAudioById(xs, 'a', 'new-local-id') as Array<{
+      audioId?: string;
+      audioUrl?: string;
+      audioVoiceFingerprint?: string;
+    }>;
+    expect(out[0].audioId).toBe('new-local-id');
+    expect(out[0].audioUrl).toBeUndefined();
+    expect(out[0].audioVoiceFingerprint).toBeUndefined();
+    expect(setRegeneratedAudioById(xs, 'missing', 'x')).toBe(xs);
+    expect(setRegeneratedAudioById(xs, 'b', 'x')).toBe(xs);
   });
   test('setSpeechTextClearAudioById sets text and drops stale audio fields', () => {
     const xs: Action[] = [

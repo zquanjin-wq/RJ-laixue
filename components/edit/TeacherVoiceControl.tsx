@@ -160,7 +160,6 @@ export function TeacherVoiceControl({
         voiceId: selectedVoice,
         modelId: providerConfigs[providerId]?.modelId || provider?.defaultModelId || undefined,
       };
-      const stageWithVoice = { ...stage, teacherVoiceConfig: voice };
       // A course package can contain large inline slide assets. Do not send its
       // complete snapshot through the revoice endpoint (Vercel rejects that as
       // a 413). First externalize those assets and create a compact cloud draft
@@ -174,16 +173,16 @@ export function TeacherVoiceControl({
           id: stage.id,
           title: stage.name || '',
           topic: '',
-          stage: stageWithVoice as unknown as Record<string, unknown>,
+          // This is only a recoverable import draft. Do not persist the target
+          // voice here: the course must keep its committed voice until the
+          // revoice job has generated every required clip successfully.
+          stage: stage as unknown as Record<string, unknown>,
           scenes: scenes as unknown as Record<string, unknown>[],
           outlines,
           forceCourseNamespace: true,
         });
         setScenes(prepared.scenes as unknown as typeof scenes);
-        updateStage(
-          prepared.stage as unknown as Partial<typeof stage> &
-            Record<'teacherVoiceConfig', StageTeacherVoiceConfig>,
-        );
+        updateStage(prepared.stage as unknown as Partial<typeof stage>);
       } else if (!courseProbe.ok) {
         const detail = await courseProbe.json().catch(() => null);
         throw new Error(detail?.error || '无法验证云端课程');
@@ -223,6 +222,16 @@ export function TeacherVoiceControl({
     );
     if (response.ok) {
       setJob((current) => (current ? { ...current, status: 'cancelled', done: true } : current));
+      // The in-flight target is only a UI projection. Clear it immediately
+      // from the local draft; otherwise a cancelled job can look like a
+      // completed voice change until the next full reload.
+      const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
+      const course = await courseResponse.json().catch(() => null);
+      const cloudVoice = course?.data?.data?.stage?.teacherVoiceConfig;
+      updateStage(
+        { teacherVoiceConfig: cloudVoice } as Partial<typeof stage> &
+          Record<'teacherVoiceConfig', StageTeacherVoiceConfig | undefined>,
+      );
       toast.success('已停止重新配音，课程继续使用原音色');
     }
   }

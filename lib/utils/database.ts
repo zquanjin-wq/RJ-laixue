@@ -61,6 +61,12 @@ export interface StageRecord {
   interactiveMode?: boolean; // Interactive Mode flag; non-indexed
   taskEngineMode?: boolean; // Vocational Task Engine flag; non-indexed
   generatedAgentConfigs?: GeneratedAgentConfig[]; // Editor-authored agent roster snapshot
+  /** The course-authoritative AI teacher voice. Persisted locally and in cloud. */
+  teacherVoiceConfig?: {
+    providerId: string;
+    voiceId: string;
+    modelId?: string;
+  };
   /** Scene order trust flag (added in v15).
    *  - `true`  : this stage's scene `seq` is authoritative; loadStageData
    *              uses prefer='auto' (trust seq).

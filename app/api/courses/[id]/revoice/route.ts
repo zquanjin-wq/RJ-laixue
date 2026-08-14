@@ -119,11 +119,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     .from('course_revoice_jobs')
     .select('*')
     .eq('course_id', id)
-    .eq('requested_by', auth.user.id)
     .order('created_at', { ascending: false })
     .limit(1);
   const job = jobId
-    ? await getCourseRevoiceJob(jobId, auth.user.id)
+    ? await getCourseRevoiceJob(jobId)
     : (await query.maybeSingle()).data;
   if (!job) return apiSuccess({ job: null });
   if (job.course_id !== id) return apiError('NOT_FOUND', 404, '任务不存在');
@@ -141,7 +140,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   if (!jobId) return apiError('INVALID_REQUEST', 400, '缺少任务 ID');
   const course = await ownedCourse(id, auth.user.id);
   if (!course || course === 'forbidden') return apiError('NOT_FOUND', 404, '任务不存在');
-  const job = await cancelCourseRevoiceJob(jobId, auth.user.id);
+  const job = await cancelCourseRevoiceJob(jobId);
   if (!job || job.course_id !== id) return apiError('NOT_FOUND', 404, '任务不存在或已结束');
   return apiSuccess({ job: present(job) });
 }

@@ -102,42 +102,6 @@ export async function saveStageToCloud(stageId: string) {
   let stage = collected.stage;
   let scenes = collected.scenes;
 
-  // A stale IndexedDB copy can predate teacherVoiceConfig even when a finished
-  // cloud revoice has already recorded it. Before a normal save writes that
-  // local copy back, recover the authoritative course voice. This prevents a
-  // later edit/save from silently erasing the selected teacher voice.
-  const localVoice = (stage as unknown as Record<string, unknown>).teacherVoiceConfig as
-    | { providerId?: unknown; voiceId?: unknown }
-    | undefined;
-  if (!localVoice?.providerId || !localVoice?.voiceId) {
-    try {
-      const response = await fetch(`/api/courses/${encodeURIComponent(id)}`, {
-        cache: 'no-store',
-      });
-      const payload = await response.json().catch(() => null);
-      const cloudVoice = payload?.data?.data?.stage?.teacherVoiceConfig as
-        | { providerId?: unknown; voiceId?: unknown; modelId?: unknown }
-        | undefined;
-      if (typeof cloudVoice?.providerId === 'string' && typeof cloudVoice.voiceId === 'string') {
-        stage = {
-          ...(stage as unknown as Record<string, unknown>),
-          teacherVoiceConfig: cloudVoice,
-        } as unknown as typeof stage;
-        await db.stages.update(id, { teacherVoiceConfig: cloudVoice } as never);
-        log.info('[CloudSync] Restored course teacher voice before save', {
-          stageId: id,
-          providerId: cloudVoice.providerId,
-          voiceId: cloudVoice.voiceId,
-        });
-      }
-    } catch (voiceError) {
-      // Preserve the historical save behavior if the optional repair read is
-      // unavailable. A missing cloud course is handled by the normal create
-      // path below.
-      log.warn('[CloudSync] Could not restore course teacher voice before save:', voiceError);
-    }
-  }
-
   // ── Phase 0: Ensure the course row exists on the cloud BEFORE we publish
   // any audio. Production's sign-upload endpoint (post upstream commit
   // 3d80b985, 2026-07-28) requires the course row to already exist; it

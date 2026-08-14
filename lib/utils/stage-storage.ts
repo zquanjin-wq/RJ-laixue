@@ -62,6 +62,8 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
       interactiveMode: data.stage.interactiveMode,
       taskEngineMode: data.stage.taskEngineMode,
       generatedAgentConfigs: data.stage.generatedAgentConfigs,
+      teacherVoiceConfig: (data.stage as unknown as Record<string, unknown>)
+        .teacherVoiceConfig as import('./database').StageRecord['teacherVoiceConfig'],
       // Trust model fields (v15). Cast through unknown because Stage's
       // DSL interface is intentionally narrow — these fields live on the
       // persisted StageRecord only.

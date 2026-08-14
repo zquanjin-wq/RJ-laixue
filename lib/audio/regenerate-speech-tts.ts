@@ -1,18 +1,18 @@
 /**
  * Per-speech managed-TTS helpers for the timeline editor.
  *
- * Audio is keyed and produced exactly like the generation pipeline: the cache
- * key is `tts_s<sceneOrder>_<actionId>` (see use-scene-generator /
- * classroom-media-generation) and synthesis delegates to `generateAndStoreTTS`,
- * so the request/store contract and key scheme stay single-sourced.
+ * Audio is stored under a course-scoped key,
+ * `tts_<stageId>_s<sceneOrder>_<actionId>`. Synthesis delegates to
+ * `generateAndStoreTTS`, keeping the request/store contract shared with the
+ * generation pipeline while preventing copied courses from sharing a blob.
  */
 import { db } from '@/lib/utils/database';
 import { useSettingsStore } from '@/lib/store/settings';
 import { generateAndStoreTTS } from '@/lib/hooks/use-scene-generator';
 
 /** Canonical audio cache key — matches the generation pipeline. */
-export function speechAudioId(sceneOrder: number, actionId: string): string {
-  return `tts_s${sceneOrder}_${actionId}`;
+export function speechAudioId(stageId: string, sceneOrder: number, actionId: string): string {
+  return `tts_${stageId}_s${sceneOrder}_${actionId}`;
 }
 
 /**
@@ -21,10 +21,11 @@ export function speechAudioId(sceneOrder: number, actionId: string): string {
  * of truth for "what blob belongs to this speech line".
  */
 export function resolveSpeechAudioId(
+  stageId: string,
   sceneOrder: number,
   action: { id?: string; audioId?: string },
 ): string {
-  return action.audioId || speechAudioId(sceneOrder, action.id ?? '');
+  return action.audioId || speechAudioId(stageId, sceneOrder, action.id ?? '');
 }
 
 /** Managed (server) TTS is on — browser-native TTS has no cached file to manage. */
@@ -34,8 +35,9 @@ export function isManagedTtsActive(): boolean {
 }
 
 /** True if an audio blob is cached under this exact audioId. */
-export async function audioExists(audioId: string): Promise<boolean> {
-  return !!(await db.audioFiles.get(audioId));
+export async function audioExists(audioId: string, stageId?: string): Promise<boolean> {
+  const record = await db.audioFiles.get(audioId);
+  return !!record && (!stageId || record.stageId === stageId);
 }
 
 /** Existence for many audioIds in one IndexedDB round-trip. */
@@ -50,9 +52,9 @@ export async function audioExistsBulk(audioIds: string[]): Promise<Set<string>> 
 }
 
 /** Object URL for the audio cached under this exact audioId (caller revokes). */
-export async function audioObjectUrl(audioId: string): Promise<string | null> {
+export async function audioObjectUrl(audioId: string, stageId?: string): Promise<string | null> {
   const rec = await db.audioFiles.get(audioId);
-  return rec ? URL.createObjectURL(rec.blob) : null;
+  return rec && (!stageId || rec.stageId === stageId) ? URL.createObjectURL(rec.blob) : null;
 }
 
 /**
@@ -63,13 +65,19 @@ export async function audioObjectUrl(audioId: string): Promise<string | null> {
  * reads as "not voiced" and must be regenerated.
  */
 export async function discardSpeechAudio(
+  stageId: string,
   sceneOrder: number,
   action: { id?: string; audioId?: string },
 ): Promise<void> {
   if (!action.id) return;
-  const ids = new Set([speechAudioId(sceneOrder, action.id)]);
+  const ids = new Set([speechAudioId(stageId, sceneOrder, action.id)]);
   if (action.audioId) ids.add(action.audioId);
-  await db.audioFiles.bulkDelete([...ids]);
+  const keys = [...ids];
+  const records = await db.audioFiles.bulkGet(keys);
+  const ownedIds = records.flatMap((record, index) =>
+    record?.stageId === stageId ? [keys[index]] : [],
+  );
+  if (ownedIds.length) await db.audioFiles.bulkDelete(ownedIds);
 }
 
 /**
@@ -78,6 +86,7 @@ export async function discardSpeechAudio(
  * synthesis fails. Delegates to the pipeline's `generateAndStoreTTS`.
  */
 export async function regenerateSpeechAudio(
+  stageId: string,
   sceneOrder: number,
   action: { id?: string; text?: string },
   language?: string,
@@ -86,7 +95,7 @@ export async function regenerateSpeechAudio(
   if (!isManagedTtsActive()) return null;
   const text = action.text?.trim();
   if (!text || !action.id) return null;
-  const audioId = speechAudioId(sceneOrder, action.id);
+  const audioId = speechAudioId(stageId, sceneOrder, action.id);
   await generateAndStoreTTS(audioId, text, language, signal);
   return audioId;
 }
