@@ -27,9 +27,9 @@ ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-# The Hong Kong production CVM has 4 GB RAM.  Cap Node's build heap so the
-# Dokploy control plane is not OOM-killed during a Next.js production build.
-ENV NODE_OPTIONS=--max-old-space-size=1536
+# Keep the Next.js type-check build within the upgraded 8 GB production CVM,
+# while leaving enough memory for Dokploy itself.
+ENV NODE_OPTIONS=--max-old-space-size=4096
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
