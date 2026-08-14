@@ -1,8 +1,8 @@
 'use client';
 
-import { ArrowLeft, Redo2, Undo2 } from 'lucide-react';
+import { ArrowLeft, Pencil, Redo2, Undo2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -11,6 +11,7 @@ import type { EditorCommand, SurfaceHistory } from '@/lib/edit/scene-editor-surf
 
 interface CommandBarProps {
   readonly title: string;
+  readonly onTitleChange?: (title: string) => Promise<void>;
   readonly history?: SurfaceHistory;
   readonly commands?: readonly EditorCommand[];
   /**
@@ -32,9 +33,31 @@ interface CommandBarProps {
  * not a one-way state, so we deliberately do *not* place a "Done" pill
  * here that would compete with the Switch's affordance.
  */
-export function CommandBar({ title, history, commands, trailing }: CommandBarProps) {
+export function CommandBar({ title, onTitleChange, history, commands, trailing }: CommandBarProps) {
   const { t } = useI18n();
   const router = useRouter();
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(title);
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  useEffect(() => {
+    if (!editingTitle) setTitleDraft(title);
+  }, [editingTitle, title]);
+
+  const saveTitle = async () => {
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle || nextTitle === title || !onTitleChange) {
+      setEditingTitle(false);
+      return;
+    }
+    setSavingTitle(true);
+    try {
+      await onTitleChange(nextTitle);
+      setEditingTitle(false);
+    } finally {
+      setSavingTitle(false);
+    }
+  };
 
   return (
     <header className="flex h-20 shrink-0 items-center gap-3 border-b border-zinc-200/60 px-8 dark:border-zinc-800/60">
@@ -54,12 +77,35 @@ export function CommandBar({ title, history, commands, trailing }: CommandBarPro
             </IconButton>
           </>
         )}
-        <span
-          className={cn('ml-2 truncate text-sm font-semibold text-zinc-700 dark:text-zinc-200')}
-          title={title}
-        >
-          {title}
-        </span>
+        {editingTitle ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={() => void saveTitle()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void saveTitle();
+              if (event.key === 'Escape') setEditingTitle(false);
+            }}
+            disabled={savingTitle}
+            aria-label="课程名称"
+            className="ml-2 h-8 min-w-0 max-w-72 rounded-md border border-violet-300 bg-white px-2 text-sm font-semibold text-zinc-800 outline-none ring-violet-200 focus:ring-2 disabled:opacity-60 dark:border-violet-700 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => onTitleChange && setEditingTitle(true)}
+            disabled={!onTitleChange}
+            className={cn(
+              'ml-2 flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-sm font-semibold text-zinc-700 dark:text-zinc-200',
+              onTitleChange && 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+            )}
+            title={onTitleChange ? '点击修改课程名称' : title}
+          >
+            <span className="truncate">{title}</span>
+            {onTitleChange && <Pencil className="h-3.5 w-3.5 shrink-0 text-zinc-400" />}
+          </button>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">

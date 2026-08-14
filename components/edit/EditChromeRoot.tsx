@@ -1,12 +1,18 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { CloudUpload, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { EditShell } from '@/components/edit/EditShell';
 import { SlideNavRail } from '@/components/edit/SlideNavRail';
 import { ActionsBar } from '@/components/edit/ActionsBar/ActionsBar';
 import { HeaderControls } from '@/components/stage/header-controls';
 import { useAgentRuntime } from '@/lib/agent/client/use-agent-runtime';
+import { useStageStore } from '@/lib/store';
+import { renameStage } from '@/lib/utils/stage-storage';
+import { saveStageToCloud } from '@/lib/utils/cloud-sync';
+import { useAuth } from '@/lib/auth/use-auth';
 import { isMaicEditorEnabled } from '@/lib/config/feature-flags';
 import { preloadEditor } from '@/lib/edit/preload-editor';
 import { sceneEditorRegistry } from '@/lib/edit/scene-editor-registry';
@@ -43,6 +49,10 @@ interface EditChromeRootProps {
  */
 export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChromeRootProps) {
   const searchParams = useSearchParams();
+  const stage = useStageStore((state) => state.stage);
+  const { profile } = useAuth();
+  const [savingToCloud, setSavingToCloud] = useState(false);
+  const canSaveToCloud = profile?.role === 'admin' || profile?.role === 'teacher';
   const editorAutoOpen = searchParams?.get('editor') === '1';
 
   // Mark the body while edit mode is mounted, so the editor-scoped CSS
@@ -90,21 +100,56 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
     isSendDisabled: !agentEnabled,
   });
 
-const headerControls = (
-    <HeaderControls
-      mode="edit"
-      canEdit={isEditable}
-      // Same URL-only gate as components/stage.tsx — the MAIC Editor
-      // exit button only appears while ?editor=1 is on the URL.
-      onToggleEditMode={
-        editorAutoOpen ? onToggleEditMode : undefined
-      }
-    />
+  const headerControls = (
+    <>
+      {canSaveToCloud && (
+        <button
+          type="button"
+          onClick={async () => {
+            if (!stage || savingToCloud) return;
+            setSavingToCloud(true);
+            try {
+              await saveStageToCloud(stage.id);
+              toast.success('课程已保存到云端');
+            } catch (error) {
+              const message = error instanceof Error ? error.message : '未知错误';
+              toast.error(`保存到云端失败：${message}`);
+            } finally {
+              setSavingToCloud(false);
+            }
+          }}
+          disabled={savingToCloud || !stage}
+          title={'\u4fdd\u5b58\u5230\u4e91\u7aef'}
+          aria-label={'\u4fdd\u5b58\u5230\u4e91\u7aef'}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-3"
+        >
+          {savingToCloud ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CloudUpload className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden sm:inline">{savingToCloud ? '\u4fdd\u5b58\u4e2d' : '\u4fdd\u5b58\u5230\u4e91\u7aef'}</span>
+        </button>
+      )}
+      <HeaderControls
+        mode="edit"
+        canEdit={isEditable}
+        // Same URL-only gate as components/stage.tsx — the MAIC Editor
+        // exit button only appears while ?editor=1 is on the URL.
+        onToggleEditMode={editorAutoOpen ? onToggleEditMode : undefined}
+      />
+    </>
   );
 
   return (
     <EditShell
       scene={scene}
+      courseTitle={stage?.name || '未命名课程'}
+      onCourseTitleChange={async (title) => {
+        if (!stage) return;
+        await renameStage(stage.id, title);
+        useStageStore.setState({ stage: { ...stage, name: title, updatedAt: Date.now() } });
+      }}
       leftRail={<SlideNavRail />}
       rightRail={
         <RightRailTabs
