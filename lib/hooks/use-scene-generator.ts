@@ -608,6 +608,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
   const mediaAbortRef = useRef<AbortController | null>(null);
   const retryingOutlineIdsRef = useRef(new Set<string>());
   const fetchAbortRef = useRef<AbortController | null>(null);
+  const outlineAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const lastParamsRef = useRef<GenerationParams | null>(null);
   const generateRemainingRef = useRef<((params: GenerationParams) => Promise<void>) | null>(null);
   // Per-outline watchdog timers. Keyed by outline id so a stuck outline
@@ -652,6 +653,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       log.warn(
         `[Timeout] Outline "${outline.title || outline.id}" exceeded ${OUTLINE_TIMEOUT_MS / 1000}s`,
       );
+      abortOutlineRequest(outline.id);
       // Move outline to failedOutlines and remove from generatingOutlines
       // in a single store transaction. Do NOT touch scenes — partial output
       // is still recoverable and the retry path will decide what to redo.
@@ -688,6 +690,32 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
     timeoutMapRef.current.clear();
   };
 
+  const abortOutlineRequest = (outlineId: string): void => {
+    const controller = outlineAbortControllersRef.current.get(outlineId);
+    if (controller) {
+      controller.abort();
+      outlineAbortControllersRef.current.delete(outlineId);
+    }
+  };
+
+  const abortAllOutlineRequests = (): void => {
+    for (const controller of outlineAbortControllersRef.current.values()) controller.abort();
+    outlineAbortControllersRef.current.clear();
+  };
+
+  const startOutlineAttempt = (outline: SceneOutline): AbortSignal => {
+    abortOutlineRequest(outline.id);
+    const controller = new AbortController();
+    outlineAbortControllersRef.current.set(outline.id, controller);
+    startOutlineTimeout(outline);
+    return controller.signal;
+  };
+
+  const finishOutlineAttempt = (outlineId: string): void => {
+    clearOutlineTimeout(outlineId);
+    outlineAbortControllersRef.current.delete(outlineId);
+  };
+
   /**
    * Wrapper around store.addFailedOutline that ALSO disarms the watchdog
    * for the outline. Every failure path (content / actions / TTS / catch)
@@ -697,6 +725,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
    */
   const markOutlineFailed = (outline: SceneOutline): void => {
     clearOutlineTimeout(outline.id);
+    abortOutlineRequest(outline.id);
     store.getState().addFailedOutline(outline);
   };
 
@@ -720,6 +749,9 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       for (const outline of stillGenerating) {
         state.addFailedOutline(outline);
       }
+      abortRef.current = true;
+      fetchAbortRef.current?.abort();
+      abortAllOutlineRequests();
       state.setGeneratingOutlines([]);
       state.setGenerationStatus('paused');
       totalTimeoutRef.current = null;
@@ -769,21 +801,21 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       if (pending.length === 0) {
         store.getState().setGenerationStatus('completed');
         store.getState().setGeneratingOutlines([]);
-        store.getState().setGenerationComplete(true);
-        options.onComplete?.();
-        if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
+        store.getState().markGenerationCompleteIfDone();
+        if (store.getState().generationComplete) {
+          options.onComplete?.();
+          if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
+        }
         // Nothing to wait on — disarm both watchdogs proactively.
         clearAllOutlineTimeouts();
+        abortAllOutlineRequests();
         clearTotalTimeout();
         generatingRef.current = false;
         return;
       }
 
       store.getState().setGeneratingOutlines(pending);
-      // Arm the watchdog for every outline we're about to process. Done as
-      // a single batch right after the store push so timers cover exactly
       // the set the UI sees as "generating".
-      for (const outline of pending) startOutlineTimeout(outline);
       // Start the 15-minute batch watchdog too — covers edge cases where
       // the per-outline timer misses (e.g. parallel content phase left
       // outlines stranded without the serial loop visiting them).
@@ -830,7 +862,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       // threading and the pause-on-failure UX. With parallelism off this is exactly
       // the original one-at-a-time loop.
       try {
-        const fetchContent = (outline: SceneOutline) =>
+        const fetchContent = (outline: SceneOutline, outlineSignal: AbortSignal) =>
           fetchSceneContent(
             {
               outline,
@@ -842,7 +874,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               agents: params.agents,
               languageDirective: params.languageDirective,
             },
-            signal,
+            outlineSignal,
           );
 
         // Pre-warm content fetches (<= parallelConcurrency in flight), keyed by
@@ -856,8 +888,9 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
                 parallelConcurrency,
                 async (outline): Promise<SceneContentResult> => {
                   options.onPhaseChange?.('content', outline);
+                  const outlineSignal = startOutlineAttempt(outline);
                   try {
-                    return await fetchContent(outline);
+                    return await fetchContent(outline, outlineSignal);
                   } catch (err) {
                     return {
                       success: false,
@@ -887,6 +920,9 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           // Step 1: content — await this outline's pre-warmed fetch (parallel),
           // which usually resolved while the previous scene's actions/TTS ran; or
           // fetch it now (serial).
+          const outlineSignal = contentPromises
+            ? outlineAbortControllersRef.current.get(outline.id)?.signal
+            : startOutlineAttempt(outline);
           let contentResult: SceneContentResult;
           if (contentPromises) {
             contentResult = (await contentPromises.get(outline.id)) ?? {
@@ -895,7 +931,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             };
           } else {
             options.onPhaseChange?.('content', outline);
-            contentResult = await fetchContent(outline);
+            contentResult = await fetchContent(outline, outlineSignal!);
           }
 
           if (!contentResult.success || !contentResult.content) {
@@ -923,6 +959,11 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             pausedByFailureOrAbort = true;
             break;
           }
+          if (!outlineSignal || store.getState().failedOutlines.some((item) => item.id === outline.id)) {
+            store.getState().setGenerationStatus('paused');
+            pausedByFailureOrAbort = true;
+            break;
+          }
 
           // Step 2: Generate actions + assemble scene
           options.onPhaseChange?.('actions', outline);
@@ -937,10 +978,15 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               userProfile: params.userProfile,
               languageDirective: params.languageDirective,
             },
-            signal,
+            outlineSignal,
           );
 
           if (actionsResult.success && actionsResult.scene) {
+            if (store.getState().failedOutlines.some((item) => item.id === outline.id)) {
+              store.getState().setGenerationStatus('paused');
+              pausedByFailureOrAbort = true;
+              break;
+            }
             const scene = actionsResult.scene;
             const settings = useSettingsStore.getState();
 
@@ -951,6 +997,8 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               break;
             }
 
+            finishOutlineAttempt(outline.id);
+            store.getState().retryFailedOutline(outline.id);
             removeGeneratingOutline(outline.id);
             store.getState().addScene(scene);
             options.onSceneGenerated?.(scene, outline.order);
@@ -1014,9 +1062,11 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             }
             store.getState().setGenerationStatus('completed');
             store.getState().setGeneratingOutlines([]);
-            store.getState().setGenerationComplete(true);
-            options.onComplete?.();
-            if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
+            store.getState().markGenerationCompleteIfDone();
+            if (store.getState().generationComplete) {
+              options.onComplete?.();
+              if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
+            }
             // Clean completion: disarm both watchdogs so no late firing
             // can race the auto-save toast.
             clearAllOutlineTimeouts();
@@ -1039,6 +1089,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         // never leave a 3-minute or 15-minute timer ticking after the
         // user has navigated away or stop() was called.
         clearAllOutlineTimeouts();
+        abortAllOutlineRequests();
         clearTotalTimeout();
       }
     },
@@ -1053,6 +1104,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
     store.getState().bumpGenerationEpoch();
     fetchAbortRef.current?.abort();
     mediaAbortRef.current?.abort();
+    abortAllOutlineRequests();
     // user-initiated stop: disarm watchdogs immediately so we don't keep
     // a 3-minute timer alive after they've already given up.
     clearAllOutlineTimeouts();
@@ -1094,7 +1146,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         store.getState().setGeneratingOutlines(current.filter((o) => o.id !== outlineId));
         // Disarm the watchdog on the success path. markOutlineFailed
         // does this for failure paths; this wrapper only fires on success.
-        clearOutlineTimeout(outlineId);
+        finishOutlineAttempt(outlineId);
         // If this retry was the last outline in flight, disarm the batch
         // watchdog too — it has done its job for this run.
         if (store.getState().generatingOutlines.length === 0) {
@@ -1112,14 +1164,12 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
       // Arm the per-outline watchdog for this retry. startOutlineTimeout
       // is idempotent — clears any prior timer for the same id before
       // arming a new one, so the 3-minute budget restarts cleanly.
-      startOutlineTimeout(outline);
       // A retry can also trigger the batch watchdog if no other generation
       // is in flight. Safe to call repeatedly: startTotalTimeout clears
       // any prior timer before arming.
       startTotalTimeout();
 
-      const abortController = new AbortController();
-      const signal = abortController.signal;
+      const signal = startOutlineAttempt(outline);
 
       try {
         // Step 1: Content
@@ -1141,6 +1191,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           markOutlineFailed(outline);
           return;
         }
+        if (store.getState().failedOutlines.some((item) => item.id === outline.id)) return;
 
         // Step 2: Actions
         const previousSpeeches = getPreviousSpeechesForOutline(
@@ -1166,8 +1217,11 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
           markOutlineFailed(outline);
           return;
         }
+        if (store.getState().failedOutlines.some((item) => item.id === outline.id)) return;
 
         // ── Add scene immediately (non-blocking) ──
+        finishOutlineAttempt(outline.id);
+        store.getState().retryFailedOutline(outline.id);
         removeGeneratingOutline();
         store.getState().addScene(actionsResult.scene);
 
