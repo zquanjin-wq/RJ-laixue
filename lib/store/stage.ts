@@ -254,11 +254,13 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     }
     // Remove the matching outline from generatingOutlines (match by order)
     const generatingOutlines = get().generatingOutlines.filter((o) => o.order !== scene.order);
+    const failedOutlines = get().failedOutlines.filter((o) => o.order !== scene.order);
     // Auto-switch from pending page to the newly generated scene
     const shouldSwitch = get().currentSceneId === PENDING_SCENE_ID;
     set({
       scenes,
       generatingOutlines,
+      failedOutlines,
       ...(shouldSwitch ? { currentSceneId: scene.id } : {}),
     });
     debouncedSave();

@@ -272,6 +272,20 @@ describe('generationComplete', () => {
   });
 
   describe('markGenerationCompleteIfDone', () => {
+    it('clears a stale failure when its scene materializes', () => {
+      useStageStore.setState({
+        stage: makeStage(),
+        scenes: [],
+        outlines: [makeOutline(1)],
+        failedOutlines: [makeOutline(1)],
+        generationComplete: false,
+      });
+
+      useStageStore.getState().addScene(makeSlideScene('a', 1));
+
+      expect(useStageStore.getState().failedOutlines).toEqual([]);
+    });
+
     it('marks complete when every outline has a scene and none failed', () => {
       useStageStore.setState({
         stage: makeStage(),
