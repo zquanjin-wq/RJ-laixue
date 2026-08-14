@@ -244,7 +244,19 @@ async function synthesizeWithRetry(job: CourseRevoiceJob, item: RevoiceItem) {
   throw lastError;
 }
 
-function applyResults(snapshot: CourseRevoiceJob['snapshot'], items: RevoiceItem[]) {
+/**
+ * Applies generated clips to the most recently saved course snapshot.
+ *
+ * A revoice job can run for minutes. Replacing the job's original snapshot at
+ * the end would discard ordinary edits made while it was running. Match by
+ * scene/action id *and* the original speech text, so an edited line keeps its
+ * newer text and audio instead of receiving a clip for stale words.
+ */
+export function mergeRevoiceResults(
+  snapshot: CourseRevoiceJob['snapshot'],
+  items: RevoiceItem[],
+  voice: StageTeacherVoiceConfig,
+) {
   const byAction = new Map(
     items
       .filter((item) => item.status === 'done')
@@ -256,19 +268,19 @@ function applyResults(snapshot: CourseRevoiceJob['snapshot'], items: RevoiceItem
       (action, index) => {
         const key = `${scene.id}:${typeof action.id === 'string' ? action.id : `${scene.id}-${index}`}`;
         const item = byAction.get(key);
-        return item
+        return item && action.type === 'speech' && action.text === item.text
           ? {
               ...action,
               audioId: item.audioId,
               audioUrl: item.audioUrl,
-              audioVoiceFingerprint: fingerprintSpeechVoice(item.text, snapshot.stage.teacherVoiceConfig as StageTeacherVoiceConfig),
+              audioVoiceFingerprint: fingerprintSpeechVoice(item.text, voice),
             }
           : action;
       },
     ),
   }));
   return {
-    stage: { ...snapshot.stage, teacherVoiceConfig: snapshot.stage.teacherVoiceConfig },
+    stage: { ...snapshot.stage, teacherVoiceConfig: voice },
     scenes,
   };
 }
@@ -344,14 +356,32 @@ export async function runCourseRevoiceJob(jobId: string) {
       .eq('status', 'running');
     return { ...job, items: nextItems, completed_items: completed };
   }
-  const final = applyResults(
-    { ...job.snapshot, stage: { ...job.snapshot.stage, teacherVoiceConfig: job.voice } },
+  // Re-read immediately before commit. A normal course save while the job ran
+  // is not a reason to throw its changes away: merge only generated clips into
+  // that latest snapshot, then use its version for the final CAS commit.
+  const { data: currentCourse, error: currentCourseError } = await service
+    .from('courses')
+    .select('data, updated_at')
+    .eq('id', job.course_id)
+    .maybeSingle();
+  if (currentCourseError) throw currentCourseError;
+  if (!currentCourse) throw new Error('课程在重新配音期间已被删除');
+  const currentData = currentCourse.data as Partial<CourseRevoiceJob['snapshot']>;
+  if (!currentData.stage || !Array.isArray(currentData.scenes))
+    throw new Error('课程内容不完整，无法合并重新配音结果');
+  const final = mergeRevoiceResults(
+    {
+      stage: currentData.stage,
+      scenes: currentData.scenes,
+      outlines: Array.isArray(currentData.outlines) ? currentData.outlines : [],
+    },
     nextItems,
+    job.voice,
   );
   const courseData = {
     stage: final.stage,
     scenes: final.scenes,
-    outlines: job.snapshot.outlines,
+    outlines: Array.isArray(currentData.outlines) ? currentData.outlines : [],
     saveState: 'ready',
     audioGeneration: {
       attempted: true,
@@ -372,7 +402,7 @@ export async function runCourseRevoiceJob(jobId: string) {
     {
       p_job_id: job.id,
       p_course_id: job.course_id,
-      p_source_updated_at: job.source_updated_at,
+      p_source_updated_at: currentCourse.updated_at,
       p_course_data: courseData,
     },
   );

@@ -81,27 +81,6 @@ export function TeacherVoiceControl({
         const priorStatus = jobStatuses.current.get(next.id);
         jobStatuses.current.set(next.id, next.status);
         setJob(next);
-        // The cloud course deliberately keeps its previous committed voice
-        // until every replacement clip succeeds. After a page refresh, the
-        // in-flight target otherwise exists only on the job row and the editor
-        // incorrectly says “not configured”. Project that target back into the
-        // local course state so timeline-created speech uses the same voice.
-        if (!next.done && next.voice?.providerId && next.voice.voiceId) {
-          const currentStage = useStageStore.getState().stage as
-            | (Record<string, unknown> & { teacherVoiceConfig?: StageTeacherVoiceConfig })
-            | null;
-          const currentVoice = currentStage?.teacherVoiceConfig;
-          if (
-            currentVoice?.providerId !== next.voice.providerId ||
-            currentVoice?.voiceId !== next.voice.voiceId ||
-            currentVoice?.modelId !== next.voice.modelId
-          ) {
-            updateStage(
-              { teacherVoiceConfig: next.voice } as Partial<typeof stage> &
-                Record<'teacherVoiceConfig', StageTeacherVoiceConfig>,
-            );
-          }
-        }
         if (next.status === 'succeeded' && !syncedJobs.current.has(next.id)) {
           syncedJobs.current.add(next.id);
           const courseResponse = await fetch(`/api/courses/${encodeURIComponent(stage.id)}`);
@@ -197,11 +176,6 @@ export function TeacherVoiceControl({
         throw new Error(payload?.error || '无法创建重新配音任务');
       jobStatuses.current.set(payload.job.id, payload.job.status);
       setJob(payload.job as Job);
-      const acceptedVoice = payload.job.voice || voice;
-      updateStage(
-        { teacherVoiceConfig: acceptedVoice } as Partial<typeof stage> &
-          Record<'teacherVoiceConfig', StageTeacherVoiceConfig>,
-      );
       toast.success(
         payload.job.done
           ? '该课程已经使用所选音色'
