@@ -214,6 +214,44 @@ export default function ClassroomDetailPage() {
 
       await loadFromStorage(classroomId);
 
+      // The browser draft is intentionally loaded first for editing speed, but
+      // older local copies predate the course-level voice field. Never let such
+      // a copy make a cloud-configured course look unconfigured. Merge only
+      // this authoritative, small field; keep all local canvas edits intact.
+      const localStage = useStageStore.getState().stage as
+        | (Record<string, unknown> & { id?: string })
+        | null;
+      const localVoice = localStage?.teacherVoiceConfig as
+        | { providerId?: unknown; voiceId?: unknown }
+        | undefined;
+      if (
+        localStage?.id === classroomId &&
+        (!localVoice?.providerId || !localVoice?.voiceId)
+      ) {
+        try {
+          const response = await fetch(`/api/courses/${encodeURIComponent(classroomId)}`, {
+            cache: 'no-store',
+          });
+          const payload = await response.json().catch(() => null);
+          const cloudVoice = payload?.data?.data?.stage?.teacherVoiceConfig as
+            | { providerId?: unknown; voiceId?: unknown; modelId?: unknown }
+            | undefined;
+          if (typeof cloudVoice?.providerId === 'string' && typeof cloudVoice.voiceId === 'string') {
+            useStageStore.getState().updateStage(
+              { teacherVoiceConfig: cloudVoice } as never,
+            );
+            log.info('[Classroom] Restored course teacher voice from cloud', {
+              stageId: classroomId,
+              providerId: cloudVoice.providerId,
+              voiceId: cloudVoice.voiceId,
+            });
+          }
+        } catch (voiceError) {
+          // A transient cloud read must never block opening an existing draft.
+          log.warn('[Classroom] Could not restore course teacher voice:', voiceError);
+        }
+      }
+
       // ── Self-heal broken IndexedDB scene order ──────────────────────
       // BUG FIX: Historical courses may have inconsistent scene.order (cloud
       // imports, pre-rebalance writes). loadStageData now sorts by `seq`
