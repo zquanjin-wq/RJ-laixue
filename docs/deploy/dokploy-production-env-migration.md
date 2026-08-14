@@ -4,7 +4,7 @@
 
 ## 结论
 
-- `laixue.work` 保持在 Vercel，直到本表完成并在 `hk.laixue.work` 验收通过。
+- 生产入口已于 2026-08-14 从 Vercel 切换至腾讯云香港 CVM 上的 Dokploy；详见 [生产切换记录](dokploy-production-cutover-2026-08-14.md)。
 - Dokploy 的 **Environment** 是容器运行时变量；密钥和服务器端配置放这里。
 - Dokploy 的 **Build-time Arguments** 是 Next.js 浏览器包构建期变量；所有需要保留的 `NEXT_PUBLIC_*` 放这里。
 - 改 Build-time Arguments 后必须重新 Deploy；只改 Environment 也建议 Deploy，使新容器读取新值。
