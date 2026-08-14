@@ -39,9 +39,9 @@
     "font-licenses"
   ],
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "genfonts": "node scripts/generate-fonts-css.mjs",
-    "build": "node scripts/generate-fonts-css.mjs && rm -rf dist && rollup -c && tsc --emitDeclarationOnly --declarationDir dist",
+    "build": "node scripts/generate-fonts-css.mjs && pnpm run clean && rollup -c && tsc --emitDeclarationOnly --declarationDir dist",
     "dev": "rollup -c -w",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
