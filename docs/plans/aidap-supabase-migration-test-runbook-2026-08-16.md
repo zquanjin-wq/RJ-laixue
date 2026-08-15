@@ -73,6 +73,63 @@
 **我来做：** 代码依赖核对、连接测试、兼容性探针、迁移与校验脚本、日志判断、数据差异报告、Dokploy 配置清单和回滚检查。  
 **禁止做法：** 我不再让你把大段命令逐行粘贴到终端；如确需一次受控执行，我先说明目的、影响、完整命令、预期输出和失败处理，再由自动化助手或我可控的入口执行。
 
+## 4.1 AIDAP 是否必要：替代方案论证
+
+### 先给结论
+
+**AIDAP 不是必须项。** 它的价值不是“火山品牌统一”，而是提供托管的 Supabase 兼容能力，使 laixue 尽量保留现有 SDK、Auth、RLS/RPC 和 Storage 代码。它只有在本计划 A–D 四关全部通过时，才比换技术栈更划算。
+
+腾讯云目前有功能上类似 BaaS 的 **CloudBase**，官方能力包括数据库、云存储、身份认证、云函数和云托管；但它不是 Supabase 托管版，也没有证据表明能原样兼容 Supabase JS SDK、PostgREST、GoTrue、RLS policy 或 Supabase Storage API。因此“迁 CloudBase”本质上是后端重构，不是换三个环境变量。
+
+### 为什么“数据少”不能直接推出“换方案更轻松”
+
+当前仓库静态盘点结果：
+
+- 至少 91 个应用/脚本文件存在 Supabase 依赖。
+- 有 20 份 `supabase-*.sql`，包含 schema、触发器、RLS 和 RPC 演进。
+- 至少 6 个文件使用 Auth Admin 管理用户。
+- 至少 12 个文件直接使用 Supabase Storage。
+- 至少 9 个文件调用数据库 RPC。
+
+现有数据确实很少：32 个用户、17 门课程、两个 Storage 桶。它会显著降低导出、复制和核对数据的时间；但不会自动消除上述接口和权限模型的改造。
+
+### 候选方案对比
+
+| 方案 | 代码改造量 | 初次迁移量 | 长期运维 | 国内厂商付款 | 主要风险 | 估算工程量* |
+| --- | --- | --- | --- | --- | --- | ---: |
+| A. AIDAP 托管 Supabase | 低，理想情况下主要改环境变量和少量兼容点 | Auth/DB/Storage 分开验证 | 低，由火山托管 | 是 | 产品入口/兼容性与跨地域网络尚未验明 | 3–7 人日 |
+| B. 腾讯云独立 CVM 自托管 Supabase | 低到中，SDK 基本保留 | 可按 Supabase 官方方式迁 Auth/DB，Storage 单独复制 | 高，需自管升级、备份、监控、安全和容灾 | 是 | 单机故障、升级维护、资源竞争 | 5–10 人日部署迁移，之后持续运维 |
+| C. 腾讯云 CloudBase | 高，需要替换 SDK、认证、权限、Storage 和部分数据访问层 | 因数据少，数据转换本身不大 | 中低，由腾讯托管 | 是 | 不兼容 Supabase；登录身份、RLS/RPC 语义需重写 | 15–30 人日 |
+| D. 腾讯 PostgreSQL/TDSQL-C + COS + 自建 Auth/API | 最高，需要自行组装完整 BaaS | 数据库与文件容易搬，Auth/接口重做 | 中到高 | 是 | 自研认证/API、安全边界和权限模型 | 20–40 人日 |
+
+\* 工程量是基于当前仓库依赖面的区间估算，不是报价；必须在做完一个兼容探针或重构样板后再校准。
+
+### 腾讯云方案的真实位置
+
+1. **CloudBase 是“功能相似”，不是“Supabase 兼容”。** 它适合愿意按 CloudBase SDK、身份体系和数据库模型重构的新架构。
+2. **TDSQL-C PostgreSQL/TencentDB PostgreSQL 只是数据库。** 它不能单独替代 Supabase Auth、PostgREST、Storage 和 service role；还需 COS、认证服务和自建 API。
+3. **自托管 Supabase 是腾讯体系里代码改动最小的备选。** 但应使用独立服务器，不建议和现有 8 GB 的 Dokploy/Next.js 生产机长期混跑。Supabase 官方对小中型负载建议 8 GB+ RAM、4 核+、80 GB+ SSD，并明确备份、高可用、升级、安全均由自托管者负责。
+4. “国内”需要区分：使用腾讯/火山的香港资源解决国内付款，但不等于中国大陆节点；部署到北京/上海等大陆地域并通过自有域名对公众提供服务，通常还要完成备案及相应合规准备。
+
+### 决策规则
+
+- **继续 AIDAP：** A–D 全通过，且无须大改 Auth/Storage/RPC；它是当前最低改造量方案。
+- **转自托管 Supabase：** AIDAP 管理入口或关键兼容能力失败，但我们愿意承担运维，并希望最大限度保留现有代码。
+- **转 CloudBase：** 明确接受一次后端重构，并把长期统一腾讯云、微信生态或 Serverless 托管置于短期迁移速度之上。
+- **转腾讯原生组件：** 只有在需要更强架构控制、团队愿意维护自建 Auth/API 时考虑；不适合作为眼前快速迁移。
+
+### AIDAP 止损线
+
+以下任一情况成立，就停止继续投入 AIDAP 迁移，不再用真实数据试错：
+
+1. 控制台账号重置后仍无法稳定进入，工单也无法在一个工作日内给出明确处理路径。
+2. 无法取得 service role 或 PostgreSQL 连接信息。
+3. Auth Admin、RLS/RPC、Storage 任一核心探针失败且需要大面积改代码。
+4. 香港 CVM 到北京 AIDAP 网络未达到任务 D 的验收线。
+5. 费用、备份恢复或正式服务等级无法得到明确说明。
+
+触发止损后，下一步不是立即重写 CloudBase，而是先用 1 天做“腾讯云独立 CVM 自托管 Supabase”小样，与 CloudBase 的一个纵向重构样板进行对比，再作最终选择。
+
 ## 5. 明早任务卡
 
 ### A. 恢复 AIDAP Supabase 管理入口
@@ -282,3 +339,10 @@
 - [AIDAP：使用 Storage](https://www.volcengine.com/docs/87275/2277057)
 - [DTS：创建 PostgreSQL 数据迁移任务（含 AIDAP Supabase 目标）](https://www.volcengine.com/docs/6390/172960)
 - [DTS：PostgreSQL 迁移类型与对象范围](https://www.volcengine.com/docs/6390/79328)
+- [腾讯云 CloudBase：产品概述](https://cloud.tencent.com/document/product/876/18431)
+- [腾讯云 CloudBase：身份认证](https://cloud.tencent.com/document/product/876/121347)
+- [腾讯云 TDSQL-C PostgreSQL 版](https://cloud.tencent.com/product/tdcpg)
+- [Supabase：Docker 自托管与硬件要求](https://supabase.com/docs/guides/self-hosting/docker)
+- [Supabase：自托管责任边界](https://supabase.com/docs/guides/self-hosting)
+- [Supabase：Auth 用户迁移](https://supabase.com/docs/guides/troubleshooting/migrating-auth-users-between-projects)
+- [Supabase：项目恢复不包含 Storage 文件](https://supabase.com/docs/guides/platform/clone-project)
