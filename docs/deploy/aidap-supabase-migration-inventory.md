@@ -69,3 +69,5 @@
 4. laixue 的登录、PDF 上传解析、课程生成、课程读取与保存。
 
 测试验证通过前，不修改 Dokploy 的生产 Supabase 环境变量，也不切换正式数据源。
+
+明早执行顺序、准入门槛、停止条件和正式回滚方案见 [AIDAP Supabase 迁移测试执行计划](../plans/aidap-supabase-migration-test-runbook-2026-08-16.md)。
