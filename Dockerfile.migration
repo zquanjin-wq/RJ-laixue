@@ -11,7 +11,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/ ./packages/
 COPY scripts/ ./scripts/
 
-RUN pnpm install --frozen-lockfile
+# The migration job only uses pg and supabase-js. Do not run the web app's
+# postinstall hook here: it builds unrelated browser assets and makes this
+# one-off job needlessly fragile.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY scripts/aidap-migration-job.mjs ./scripts/aidap-migration-job.mjs
 
