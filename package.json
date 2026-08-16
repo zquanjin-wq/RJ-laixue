@@ -14,6 +14,7 @@
     "start": "next start",
     "lint": "node scripts/lint-changed.mjs",
     "check:i18n-keys": "node scripts/check-i18n-keys.mjs",
+    "aidap:preflight": "node scripts/aidap-migration-preflight.mjs",
     "check": "node scripts/check-changed-format.mjs",
     "format": "prettier . --write",
     "test": "vitest run --no-file-parallelism",
