@@ -17,10 +17,10 @@
 | 变量 | 值 |
 | --- | --- |
 | `MIGRATION_MODE` | `preflight` |
-| `SOURCE_DATABASE_URL` | 原 Supabase 的 Session pooler URI |
-| `TARGET_DATABASE_URL` | AIDAP 的 Primary Database URI |
+| `SOURCE_DB_PASSWORD` | 刚刚重置的原 Supabase **数据库密码** |
+| `TARGET_DB_PASSWORD` | AIDAP PostgreSQL 密码 |
 
-不要添加 `MIGRATION_CONFIRM`；`preflight` 没有写入能力。
+这两个密码由任务内部安全地编码为连接信息，不会在日志中输出。不要添加 `MIGRATION_CONFIRM`；`preflight` 没有写入能力。
 
 部署后只看任务日志。成功标志是 JSON 中的 `"result": "preflight-ok"`。失败时任务会停止并显示缺少变量、网络或认证原因，但不显示密码。
 

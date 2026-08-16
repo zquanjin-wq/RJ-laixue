@@ -12,8 +12,10 @@ import { Client } from 'pg';
 
 const MODE = process.env.MIGRATION_MODE || 'preflight';
 const confirm = process.env.MIGRATION_CONFIRM;
-const sourceUrl = process.env.SOURCE_DATABASE_URL;
-const targetUrl = process.env.TARGET_DATABASE_URL;
+// These are connection endpoints, not credentials. Keeping the passwords as
+// separate Dokploy secrets avoids fragile URI escaping and terminal prompts.
+const sourceUrl = process.env.SOURCE_DATABASE_URL || `postgresql://postgres.aqmktsagfvkikehynpdw:${encodeURIComponent(process.env.SOURCE_DB_PASSWORD || '')}@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`;
+const targetUrl = process.env.TARGET_DATABASE_URL || `postgresql://postgres:${encodeURIComponent(process.env.TARGET_DB_PASSWORD || '')}@cp-hunky-beam-2a8e28b5.pg7.aidap-global.cn-beijing.volces.com:5432/postgres?sslmode=require`;
 const sourceApiUrl = process.env.SOURCE_SUPABASE_URL;
 const targetApiUrl = process.env.TARGET_SUPABASE_URL;
 const targetServiceKey = process.env.TARGET_SUPABASE_SERVICE_ROLE_KEY;
@@ -82,7 +84,12 @@ async function tableCounts(url) {
 }
 
 async function ensureSafeTarget() {
-  required('SOURCE_DATABASE_URL', 'TARGET_DATABASE_URL');
+  const suppliedUrls = Boolean(process.env.SOURCE_DATABASE_URL || process.env.TARGET_DATABASE_URL);
+  if (suppliedUrls) {
+    required('SOURCE_DATABASE_URL', 'TARGET_DATABASE_URL');
+  } else {
+    required('SOURCE_DB_PASSWORD', 'TARGET_DB_PASSWORD');
+  }
   if (!new URL(sourceUrl).hostname.endsWith('.supabase.co')) fail('SOURCE_DATABASE_URL is not a Supabase endpoint.');
   if (!new URL(targetUrl).hostname.includes('.aidap-global.')) fail('TARGET_DATABASE_URL is not an AIDAP endpoint.');
   if (MODE !== 'preflight' && confirm !== 'AIDAP_TEST_TARGET_ONLY') {
