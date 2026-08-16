@@ -1,0 +1,18 @@
+# One-off, non-interactive migration image for Supabase -> AIDAP.
+# It deliberately has no web server and is deployed as a separate Dokploy service.
+FROM node:20-alpine AS base
+
+RUN apk add --no-cache postgresql17-client
+RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/ ./packages/
+COPY scripts/ ./scripts/
+
+RUN pnpm install --frozen-lockfile
+
+COPY scripts/aidap-migration-job.mjs ./scripts/aidap-migration-job.mjs
+
+CMD ["node", "scripts/aidap-migration-job.mjs"]
