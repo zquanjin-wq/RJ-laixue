@@ -294,6 +294,7 @@ export async function listCloudCourses() {
     title: string;
     topic: string;
     created_by: string | null;
+    author_name: string | null;
     created_at: string;
     updated_at: string;
   }>;
@@ -310,6 +311,7 @@ export async function listMyCourses() {
     title: string;
     topic: string;
     created_by: string | null;
+    author_name: string | null;
     created_at: string;
     updated_at: string;
   }>;
