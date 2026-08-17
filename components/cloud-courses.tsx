@@ -44,9 +44,9 @@ function CourseCard({
   const openLabel = '预览';
   const editLabel = '继续编辑';
   const shareLabel = section === 'mine' ? '分享学员链接' : '分享课程';
-  const tagLabel = section === 'mine' ? '我的创作' : '资源库';
+  const tagLabel = section === 'library' ? '资源库' : isOwner ? '我的创作' : '他人创作';
   const tagClass =
-    section === 'mine'
+    section === 'mine' && isOwner
       ? 'shrink-0 inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-900/30 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300'
       : 'shrink-0 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300';
 
