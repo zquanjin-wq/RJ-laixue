@@ -29,7 +29,21 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error;
 
-    return NextResponse.json({ success: true, data });
+    const creatorIds = [
+      ...new Set((data ?? []).map((course) => course.created_by).filter(Boolean)),
+    ];
+    const { data: creators } = creatorIds.length
+      ? await serviceSupabase.from('students').select('user_id, name').in('user_id', creatorIds)
+      : { data: [] };
+    const creatorNameById = new Map(
+      (creators ?? []).map((creator) => [creator.user_id, creator.name]),
+    );
+    const courses = (data ?? []).map((course) => ({
+      ...course,
+      author_name: course.created_by ? (creatorNameById.get(course.created_by) ?? null) : null,
+    }));
+
+    return NextResponse.json({ success: true, data: courses });
   } catch (e: any) {
     return NextResponse.json(
       { success: false, error: e?.message || 'Failed to list courses' },
