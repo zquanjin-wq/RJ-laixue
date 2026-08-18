@@ -37,8 +37,15 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
+      - "443:443"
+    environment:
+      # Use a temporary test hostname before the ICP/DNS cutover, then change
+      # this value to laixue.work for the production cutover.
+      LAIXUE_DOMAIN: ${LAIXUE_DOMAIN:?set in .env.deploy}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
     restart: unless-stopped
     logging:
       driver: json-file
@@ -48,3 +55,5 @@ services:
 
 volumes:
   laixue-data:
+  caddy-data:
+  caddy-config:

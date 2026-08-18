@@ -1,9 +1,8 @@
 {
 	admin off
-	auto_https off
 }
 
-:80 {
+(laixue_proxy) {
 	encode zstd gzip
 
 	@api path /api/*
@@ -21,4 +20,21 @@
 		output stdout
 		format json
 	}
+}
+
+# Keeps the pre-cutover machine testable by IP over HTTP. The application
+# itself never exposes port 3000 to the public network.
+:80 {
+	import laixue_proxy
+}
+
+# Caddy obtains and renews the Let's Encrypt certificate after this hostname
+# resolves to this server. Until that point, the HTTP test endpoint above still
+# works; certificate retries do not prevent the app from starting.
+{$LAIXUE_DOMAIN} {
+	import laixue_proxy
+}
+
+www.{$LAIXUE_DOMAIN} {
+	redir https://{$LAIXUE_DOMAIN}{uri} permanent
 }
