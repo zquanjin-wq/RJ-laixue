@@ -1,0 +1,8 @@
+[Unit]
+Description=Pull and reconcile the latest validated Laixue mainland image
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/laixue/scripts/reconcile-mainland-image.sh

@@ -1,15 +1,15 @@
-# Laixue 生产部署：EdgeOne + 腾讯云 CVM
+# Laixue 大陆生产部署：GitHub + 腾讯云 TCR + 腾讯云 CVM
 
-> 状态：第一版可执行基线  
+> 状态：北京机不访问 GitHub 的可执行基线
 > 数据层：继续使用现有 Supabase  
 > 应用层：腾讯云 CVM + Docker Compose  
-> 入口层：EdgeOne（完成源站验收后接入）
+> 入口层：域名 DNS + Caddy（完成源站验收后接入）
 
 ## 1. 当前部署拓扑
 
 单机阶段运行两个容器：
 
-- `laixue`：Next.js 16 standalone，Node.js 20；
+- `laixue`：从腾讯云 TCR 拉取已经由 GitHub CI 构建、测试完成的镜像；
 - `caddy`：监听 80，反向代理到 Next.js，保留 SSE 流式响应。
 
 Next.js 的 3000 端口不映射到公网。安全组只需放行 SSH 管理端口（限制来源 IP）和 HTTP/HTTPS 入口；接入 EdgeOne 后应进一步限制源站访问。
@@ -28,6 +28,9 @@ Next.js 的 3000 端口不映射到公网。安全组只需放行 SSH 管理端�
 
 若构建镜像也放在服务器执行，8 GB 是建议下限。后续改为 CI 构建并推送镜像后，运行规格可根据监控下调或扩容。
 
+北京机不克隆 GitHub 源码、不在服务器构建镜像。GitHub → TCR 是构建
+链路；TCR → 北京机是发布链路。
+
 ## 3. 环境变量
 
 在服务器仓库根目录：
@@ -39,46 +42,43 @@ chmod 600 .env.deploy
 
 从 Vercel 生产环境逐项复制正在使用的变量。不要复制到聊天、工单、Git 或镜像层。
 
-特别说明：`NEXT_PUBLIC_*` 会在 `docker compose build` 时写入浏览器 bundle，因此更换这些值后必须重新构建镜像；服务端密钥只在容器启动时注入。
+特别说明：`NEXT_PUBLIC_*` 会由 GitHub Actions 在镜像构建时写入浏览器 bundle；服务端密钥只在容器启动时注入。
 
-## 4. 构建与启动
+GitHub 的 `mainland-production` Environment 必须配置以下 Secrets：
 
-所有 Compose 命令都显式加载部署变量：
+- `TCR_USERNAME`、`TCR_PASSWORD`；
+- `DEPLOY_NEXT_PUBLIC_SUPABASE_URL`、`DEPLOY_NEXT_PUBLIC_SUPABASE_ANON_KEY`；
+- `DEPLOY_NEXT_PUBLIC_RUNTIME_SHADOW`、`DEPLOY_NEXT_PUBLIC_RUNTIME_SHADOW_PLAYBACK`；
+- `DEPLOY_NEXT_PUBLIC_DOCUMENT_STORE_BRIDGE`、`DEPLOY_NEXT_PUBLIC_DOCUMENT_STORE_PARITY_CHECK`、`DEPLOY_NEXT_PUBLIC_MAIC_EDITOR_ENABLED`。
+
+## 4. 北京机首次启动
+
+北京机先登录腾讯云 TCR，然后启用镜像同步定时器：
 
 ```bash
-docker compose --env-file .env.deploy build
-docker compose --env-file .env.deploy up -d
-docker compose --env-file .env.deploy ps
+docker login ccr.ccs.tencentyun.com
+systemctl enable --now laixue-image-sync.timer
+systemctl start laixue-image-sync.service
 ```
 
 验证：
 
 ```bash
 curl -fsS http://127.0.0.1/api/health
-docker compose --env-file .env.deploy logs --tail=200 laixue caddy
+cd /opt/laixue && docker compose -f docker-compose.server.yml --env-file .env.deploy logs --tail=200 laixue caddy
 ```
 
 只有 `laixue` 显示 healthy、健康接口返回成功并完成 P0 验收后，才能接入测试域名。
 
 ## 5. 发布新版本
 
-每次发布使用唯一镜像标签，例如 Git commit：
-
-```bash
-LAIXUE_IMAGE_TAG=<commit> docker compose --env-file .env.deploy build laixue
-LAIXUE_IMAGE_TAG=<commit> docker compose --env-file .env.deploy up -d laixue
-docker compose --env-file .env.deploy ps
-```
-
-单机发布会有短暂重启窗口。生产进入稳定期后升级为双 CVM + ALB，才具备真正滚动发布能力。
+推送到 `main` 后，CI 成功才会自动构建并推送 `:main` 镜像到 TCR。北京
+机每两分钟检查一次；发现新镜像后更新服务。单机更新有短暂重启窗口。
 
 ## 6. 回滚
 
-保留上一个已验收镜像标签。回滚时把 `LAIXUE_IMAGE_TAG` 指回旧标签并启动：
-
-```bash
-LAIXUE_IMAGE_TAG=<previous-commit> docker compose --env-file .env.deploy up -d laixue
-```
+TCR 同时保留每一个 commit 标签。回滚时将所需 commit 标签重新标为 `main`，
+北京机下一轮同步会自动回到该镜像。
 
 回滚后必须重新检查健康接口和 P0 旅程。DNS/EdgeOne 回切只处理流量入口，不代替数据库和任务状态核对。
 

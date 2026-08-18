@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Tencent TCR for a new validated Laixue image
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
