@@ -1,11 +1,12 @@
 # OpenMAIC v0.3.2 RuntimeStore / Chat / Persistence 差异审计报告
 
 - 审计日期：2026-08-18
+- 修订/复审日期：2026-08-19
 - 审计分支：`chore/openmaic-v032-runtime-audit`
 - 本地 HEAD：`4579519bfb66a19824584119bdceb45f916bbfe9`（`test/r3-line`）
 - 上游 tag/commit：`v0.3.2` / `673af150`
 - merge-base：`04b70f0359ebb117deeb5e1a0f71b78eb269bc8f`
-- 审计人：WorkBuddy / 老金助手
+- 审计人：小助
 - 性质：只读审计与设计分析，不修改产品代码、SQL、环境变量，不部署
 
 ---
@@ -20,9 +21,7 @@
 
 | 项 | 上游来源 | 本地状态 | 建议动作 |
 |---|---|---|---|
-| HTTP RuntimeStore `fetch` 显式绑定 | `packages/@openmaic/storage/src/runtime/http.ts:159-175` | 本地未复用该 package，但若未来引入同 package 则存在相同风险 | 若引入上游 `@openmaic/storage` 运行时，必须带上 `.bind(globalThis)` 修复 |
-| Runtime record/session 写边界校验 | `packages/@openmaic/storage/src/runtime/http.ts:95-128`、`storage_runtime_types.ts:96-162` | 本地 outbox 仅做 JSON.stringify 冻结，无 DSL 校验 | 作为 R3.x dual-read 前置，评估是否在 outbox 入队/发送前增加 `validateRuntimeRecord`/`validateRuntimeSession` |
-| 409 `RUNTIME_APPEND_CONFLICT` 结构化冲突详情 | `packages/@openmaic/storage/src/runtime/http.ts:208-227` | 本地只解析 `errorCode` 字符串 | 若后续需要自动重放/对齐 seq，可移植结构化错误 |
+| 409 `RUNTIME_APPEND_CONFLICT` 结构化冲突详情 | `packages/@openmaic/storage/src/runtime/http.ts:208-227`（PR #1050 `ad30061b`） | 本地只解析 `errorCode` 字符串 | 先作为结构化诊断与遥测引入；是否自动重试/对齐 seq 需独立设计，不得直接改变当前 409 skip 行为 |
 
 ### 1.3 仅作参考
 
@@ -48,7 +47,7 @@
 - 仓库：`D:/WorkBuddy 地界/RJ-laixue-storage-b2`
 - 分支：`test/r3-line`
 - HEAD：`4579519bfb66a19824584119bdceb45f916bbfe9`
-- 状态：本地领先 `origin/test/r3-line` 4 个提交，工作树干净
+- 状态：本地领先 `origin/test/r3-line` 4 个提交；工作树除 WorkBuddy 元数据 `.workbuddy/memory/2026-08-19.md` 外无其他变更
 
 ### 2.2 上游基线
 
@@ -123,7 +122,7 @@
 | CAS | ✅ `expectedLastSeq`（`storage/runtime/types.ts:67-73`） | ✅ outbox 内按 `dependsOnEntryId` 与 succeededEntries 校验 | 本地 CAS 在依赖链层面，上游 CAS 在 seq 层面 |
 | retry/backoff | ⚠️ 上游无显式重试（store 直接抛错）；Quiz writer 有 debounce | ✅ `BACKOFF_SCHEDULE` 6 级指数退避（`lib/runtime/outbox.ts:27-34`） | 本地覆盖 |
 | dead cascade | ❌ 上游无 dead 级联 | ✅ `cascadeMarkDeadInTx`（`lib/runtime/outbox.ts:88-105`） | 本地覆盖 |
-| succeeded evidence | ✅ `succeededEntries` 等价物：上游直接读取 store | ✅ `lib/runtime/outbox.ts` 独立的 `succeededEntries` 表 | 本地有显式成功凭据表 |
+| succeeded evidence | ⚠️ 上游直接读取 store 作为最终状态；没有不可变的 per-entry 成功凭据供依赖者安全引用 | ✅ `lib/runtime/outbox.ts` 独立的 `succeededEntries` 表，记录 entry 级删除凭据 | 本地有显式成功凭据；上游「读取最终状态」不等于「成功凭据」 |
 | compaction | ⚠️ Chat generation rollover 替代 compaction | ✅ playback semanticKey superseded（`lib/runtime/outbox.ts:136-143`） | 不同策略 |
 | refresh recovery | ✅ Quiz legacy migration；Playback KV cursor；Chat reload from RuntimeStore | ✅ Quiz envelope；Playback Dexie playbackState；Chat localStorage cursor | 本地 refresh 基于本地 store，上游基于 RuntimeStore |
 | offline recovery | ❌ 无本地 outbox，离线即丢失写 | ✅ outbox 持久化 pending，恢复网络后 drain | 本地覆盖 |
@@ -206,26 +205,51 @@ lib/playback/cursor.ts:102-136      migrateLegacyCursor（Dexie → KV）
 e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 ```
 
-### 5.3 本地 Playback 恢复模型
+### 5.3 本地 Playback 双路径模型
 
-- 本地仍使用 Dexie `playbackState` 行（`lib/utils/playback-persistence.ts`、`lib/runtime/playback-outbox.ts`）。
-- R3.1a 已签字 visit-session 语义：completed 后重入采用**独立 cycle/visit session**（`lib/runtime/playback-visit.ts`，本地文件存在但本次审计未逐行展开）。
-- 本地 pending 通过 `shadowPending` 字段与 outbox 结合，保证刷新/跨标签页恢复。
+本地当前**同时存在两条路径**，必须分别描述，不能混为单一 `pb:<stageId>`。
+
+#### 5.3.1 R3.1a 新路径（当前权威路径）
+
+- 由 `lib/runtime/playback-visit.ts` 实现。
+- visit-session identity：`pb:<stageId>:<visitId>`，其中 `visitId = generateHexId(16)`（`playback-visit.ts:99-100`）。
+- `claimOrReuseVisitInTx` 为每个新播放周期创建独立 visit；completed 后凭据写入 `succeededEntries`，`checkVisitCompleted` 把 visit 状态翻为 `completed`（`playback-visit.ts:179-192`）。
+- 同一 stage 的后续 completed 重入会触发 `VisitCycleCompletedError`，调用方重新创建新 visit（`playback-visit.ts:225-227`、`playback-outbox.ts:175-184`）。
+- 恢复源：`playbackVisitStates` Dexie 表 + `runtimeOutbox` + `succeededEntries`，不是 `playbackState` cursor。
+
+#### 5.3.2 R3.1 旧路径/迁移路径
+
+- 由 `lib/runtime/playback-outbox.ts` 中 `shadowPlaybackProgressViaOutbox` 实现。
+- Session identity：`pb:<stageId>`（`playback-outbox.ts:115`）。
+- 仅在 `isOutboxReady()` 为 false 的迁移期由 `migrateShadowPendingToOutbox` 调用（`playback-outbox.ts:194-220`）。
+- 迁移完成后 `localStorage` 写入 `r3:playback:outbox:ready`，新流量走 R3.1a visit 路径。
+
+#### 5.3.3 Legacy adoption
+
+- `claimOrReuseVisitInTx` Step 0 查找 `visitId === legacy-${stageId}` 且 `isLegacyAdopted` 为 true 的行，其 `sessionId` 保持 `pb:<stageId>`（`playback-visit.ts:78-89`）。
+- 该 adoption 只发生一次；adopt 后 `isLegacyAdopted` 被清除，避免重复 adoption。
+- 因此旧 session identity 在 adoption 窗口内仍可能被使用，但仅限从旧 R3.1 单 session 向 visit-session 模型过渡的 learner。
 
 ### 5.4 completed 后重入
 
 - **上游**：cursor 是 device KV 可变状态，completed 后不清也可以重新 start；RuntimeStore records 仅作为 learner facts，不是恢复源。
-- **本地**：R3.1a visit session 生成新 session id，completed 会话不可追加。
+- **本地 R3.1a**：visit-session 生成新 `pb:<stageId>:<visitId>`，completed 会话不可追加；依赖 `succeededEntries` 凭据识别 cycle 结束。
+- **本地旧路径 R3.1**：`pb:<stageId>` 单 session，completed 后同样不可追加（服务端 409 INACTIVE_SESSION），旧路径通过 `shadowPending` 清空避免重入。
 
 ### 5.5 session identity
 
-- 上游 playback 无显式 session identity；RuntimeStore session 按 `(stageId, learnerKey, kind='playback')` 列出。
-- 本地：`pb:${stageId}` 单 session，eventId 决定 record id（`lib/runtime/playback-outbox.ts:115-127`）。
+| 路径 | session id | 当前状态 |
+|---|---|---|
+| 上游 v0.3.2 | 无显式 cycle identity；按 `(stageId, learnerKey, kind='playback')` list | 当前读源 |
+| 本地 R3.1a 新路径 | `pb:<stageId>:<visitId>` | **当前权威路径** |
+| 本地 R3.1 旧/迁移路径 | `pb:<stageId>` | 仅迁移期使用 |
+| 本地 legacy adoption | `pb:<stageId>`（一次性 adopt） | 过渡窗口 |
 
 ### 5.6 跨标签页行为
 
 - 上游 cursor 是 device KV LWW，跨标签页可见。
-- 本地 Dexie `playbackState` 行通过 rw 事务 + CAS，跨标签页一致。
+- 本地 R3.1a：`playbackVisits` + `playbackVisitStates` Dexie 表通过 rw 事务 + CAS 保证跨标签页一致；`checkVisitCompleted` 在 drain 时统一翻转状态。
+- 本地旧路径：`playbackState` 行同样通过 Dexie rw 事务 + CAS 保证一致。
 
 ### 5.7 评估
 
@@ -323,7 +347,7 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 | **set status** | `PATCH /runtime/sessions/{id}/status`，支持 `expectedLastSeq`（`storage/runtime/types.ts:135-140`） | `PATCH /api/runtime/v1/sessions/{id}/status`（`lib/runtime/outbox.ts:81-82`） | MISSING_LOCALLY_ADOPT |
 | **get/read session** | `GET /runtime/sessions/{id}`，返回 `RuntimeSession`，客户端再次 `migrateRuntime` + `validateRuntimeSession`（`storage/runtime/http.ts:238-263`） | 服务端内部读取，客户端 outbox 不直接读 session | LOCAL_ALREADY_COVERED（服务端负责） |
 | **list/read records** | `GET /runtime/sessions/{id}/records`；HTTP 层返回后 `response.json()`（`storage/runtime/http.ts`） | 服务端内部读取 | LOCAL_ALREADY_COVERED |
-| **409 分类** | `RUNTIME_APPEND_CONFLICT` 结构化，含 `expectedLastSeq`/`actualLastSeq`（`storage/runtime/http.ts:208-227`） | 本地解析 `errorCode` 字符串，已知 `IDEMPOTENCY_CONFLICT`、`INACTIVE_SESSION`（`lib/runtime/outbox.ts:108-114`、`lib/runtime/shadow-writer.ts:205-222`） | MISSING_LOCALLY_ADOPT（若需自动对齐 seq） |
+| **409 分类** | `RUNTIME_APPEND_CONFLICT` 结构化，含 `expectedLastSeq`/`actualLastSeq`（`storage/runtime/http.ts:208-227`） | 本地解析 `errorCode` 字符串，已知 `IDEMPOTENCY_CONFLICT`、`INACTIVE_SESSION`（`lib/runtime/outbox.ts:108-114`、`lib/runtime/shadow-writer.ts:205-222`） | MISSING_LOCALLY_ADOPT（结构化诊断/遥测）/ CONFLICTS_WITH_LOCAL（自动对齐 seq 会破坏 outbox 依赖语义） |
 | **404 行为** | `SESSION_NOT_FOUND` code，HTTP 层转换为 `undefined`（`storage/runtime/http.ts:251-263`） | 本地 Chat 404 清 created 标记（`lib/runtime/shadow-writer.ts:395-397`） | LOCAL_ALREADY_COVERED |
 | **二进制 vs JSON 响应** | HTTP 层明确 `response.json()` 或 `response.status === 204`（`storage/runtime/http.ts:230-231`） | 本地 shadow-writer 仅处理 JSON | LOCAL_ALREADY_COVERED |
 | **身份注入** | `headers` hook：`HttpRuntimeHeadersHook`（`storage/runtime/http.ts:23-25`） | 本地通过 Next.js API route 自动带 cookie/session | LOCAL_DIFFERENT_BUT_STRICTER |
@@ -335,9 +359,61 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 
 ### 7.2 Browser/Postgres RuntimeStore 行为变化
 
-- `packages/@openmaic/storage/src/runtime/browser.ts` 实现 IndexedDB 版的 `RuntimeStore`；
-- `packages/@openmaic/storage/src/runtime/pg.ts` 实现 Postgres 版；
-- 本地当前未使用这两个实现，而是直接调用 `/api/runtime/v1/*`。若未来使用，需要单独审计 Browser/Postgres 的 seq 分配、迁移、错误分类。
+本地当前未使用 `@openmaic/storage` 的 Browser/PG 实现，而是直接调用 `/api/runtime/v1/*`。以下审计上游 v0.3.2 的 `browser.ts`、`pg.ts`、`types.ts` 契约行为，作为未来若引入该 package 时的参考。
+
+#### 7.2.1 seq 分配
+
+- **Browser**：IndexedDB compound primary key `['sessionId', 'seq']`（`browser.ts:176`）。`appendRecord` 在 write transaction 内用 key cursor 读取当前 session 最大 key，+1 分配（`browser.ts:399-406`）。
+- **PG**：`runtime_records` 表有 `UNIQUE (session_id, seq)`（`pg.ts:92`）。`appendRecord` 在同一 transaction 内 `SELECT COALESCE(MAX(seq), -1)`，+1 插入（`pg.ts:465-476`）。
+- **一致性**：两者都在**同一 transaction 内**完成读最大 seq 与插入；PG 额外有 5 次 retry 循环处理 `23505`/`40001`/`40P01`（`pg.ts:440-519`）。
+
+#### 7.2.2 append CAS
+
+- `RuntimeAppendOptions.expectedLastSeq` 为 `number | null | undefined`（`types.ts:66-73`）。
+- Browser 与 PG 均在分配新 seq 前检查 `expectedLastSeq !== actualLastSeq`，不匹配抛 `RuntimeAppendConflictError`（`browser.ts:402-404`、`pg.ts:473-475`）。
+- `null` 表示调用者观察到无 record；`undefined` 表示无前置条件。
+
+#### 7.2.3 transaction 边界
+
+- **Browser**：`txRun` 将 body 包在一个 transaction 内，commit 后 resolve；body 内 throw 会 abort transaction（`browser.ts:193-220`）。
+- **PG**：`withTransaction` 必须每次 checkout 新连接/transaction；实现方需保证同一个 transaction 内执行所有 query（`pg.ts:53-65`、`243-245`）。
+- `sessionTransition` 与 record append 在同一 transaction 内原子提交（`browser.ts:414-429`、`pg.ts:479-510`）。
+
+#### 7.2.4 409/404 分类
+
+- **409**：仅在 `appendRecord`/`setSessionStatus` 的 `expectedLastSeq` CAS 失败时抛出 `RuntimeAppendConflictError`；HTTP 层将其翻译为 `RUNTIME_APPEND_CONFLICT` 并附带 `expectedLastSeq`/`actualLastSeq`（`http.ts:208-227`）。
+- **404**：`getSession`  absence 在 Browser 返回 `undefined`（`browser.ts:248-263`）；PG 对非法 key 提前返回 `undefined`（`pg.ts:330-340`）。HTTP 层将服务端 `SESSION_NOT_FOUND` 翻译为 `undefined`（`http.ts:251-263`）。
+- **非 active session append**：Browser/PG 均抛 `Error`（非 409），消息为 `cannot append to session ... with status '...'`（`browser.ts:382-387`、`pg.ts:454-459`）。
+
+#### 7.2.5 create 幂等行为
+
+- **Browser**：`createSession` 在 tx 内先 `get` 检查 id 存在，再用 `add`（非 `put`）插入；重复 create 抛 `session ... already exists`（`browser.ts:227-245`）。
+- **PG**：直接 `INSERT`，依赖 `id PRIMARY KEY` 唯一约束；重复 create 抛 `session ... already exists`（`pg.ts:298-327`）。
+- 两者都不是 upsert。
+
+#### 7.2.6 session status 转换
+
+- `setSessionStatus` 直接写入目标 status，无显式状态机校验（Browser `browser.ts:298-338`、PG `pg.ts:368-406`）。
+- 但 append 会拒绝 `status !== 'active'` 的 session。
+- 因此有效转换路径为：`active` → 任意 status；非 active session 不能再 append。
+
+#### 7.2.7 HTTP、Browser、PG 一致性
+
+- **一致**：
+  - `createSession` 都 stamp `runtimeDslVersion`；
+  - `appendRecord` 都 store-assigned seq、`expectedLastSeq` CAS、拒绝非 active session、支持 `sessionTransition`；
+  - `setSessionStatus` 都支持 `expectedLastSeq`；
+  - 读写都跑 `validateRuntimeSession`/`validateRuntimeRecord`；
+  - 都有 future-version 写保护。
+- **差异**：
+  - Browser 在 IDB 层用 `add` 防覆盖，PG 依赖 SQL UNIQUE；
+  - PG 有 append retry loop，Browser 没有；
+  - PG 直接查 JSONB，Browser 直接存对象；
+  - HTTP 层额外处理 `{error: {code, message, details}}` schema 与 fetch 绑定。
+
+#### 7.2.8 对本地当前的影响
+
+本地未使用 `@openmaic/storage`，上述行为仅作为未来引入时的契约参照。当前本地 `/api/runtime/v1/*` 由服务端实现，需由服务端团队独立审计其 seq、CAS、状态码行为是否与上游一致。
 
 ---
 
@@ -345,10 +421,10 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 
 | # | 上游 commit/PR | 涉及文件 | 解决的问题 | 本地覆盖 | 冲突风险 | 建议动作 | 所需测试 | 是否独立设计卡 |
 |---|---|---|---|---|---|---|---|---|
-| 1 | `ad30061b` #1050 | `packages/@openmaic/storage/src/runtime/http.ts:159-175` | fetch 未绑定导致 `Illegal invocation` | 当前未用该 package，无风险；若引入则有风险 | 低 | **ADOPT_NOW**：若引入 `@openmaic/storage` 必须同步引入此修复 | package 集成测试 | 否 |
+| 1 | `16dad613` #984 | `packages/@openmaic/storage/src/runtime/http.ts:159-175` | fetch 未绑定导致 `Illegal invocation` | 当前未用该 package，无风险 | 低 | **DEFER / REFERENCE_ONLY**：当前不下一张实施；未来若引入 `@openmaic/storage` 必须作为强制配套门禁 | package 集成测试 | 否 |
 | 2 | `ad30061b` #1050 | `packages/@openmaic/storage/src/runtime/http.ts:76-93` | undefined 字段序列化 | 本地 `freezeBody` 已删除 undefined | 中 | **REFERENCE_ONLY** | 已有 outbox 测试 | 否 |
-| 3 | `ad30061b` #1050 | `packages/@openmaic/storage/src/runtime/http.ts:95-128`、`types.ts` | Runtime record/session 写边界校验 | 本地无 | 中 | **ADAPT**：在 outbox 入队前增加 DSL 校验；需按本地 outbox 重写 | 新增 `runtime-outbox/validation` 测试 | 是 |
-| 4 | `ad30061b` #1050 | `packages/@openmaic/storage/src/runtime/http.ts:208-227` | 409 结构化冲突详情 | 本地只解析 errorCode | 中 | **ADAPT**：服务端/客户端协商统一 error schema 后引入 | 409 conflict 集成测试 | 是 |
+| 3 | `ad30061b` #1050 | `packages/@openmaic/storage/src/runtime/http.ts:95-128`、`types.ts` | Runtime record/session 写边界校验 | 本地无 | 中 | **ADAPT**：设计本地专用的 `validateRuntimeRecordInit`/`validateRuntimeSessionInit`，只校验客户端负责字段；不得直接套用上游完整对象校验 | 新增 `runtime-outbox/validation` 测试 + 设计文档 | 是 |
+| 4 | `ad30061b` #1050 | `packages/@openmaic/storage/src/runtime/http.ts:208-227` | 409 结构化冲突详情 | 本地只解析 errorCode | 中 | **ADAPT**：先作为结构化诊断/遥测引入；是否自动重试/对齐 seq 需独立设计，不得改变当前 skip 行为 | 409 conflict 集成测试 + 遥测校验 | 是 |
 | 5 | `3eea9dc5` #955 | `lib/quiz/runtime.ts` | Quiz RuntimeStore 化 | 本地已有 outbox 模型 | **高** | **REJECT**：与 R3.2 outbox 签字冲突 | — | 否 |
 | 6 | `3eea9dc5` #955 | `lib/playback/cursor.ts` | Playback cursor KV 化 | 本地 Dexie playbackState | **高** | **REJECT**：破坏 R2.1 A2 签字 | — | 否 |
 | 7 | `3eea9dc5` #955 | `lib/quiz/runtime.ts:199-216`、`218-223` | Quiz 内存队列 + Web Locks | 本地 Dexie 事务 | 中 | **REFERENCE_ONLY**：可吸收测试思路 | 本地 outbox 跨标签页测试 | 否 |
@@ -379,29 +455,42 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 
 ## §10 后续任务拆分建议
 
-### 卡 1：移植 HTTP RuntimeStore 基础修复（低冲突）
+### 卡 1：新增上游启发的本地回归门禁（只加测试，不改生产行为）
 
-- **目标**：评估并可选地引入上游 `ad30061b` 中 fetch 绑定、undefined 字段处理、record/session 校验等不破坏本地架构的修复。
+- **目标**：把上游 PR #955/#1050 覆盖到的并发、跨标签页、legacy migration、completed 后重入、旧游标窗口等场景，转化为本地 outbox / shadow 回归测试。
 - **范围**：
-  - 若本地引入 `@openmaic/storage` package，则必须引入 fetch 绑定；
-  - 在 outbox 入队/发送路径增加 `validateRuntimeRecord`/`validateRuntimeSession` 可选校验；
+  - Playback visit/legacy 双路径：验证 R3.1a `pb:<stageId>:<visitId>` 与 R3.1 `pb:<stageId>` 迁移路径互不干扰；
+  - Quiz 跨标签页与离线恢复：验证 Dexie 事务 + lease 在并发/刷新下的严格顺序；
+  - Chat 并发旧游标窗口：基于本地调查报告复现同 ID 不同 payload 的冲突场景。
+- **明确不做**：不引入上游 RuntimeStore 直接读写实现；不修改生产代码；不改开关。
+- **验收门禁**：新增测试通过；现有测试全绿；覆盖率不下降。
+- **是否影响 Production**：否（只加测试）。
+- **是否需要单独授权**：否。
+
+### 卡 2：本地专用的 `validateRuntimeRecordInit`/`validateRuntimeSessionInit` 设计（中冲突）
+
+- **目标**：设计并实现对本地 outbox HTTP init body 的写边界校验，只校验客户端实际负责的字段，不校验服务端注入字段（seq、runtimeDslVersion、learnerKey 等）。
+- **范围**：
+  - 明确本地 outbox `create_session` / `append_record` / `set_status` body 中哪些字段由客户端负责；
+  - 设计 `validateRuntimeRecordInit` / `validateRuntimeSessionInit`，与上游 `validateRuntimeRecord` / `validateRuntimeSession` 区分；
+  - 在 outbox 入队或发送前增加可选/强制校验；
   - 不改动 Quiz/Playback/Chat 业务代码。
-- **明确不做**：不改变读源、不引入 Chat RuntimeStore 化、不实施 dual-read。
-- **验收门禁**：新增/现有 outbox 单元测试全绿；tsc 无新增错误。
-- **是否影响 Production**：否（仅增加校验与防御性绑定）。
-- **是否需要单独授权**：否（纯本地防御性增强）。
+- **明确不做**：不直接套用上游完整对象校验；不验证服务端分配字段；不改变读源或 dual-read 状态。
+- **验收门禁**：设计文档通过评审；新增校验测试覆盖非法 body；现有 outbox 测试全绿。
+- **是否影响 Production**：否（仅增加客户端入队校验）。
+- **是否需要单独授权**：否（纯本地防御性增强，不触及服务端 schema）。
 
-### 卡 2：409 RUNTIME_APPEND_CONFLICT 结构化错误适配（中冲突）
+### 卡 3：409 结构化冲突诊断/遥测（中冲突）
 
-- **目标**：在本地 outbox 中解析并利用 `expectedLastSeq`/`actualLastSeq` 做自动对齐或重试决策。
+- **目标**：在本地 outbox 中解析上游式 409 `RUNTIME_APPEND_CONFLICT` 结构化详情（`expectedLastSeq`/`actualLastSeq`），用于诊断与遥测；不自动对齐 seq 或改变重试行为。
 - **范围**：
-  - 服务端返回结构化 409 详情；
-  - 客户端 outbox 在 `extractErrorCode` 基础上扩展解析；
+  - 服务端/客户端协商是否返回结构化 409 详情；
+  - 客户端 outbox 在 `extractErrorCode` 基础上扩展解析，记录遥测；
   - 仅用于 playback/quizAttempt（Chat 不进入 dual-read）。
-- **明确不做**：不改变当前 409 IDEMPOTENCY_CONFLICT skip 行为；不用于 Chat。
-- **验收门禁**：新增 409 冲突解析与对齐测试；shadow 遥测不变形。
-- **是否影响 Production**：否（ shadow-only 阶段可记录遥测，不切换读源）。
-- **是否需要单独授权**：是（涉及服务端错误 schema 变更）。
+- **明确不做**：不改变当前 409 `IDEMPOTENCY_CONFLICT` skip 行为；不自动调整 `expectedLastSeq`；不用于 Chat。
+- **验收门禁**：新增 409 结构化解析与遥测测试；shadow 遥测不变形；不降低现有行为一致性。
+- **是否影响 Production**：否（shadow-only 阶段可记录遥测，不切换读源）。
+- **是否需要单独授权**：是（涉及服务端错误 schema 变更，即使只用于遥测）。
 
 ### 卡 3：吸收上游 Quiz/Playback/Chat 测试用例到本地 outbox（中冲突）
 
@@ -415,7 +504,7 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 - **是否影响 Production**：否（只加测试）。
 - **是否需要单独授权**：否。
 
-### 卡 4：Chat 持久化 outbox / finalized-message 独立设计（高冲突、高价值）
+### 卡 3：Chat 持久化 outbox / finalized-message 独立设计（高冲突、高价值）
 
 - **目标**：基于上游 generation/fold 思路与本地 R3 v1.1 红线，设计 Chat 专用持久化 outbox 或 finalized-message 信号。
 - **范围**：
@@ -433,11 +522,17 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 
 ### A. 上游关键文件与行号
 
-- `packages/@openmaic/storage/src/runtime/http.ts:159-175` — fetch 显式绑定
+- `packages/@openmaic/storage/src/runtime/http.ts:159-175` — fetch 显式绑定（commit `16dad613` #984）
 - `packages/@openmaic/storage/src/runtime/http.ts:76-93` — 删除 optional record anchors 中的 undefined
 - `packages/@openmaic/storage/src/runtime/http.ts:95-128` — Runtime record/session 写边界校验
 - `packages/@openmaic/storage/src/runtime/http.ts:208-227` — 409 `RUNTIME_APPEND_CONFLICT` 结构化错误
 - `packages/@openmaic/storage/src/runtime/types.ts:96-162` — RuntimeStore 接口契约
+- `packages/@openmaic/storage/src/runtime/browser.ts:156-220` — IndexedDB transaction 与 schema
+- `packages/@openmaic/storage/src/runtime/browser.ts:227-338` — Browser createSession / setSessionStatus
+- `packages/@openmaic/storage/src/runtime/browser.ts:349-431` — Browser appendRecord + seq 分配 + CAS
+- `packages/@openmaic/storage/src/runtime/pg.ts:298-327` — PG createSession 唯一约束
+- `packages/@openmaic/storage/src/runtime/pg.ts:368-406` — PG setSessionStatus
+- `packages/@openmaic/storage/src/runtime/pg.ts:413-521` — PG appendRecord + seq 分配 + retry
 - `lib/quiz/runtime.ts:93-97` — Quiz phase order
 - `lib/quiz/runtime.ts:199-216` — per-attempt 内存队列
 - `lib/quiz/runtime.ts:425-431` — `:retry:N` rollover
@@ -466,7 +561,11 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 - `lib/runtime/outbox.ts:169-201` — dequeueOne claim/lease/CAS
 - `lib/runtime/quiz-outbox.ts:127-132` — Quiz 状态机注释
 - `lib/runtime/quiz-outbox.ts:44-51` — runtimeChainHeads 链尾
-- `lib/runtime/playback-outbox.ts:115-153` — playback outbox 入队
+- `lib/runtime/playback-visit.ts:75-108` — claimOrReuseVisitInTx（含 legacy adoption）
+- `lib/runtime/playback-visit.ts:179-192` — checkVisitCompleted 翻转 visit 状态
+- `lib/runtime/playback-visit.ts:198-286` — persistSnapshotWithComplete 完整 visit 入队
+- `lib/runtime/playback-outbox.ts:106-153` — R3.1 旧路径 `shadowPlaybackProgressViaOutbox`（`pb:<stageId>`）
+- `lib/runtime/playback-outbox.ts:155-188` — R3.1a 新路径 `shadowPlaybackProgressVisit`（`pb:<stageId>:<visitId>`）
 - `lib/runtime/shadow-writer.ts:134-154` — Chat cursor localStorage
 - `lib/runtime/shadow-writer.ts:348-432` — shadowOneChatSession（含 IDEMPOTENCY_CONFLICT skip）
 - `lib/utils/chat-storage.ts:22-57` — 本地 Chat 仍保存到 Dexie，fire-and-forget shadow
@@ -481,7 +580,8 @@ e2e/tests/playback-resume-cutover.spec.ts:85-125  验证 cursor 跨页面存活
 
 ## §12 完成自查
 
-- [x] 工作树初始状态干净
+- [x] 工作树初始状态干净（审计分支创建时）
+- [x] 当前工作树除 WorkBuddy 元数据 `.workbuddy/memory/2026-08-19.md` 外无产品代码变更
 - [x] 从 `test/r3-line` HEAD `4579519b` 创建审计分支 `chore/openmaic-v032-runtime-audit`
 - [x] 未修改产品代码
 - [x] 未执行 SQL
