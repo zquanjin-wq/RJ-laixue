@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import { useStageStore } from '@/lib/store';
 import { PENDING_SCENE_ID } from '@/lib/store/stage';
@@ -83,6 +84,8 @@ interface PlaybackChromeRootProps {
   /** Pro Switch click handler — parent coordinates editLock + teardown. */
   readonly onEnterProMode?: () => void;
   readonly readOnlyShare?: boolean;
+  /** Additional course-level action rendered beside the playback header controls. */
+  readonly headerExtra?: ReactNode;
 }
 
 /**
@@ -94,7 +97,7 @@ interface PlaybackChromeRootProps {
  */
 export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackChromeRootProps>(
   function PlaybackChromeRoot(
-    { onRetryOutline, canEnterProMode, onEnterProMode, readOnlyShare = false },
+    { onRetryOutline, canEnterProMode, onEnterProMode, readOnlyShare = false, headerExtra },
     ref,
   ) {
     const { t } = useI18n();
@@ -1318,6 +1321,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
               onToggleEditMode={onEnterProMode}
               hideBackButton={readOnlyShare}
               hideProMode={readOnlyShare}
+              extraControls={headerExtra}
             />
           )}
 

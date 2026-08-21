@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStageStore } from '@/lib/store';
@@ -34,9 +34,12 @@ import { preloadEditor } from '@/lib/edit/preload-editor';
 export function Stage({
   onRetryOutline,
   readOnlyShare = false,
+  playbackHeaderExtra,
 }: {
   onRetryOutline?: (outlineId: string) => Promise<void>;
   readOnlyShare?: boolean;
+  /** Course-level actions rendered in the playback header's action cluster. */
+  playbackHeaderExtra?: ReactNode;
 }) {
   const { mode, setMode, scenes, currentSceneId, generatingOutlines, stage } = useStageStore();
   const currentScene = useStageStore((s) => s.getCurrentScene());
@@ -175,6 +178,7 @@ export function Stage({
               canEnterProMode={isEditable}
               onEnterProMode={toggleHandler}
               readOnlyShare={readOnlyShare}
+              headerExtra={playbackHeaderExtra}
             />
           </motion.div>
         )}

@@ -1,6 +1,7 @@
 'use client';
 
 import { ArrowLeft } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useRouter } from 'next/navigation';
 import type { StageMode } from '@/lib/types/stage';
@@ -13,6 +14,7 @@ interface HeaderProps {
   readonly onToggleEditMode?: () => void;
   readonly hideBackButton?: boolean;
   readonly hideProMode?: boolean;
+  readonly extraControls?: ReactNode;
 }
 
 export function Header({
@@ -22,6 +24,7 @@ export function Header({
   onToggleEditMode,
   hideBackButton = false,
   hideProMode = false,
+  extraControls,
 }: HeaderProps) {
   const { t } = useI18n();
   const router = useRouter();
@@ -68,6 +71,7 @@ export function Header({
           canEdit={canEdit}
           onToggleEditMode={onToggleEditMode}
           hideProMode={hideProMode}
+          extraControls={extraControls}
         />
       </header>
     </>

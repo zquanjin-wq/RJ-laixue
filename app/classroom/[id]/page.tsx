@@ -21,6 +21,7 @@ import type { Scene } from '@/lib/types/stage';
 import type { StageOutlinesRecord } from '@/lib/utils/database';
 import { inspectOrderField } from '@/lib/utils/scene-order';
 import { recordTaskLearningEvent } from '@/lib/utils/task-learning-events';
+import { toast } from 'sonner';
 
 const log = createLogger('Classroom');
 
@@ -137,8 +138,6 @@ export default function ClassroomDetailPage() {
       useStageStore.setState({ mode: 'edit' });
     }
   }, [editorAutoOpen]);
-  const [saveCloudMessage, setSaveCloudMessage] = useState('');
-
   const { loadFromStorage } = useStageStore();
   const generationComplete = useStageStore((s) => s.generationComplete);
   const stageMode = useStageStore((s) => s.mode);
@@ -147,6 +146,29 @@ export default function ClassroomDetailPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const handleSaveToCloud = useCallback(async () => {
+    if (isSavingToCloud) return;
+
+    setIsSavingToCloud(true);
+    const toastId = 'classroom-cloud-save';
+    toast.loading('正在保存到云端，请稍候...', { id: toastId });
+
+    try {
+      await saveStageToCloud(classroomId);
+      toast.success('课程已保存到云端', { id: toastId });
+    } catch (e: unknown) {
+      const saveError = e as { draftSaved?: boolean; message?: string };
+      toast.error(
+        saveError.draftSaved
+          ? '草稿已保存，但语音资源未完成；请重试保存'
+          : `保存失败：${saveError.message || '未知错误'}`,
+        { id: toastId },
+      );
+    } finally {
+      setIsSavingToCloud(false);
+    }
+  }, [classroomId, isSavingToCloud]);
 
   const generationStartedRef = useRef(false);
   const openEventSentRef = useRef(false);
@@ -1015,7 +1037,28 @@ export default function ClassroomDetailPage() {
             </div>
           ) : (
             <>
-              <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
+              <Stage
+                onRetryOutline={retrySingleOutline}
+                readOnlyShare={readOnlyShare}
+                playbackHeaderExtra={
+                  !readOnlyShare &&
+                  !viewMode &&
+                  canSave &&
+                  generationComplete &&
+                  !editorAutoOpen &&
+                  stageMode !== 'edit' ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveToCloud()}
+                      disabled={isSavingToCloud}
+                      title="保存课程到云端"
+                      className="inline-flex h-9 shrink-0 items-center rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isSavingToCloud ? '保存中...' : '保存到云端'}
+                    </button>
+                  ) : null
+                }
+              />
               {taskId && readOnlyShare && (
                 <div className="fixed right-60 top-6 z-50 flex items-center gap-2">
                   {taskToken && (
@@ -1037,54 +1080,6 @@ export default function ClassroomDetailPage() {
                   </button>
                 </div>
               )}
-              {/* 保存到云端 — only exposed in Pro Mode (?editor=1) so a learner opening
-    the same course via /student/courses doesn't see a 'save to cloud'
-    affordance they shouldn't be using. */}
-              {!readOnlyShare &&
-                !viewMode &&
-                canSave &&
-                generationComplete &&
-                !editorAutoOpen &&
-                stageMode !== 'edit' && (
-                  <div className="fixed right-6 top-24 z-50 flex flex-col items-end gap-2">
-                    {saveCloudMessage && (
-                      <div className="rounded-full bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md border">
-                        {saveCloudMessage}
-                      </div>
-                    )}
-
-                    <button
-                      onClick={async () => {
-                        if (isSavingToCloud) return;
-
-                        setIsSavingToCloud(true);
-                        setSaveCloudMessage('正在保存到云端，请稍候...');
-
-                        try {
-                          await saveStageToCloud(classroomId);
-                          setSaveCloudMessage('✅ 保存成功');
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        } catch (e: any) {
-                          setSaveCloudMessage(
-                            e.draftSaved
-                              ? '⚠️ 草稿已保存，语音资源未完成；请重试保存'
-                              : '❌ 保存失败：' + (e.message || '未知错误'),
-                          );
-                        } finally {
-                          setIsSavingToCloud(false);
-                        }
-                      }}
-                      disabled={isSavingToCloud}
-                      className={`rounded-full px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition-opacity ${
-                        isSavingToCloud
-                          ? 'cursor-not-allowed bg-primary/70 opacity-70'
-                          : 'bg-primary hover:opacity-90'
-                      }`}
-                    >
-                      {isSavingToCloud ? '⏳ 保存中...' : '☁️ 保存到云端'}
-                    </button>
-                  </div>
-                )}
             </>
           )}
         </div>

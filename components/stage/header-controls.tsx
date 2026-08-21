@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Archive,
   Download,
@@ -35,6 +35,8 @@ interface HeaderControlsProps {
   readonly canEdit?: boolean;
   readonly onToggleEditMode?: () => void;
   readonly hideProMode?: boolean;
+  /** Course-level action placed beside export/download, never over the lesson body. */
+  readonly extraControls?: ReactNode;
   /**
    * `default` — the chunky h-9 pill used in the playback Stage Header.
    * `compact` — slightly tighter padding for embedding in CommandBar's
@@ -62,6 +64,7 @@ export function HeaderControls({
   canEdit,
   onToggleEditMode,
   hideProMode = false,
+  extraControls,
   variant = 'default',
 }: HeaderControlsProps) {
   const { t } = useI18n();
@@ -234,6 +237,8 @@ export function HeaderControls({
           />
         </label>
       )}
+
+      {extraControls}
 
       {/* Export / Download — lives to the right of the Pro Switch.
           Not a settings function so it does not belong inside the
