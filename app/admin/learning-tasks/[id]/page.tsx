@@ -397,8 +397,9 @@ export default function LearningTaskDetailPage() {
         setError(json.error ?? '归档失败');
         return;
       }
-      if (json.data?.status) {
-        setTask((current) => (current ? { ...current, status: json.data.status } : current));
+      const nextStatus = json.data?.status;
+      if (nextStatus) {
+        setTask((current) => (current ? { ...current, status: nextStatus } : current));
       }
       toast.success(isPublished ? '任务已关闭。' : '任务已归档。');
     } catch {
