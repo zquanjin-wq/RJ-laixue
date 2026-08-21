@@ -85,9 +85,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         'id, student_id, status, progress_percent, mastery_percent, effective_seconds, last_seen_at, completed_scene_count, total_scene_count, assigned_at',
       )
       .eq('task_id', taskId);
-    const learnerIds = (learners ?? []).map((learner) => learner.student_id);
-    const { data: profiles } = learnerIds.length
-      ? await svc.from('students').select('id, name, email').in('id', learnerIds)
+    const profileIds = (learners ?? []).map((learner) => learner.student_id);
+    const { data: profiles } = profileIds.length
+      ? await svc.from('students').select('id, name, email').in('id', profileIds)
       : { data: [] };
     const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
 
