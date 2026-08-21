@@ -174,7 +174,6 @@ export default function ClassroomDetailPage() {
   const openEventSentRef = useRef(false);
   const completeEventSentRef = useRef(false);
   const previousTaskSceneRef = useRef<Scene | null>(null);
-  const taskCompletedRef = useRef(false);
 
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
     onComplete: () => {
@@ -247,10 +246,7 @@ export default function ClassroomDetailPage() {
       const localVoice = localStage?.teacherVoiceConfig as
         | { providerId?: unknown; voiceId?: unknown }
         | undefined;
-      if (
-        localStage?.id === classroomId &&
-        (!localVoice?.providerId || !localVoice?.voiceId)
-      ) {
+      if (localStage?.id === classroomId && (!localVoice?.providerId || !localVoice?.voiceId)) {
         try {
           const response = await fetch(`/api/courses/${encodeURIComponent(classroomId)}`, {
             cache: 'no-store',
@@ -259,10 +255,11 @@ export default function ClassroomDetailPage() {
           const cloudVoice = payload?.data?.data?.stage?.teacherVoiceConfig as
             | { providerId?: unknown; voiceId?: unknown; modelId?: unknown }
             | undefined;
-          if (typeof cloudVoice?.providerId === 'string' && typeof cloudVoice.voiceId === 'string') {
-            useStageStore.getState().updateStage(
-              { teacherVoiceConfig: cloudVoice } as never,
-            );
+          if (
+            typeof cloudVoice?.providerId === 'string' &&
+            typeof cloudVoice.voiceId === 'string'
+          ) {
+            useStageStore.getState().updateStage({ teacherVoiceConfig: cloudVoice } as never);
             log.info('[Classroom] Restored course teacher voice from cloud', {
               stageId: classroomId,
               providerId: cloudVoice.providerId,
@@ -870,37 +867,6 @@ export default function ClassroomDetailPage() {
     };
   }, [classroomId, readOnlyShare, taskId]);
 
-  const completeTask = useCallback(async () => {
-    if (!taskId || taskCompletedRef.current) return;
-    const currentScene = scenes.find((scene) => scene.id === currentSceneId);
-    if (!currentScene) return;
-    taskCompletedRef.current = true;
-    try {
-      await recordTaskLearningEvent({
-        taskId,
-        courseId: classroomId,
-        eventType: 'scene_completed',
-        sceneId: currentScene.id,
-        sceneOrder: currentScene.order,
-      });
-      const result = await recordTaskLearningEvent({
-        taskId,
-        courseId: classroomId,
-        eventType: 'task_completed',
-        sceneId: currentScene.id,
-        sceneOrder: currentScene.order,
-      });
-      if (!result.completed) {
-        taskCompletedRef.current = false;
-        window.alert(
-          '\u8bf7\u5148\u5b8c\u6210\u5fc5\u5b66\u7ae0\u8282\u548c\u5fc5\u505a\u68c0\u67e5\u9898\u3002',
-        );
-      }
-    } catch {
-      taskCompletedRef.current = false;
-    }
-  }, [classroomId, currentSceneId, scenes, taskId]);
-
   useEffect(() => {
     if (
       taskId ||
@@ -1070,14 +1036,6 @@ export default function ClassroomDetailPage() {
                       返回任务列表
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => void completeTask()}
-                    title="完成任务前，需完成任务内的必学课程和必做检查题。"
-                    className="rounded-full bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-                  >
-                    提交完成任务
-                  </button>
                 </div>
               )}
             </>

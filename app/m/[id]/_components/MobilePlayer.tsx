@@ -110,7 +110,6 @@ export function MobilePlayer({
   const hasNext = sceneIndex < chapters.length - 1;
   const openedTaskRef = useRef(false);
   const previousChapterRef = useRef<MobileChapter | null>(null);
-  const completedTaskRef = useRef(false);
 
   const recordTaskEvent = useCallback(
     (eventType: Parameters<typeof recordTaskLearningEvent>[0]['eventType'], chapter = current) => {
@@ -293,35 +292,6 @@ export function MobilePlayer({
     [courseId, chapters, current, taskId],
   );
 
-  const completeTask = useCallback(async () => {
-    if (!taskId || !current || completedTaskRef.current) return;
-    completedTaskRef.current = true;
-    try {
-      await recordTaskLearningEvent({
-        taskId,
-        courseId,
-        eventType: 'scene_completed',
-        sceneId: current.sceneId,
-        sceneOrder: current.order,
-      });
-      const result = await recordTaskLearningEvent({
-        taskId,
-        courseId,
-        eventType: 'task_completed',
-        sceneId: current.sceneId,
-        sceneOrder: current.order,
-      });
-      if (!result.completed) {
-        completedTaskRef.current = false;
-        window.alert(
-          '\u8bf7\u5148\u5b8c\u6210\u5fc5\u5b66\u7ae0\u8282\u548c\u5fc5\u505a\u68c0\u67e5\u9898\u3002',
-        );
-      }
-    } catch {
-      completedTaskRef.current = false;
-    }
-  }, [courseId, current, taskId]);
-
   // === Loading state during hydration ===
   const heading = useMemo(() => {
     if (!hydrated) return '加载中…';
@@ -416,17 +386,6 @@ export function MobilePlayer({
               下一章 ▶
             </button>
           </div>
-          {taskId && !hasNext && (
-            <div className="px-4 pb-3">
-              <button
-                type="button"
-                onClick={() => void completeTask()}
-                className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-              >
-                &#23436;&#25104;&#23398;&#20064;
-              </button>
-            </div>
-          )}
         </div>
       </div>
 

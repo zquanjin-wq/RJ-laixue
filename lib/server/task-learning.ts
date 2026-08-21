@@ -157,11 +157,10 @@ export async function recordTaskLearningEvent(
   const requiredChecks = quizSceneIds(snapshot.snapshot_data);
   const progressPercent =
     allScenes.length === 0 ? 0 : Math.round((completedScenes.size / allScenes.length) * 100);
-  const explicitCompletion = rows.some((row) => row.event_type === 'task_completed');
   const checksReady = requiredChecks.every(
     (sceneId) => submittedChecks.has(sceneId) && reviewedChecks.has(sceneId),
   );
-  const completed = explicitCompletion && completedScenes.size >= allScenes.length && checksReady;
+  const completed = completedScenes.size >= allScenes.length && checksReady;
 
   const results = rows.flatMap((row) => {
     if (row.event_type !== 'check_reviewed') return [] as Array<{ correct?: unknown }>;
@@ -239,7 +238,6 @@ export async function recordTaskLearningEvent(
     last_seen_at: now,
   };
   if (input.eventType === 'task_opened') taskPatch.started_at = now;
-  if (input.eventType === 'task_completed') taskPatch.completion_requested_at = now;
   if (taskCompleted) taskPatch.completed_at = now;
   const { error: updateError } = await svc
     .from('task_learners')

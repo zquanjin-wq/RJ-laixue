@@ -131,7 +131,6 @@ export default function LearningTaskDetailPage() {
   const isDraft = task?.status === 'draft';
   const isPublished = task?.status === 'published';
   const isClosed = task?.status === 'closed';
-  const assignedLearnerIds = new Set(task?.learners.map((learner) => learner.student_id) ?? []);
   const canUpdateLearners = isDraft || isPublished;
 
   const isArchived = task?.status === 'archived';
@@ -613,7 +612,7 @@ export default function LearningTaskDetailPage() {
             <CardDescription>
               {isDraft
                 ? '选择参与本次任务的人员。'
-                : '已发布任务可继续增补人员，已分配人员保留学习记录。'}
+                : '已发布任务也可添加或移除人员；仍在名单中的学习记录会保留。'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -625,9 +624,8 @@ export default function LearningTaskDetailPage() {
                 name: learner.name,
                 email: learner.email,
               }))}
-              lockedIds={isPublished ? Array.from(assignedLearnerIds) : []}
               disabled={!canUpdateLearners}
-              actionLabel={isPublished ? '增补学员' : '调整学员'}
+              actionLabel="调整学员"
             />
             {canUpdateLearners && (
               <Button onClick={saveLearners} disabled={saving}>
@@ -696,7 +694,7 @@ export default function LearningTaskDetailPage() {
             <DialogHeader>
               <DialogTitle>确认发布任务？</DialogTitle>
               <DialogDescription>
-                发布后任务关键字段和学员名单将冻结，并生成学员进入链接。
+                发布后课程组合和任务关键字段将冻结；学员名单仍可随时调整，并生成学员进入链接。
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

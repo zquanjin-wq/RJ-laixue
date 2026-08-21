@@ -23,13 +23,6 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     ? [...new Set(body.learnerIds.filter((id: unknown) => typeof id === 'string'))]
     : [];
 
-  if (learnerIds.length === 0) {
-    return NextResponse.json(
-      { success: false, error: '学员名单不能为空', errorCode: 'INVALID_LEARNERS' },
-      { status: 400 },
-    );
-  }
-
   try {
     const serverSupabase = await getServerSupabase();
     const {
@@ -63,10 +56,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       );
     }
 
-    const rpcName = task.status === 'published' ? 'add_task_learners' : 'replace_task_learners';
-
-    // 使用 RPC 原子替换
-    const { data: rpcResult, error: rpcError } = await svc.rpc(rpcName, {
+    // 草稿与已发布任务都支持调整名单；保留仍在名单中的既有学习记录。
+    const { error: rpcError } = await svc.rpc('replace_task_learners', {
       p_task_id: taskId,
       p_learner_ids: learnerIds,
     });
