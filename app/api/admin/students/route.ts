@@ -1,8 +1,7 @@
 /**
  * GET /api/admin/students
  *
- * 返回学员列表（id, name, email, disabled_at），供教师选择学习任务学员。
- * Admin 返回全部，teacher 返回未禁用的学员（管理员为任务分配用）。
+ * 返回可分配的学员列表（id, name, email），供教师和管理员选择学习对象。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
@@ -41,11 +40,8 @@ export async function GET(request: NextRequest) {
       .from('students')
       .select('id, name, email, disabled_at', { count: 'exact' })
       .order('name', { ascending: true })
-      .range(from, to);
-
-    if (actor.role === 'teacher') {
-      query = query.is('disabled_at', null);
-    }
+      .range(from, to)
+      .is('disabled_at', null);
 
     if (keyword) {
       query = query.or(`name.ilike.%${keyword}%,email.ilike.%${keyword}%`);

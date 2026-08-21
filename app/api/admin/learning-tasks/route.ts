@@ -201,7 +201,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
-            error: `无效或已禁用的学员: ${bad.slice(0, 5).join(', ')}`,
+            error: '所选人员中存在无效或已停用账号，请重新打开人员选择后确认。',
             errorCode: 'INVALID_LEARNERS',
           },
           { status: 400 },

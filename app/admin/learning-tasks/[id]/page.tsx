@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -203,6 +204,7 @@ export default function LearningTaskDetailPage() {
     if (!task) return;
     if (timeError) {
       setError(timeError);
+      toast.error(timeError);
       return;
     }
     setSaving(true);
@@ -220,12 +222,16 @@ export default function LearningTaskDetailPage() {
       });
       const json = (await res.json()) as { success: boolean; error?: string; errorCode?: string };
       if (!res.ok || !json.success) {
-        setError(json.error ?? '保存失败');
+        const message = json.error ?? '保存失败';
+        setError(message);
+        toast.error(message);
         return;
       }
       await load();
+      toast.success('任务信息已保存。');
     } catch {
       setError('网络异常，请重试。');
+      toast.error('网络异常，请重试。');
     } finally {
       setSaving(false);
     }
@@ -243,12 +249,16 @@ export default function LearningTaskDetailPage() {
       });
       const json = (await res.json()) as { success: boolean; error?: string; errorCode?: string };
       if (!res.ok || !json.success) {
-        setError(json.error ?? '更新学员名单失败');
+        const message = json.error ?? '更新学员名单失败';
+        setError(message);
+        toast.error(message);
         return;
       }
       await load();
+      toast.success('学员名单已保存。');
     } catch {
       setError('网络异常，请重试。');
+      toast.error('网络异常，请重试。');
     } finally {
       setSaving(false);
     }
@@ -266,12 +276,16 @@ export default function LearningTaskDetailPage() {
       });
       const json = (await res.json()) as { success: boolean; error?: string };
       if (!res.ok || !json.success) {
-        setError(json.error ?? '保存课程组合失败');
+        const message = json.error ?? '保存课程组合失败';
+        setError(message);
+        toast.error(message);
         return;
       }
       await load();
+      toast.success('课程组合已保存。');
     } catch {
       setError('网络异常，请重试。');
+      toast.error('网络异常，请重试。');
     } finally {
       setSaving(false);
     }
@@ -292,7 +306,9 @@ export default function LearningTaskDetailPage() {
         error?: string;
       };
       if (!res.ok || !json.success) {
-        setError(json.error ?? '发布失败');
+        const message = json.error ?? '发布失败';
+        setError(message);
+        toast.error(message);
         return;
       }
       const token = json.data?.share_token;
@@ -301,8 +317,10 @@ export default function LearningTaskDetailPage() {
         setPublishResult({ shareToken: token, link });
       }
       await load();
+      toast.success('任务已发布。');
     } catch {
       setError('网络异常，请重试。');
+      toast.error('网络异常，请重试。');
     } finally {
       setPublishing(false);
       setConfirmPublish(false);

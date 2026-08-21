@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,24 +49,17 @@ export function CreateTaskForm({ courses }: CreateTaskFormProps) {
     return new Date(dueAt) < new Date(startAt) ? '截止时间不能早于开始时间' : '';
   }, [startAt, dueAt]);
 
-  function toggleLearner(id: string) {
-    setSelectedLearners((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError('');
     if (!courseIds.length || !title.trim()) {
       setError(ERROR_COPY.MISSING_FIELDS);
+      toast.error(ERROR_COPY.MISSING_FIELDS);
       return;
     }
     if (timeError) {
       setError(timeError);
+      toast.error(timeError);
       return;
     }
 
@@ -88,15 +82,18 @@ export function CreateTaskForm({ courses }: CreateTaskFormProps) {
         | { success: false; errorCode: string; error: string };
 
       if (!res.ok || !data.success || !('id' in (data as any).data)) {
-        setError(
-          (data as any).error ?? ERROR_COPY[(data as any).errorCode] ?? '创建任务失败，请重试。',
-        );
+        const message =
+          (data as any).error ?? ERROR_COPY[(data as any).errorCode] ?? '创建任务失败，请重试。';
+        setError(message);
+        toast.error(message);
         return;
       }
 
+      toast.success('任务草稿已保存，正在打开任务详情。');
       router.push(`/admin/learning-tasks/${(data as any).data.id}`);
     } catch {
       setError('网络异常，请重试。');
+      toast.error('网络异常，请重试。');
     } finally {
       setLoading(false);
     }
