@@ -108,6 +108,7 @@ export default function LearningTaskDetailPage() {
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [course, setCourse] = useState<CourseInfo | null>(null);
   const [availableCourses, setAvailableCourses] = useState<CourseInfo[]>([]);
+  const [coursesLoading, setCoursesLoading] = useState(false);
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -140,14 +141,29 @@ export default function LearningTaskDetailPage() {
     return new Date(dueAt) < new Date(startAt) ? '截止时间不能早于开始时间' : '';
   }, [startAt, dueAt]);
 
+  const loadAvailableCourses = useCallback(async () => {
+    setCoursesLoading(true);
+    try {
+      const response = await fetch('/api/courses');
+      const result = (await response.json()) as {
+        success?: boolean;
+        data?: Array<{ id: string; title?: string | null }>;
+      };
+      if (response.ok && result.success) {
+        setAvailableCourses(
+          (result.data ?? []).map((item) => ({ id: item.id, title: item.title ?? null })),
+        );
+      }
+    } finally {
+      setCoursesLoading(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [taskRes, coursesRes] = await Promise.all([
-        fetch(`/api/admin/learning-tasks/${taskId}`),
-        fetch('/api/courses'),
-      ]);
+      const taskRes = await fetch(`/api/admin/learning-tasks/${taskId}`);
       const taskJson = (await taskRes.json()) as {
         success: boolean;
         data?: TaskDetail;
@@ -167,34 +183,18 @@ export default function LearningTaskDetailPage() {
       setDueAt(t.due_at ? formatForDatetimeLocal(t.due_at) : '');
       setSelectedLearners(new Set(t.learners.map((l) => l.student_id)));
       setSelectedCourses(t.courses?.map((item) => item.course_id) ?? [t.course_id]);
+      const primaryCourse = t.courses.find((item) => item.course_id === t.course_id);
+      setCourse({ id: t.course_id, title: primaryCourse?.title ?? null });
 
-      const coursesJson = (await coursesRes.json()) as {
-        success: boolean;
-        data?: Array<{ id: string; title?: string | null }>;
-      };
-      if (coursesRes.ok && coursesJson.success) {
-        setAvailableCourses(
-          (coursesJson.data ?? []).map((item) => ({ id: item.id, title: item.title ?? null })),
-        );
-      }
-
-      // 课程标题
-      const courseRes = await fetch(`/api/courses/${t.course_id}`);
-      const courseJson = (await courseRes.json()) as {
-        success: boolean;
-        data?: { title?: string };
-      };
-      if (courseRes.ok && courseJson.success && courseJson.data) {
-        setCourse({ id: t.course_id, title: courseJson.data.title ?? null });
-      } else {
-        setCourse({ id: t.course_id, title: null });
-      }
+      // 课程选择器只在草稿可编辑时才需要，而且不应阻塞任务信息的首屏展示。
+      if (t.status === 'draft') void loadAvailableCourses();
+      else setAvailableCourses([]);
     } catch {
       setError('网络异常，请重试。');
     } finally {
       setLoading(false);
     }
-  }, [taskId]);
+  }, [loadAvailableCourses, taskId]);
 
   useEffect(() => {
     load();
@@ -220,14 +220,28 @@ export default function LearningTaskDetailPage() {
           dueAt: toTaskTimestamp(dueAt) ?? null,
         }),
       });
-      const json = (await res.json()) as { success: boolean; error?: string; errorCode?: string };
+      const json = (await res.json()) as {
+        success: boolean;
+        error?: string;
+        errorCode?: string;
+      };
       if (!res.ok || !json.success) {
         const message = json.error ?? '保存失败';
         setError(message);
         toast.error(message);
         return;
       }
-      await load();
+      setTask((current) =>
+        current
+          ? {
+              ...current,
+              title: title.trim(),
+              description: description.trim() || null,
+              start_at: toTaskTimestamp(startAt),
+              due_at: toTaskTimestamp(dueAt),
+            }
+          : current,
+      );
       toast.success('任务信息已保存。');
     } catch {
       setError('网络异常，请重试。');
@@ -247,14 +261,23 @@ export default function LearningTaskDetailPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ learnerIds: Array.from(selectedLearners) }),
       });
-      const json = (await res.json()) as { success: boolean; error?: string; errorCode?: string };
+      const json = (await res.json()) as {
+        success: boolean;
+        data?: TaskDetail['learners'];
+        error?: string;
+        errorCode?: string;
+      };
       if (!res.ok || !json.success) {
         const message = json.error ?? '更新学员名单失败';
         setError(message);
         toast.error(message);
         return;
       }
-      await load();
+      if (json.data) {
+        setTask((current) =>
+          current ? { ...current, learners: json.data ?? current.learners } : current,
+        );
+      }
       toast.success('学员名单已保存。');
     } catch {
       setError('网络异常，请重试。');
@@ -274,14 +297,29 @@ export default function LearningTaskDetailPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ courseIds: selectedCourses }),
       });
-      const json = (await res.json()) as { success: boolean; error?: string };
+      const json = (await res.json()) as {
+        success: boolean;
+        data?: TaskDetail['courses'];
+        error?: string;
+      };
       if (!res.ok || !json.success) {
         const message = json.error ?? '保存课程组合失败';
         setError(message);
         toast.error(message);
         return;
       }
-      await load();
+      setTask((current) =>
+        current
+          ? {
+              ...current,
+              courses: (json.data ?? []) as TaskDetail['courses'],
+            }
+          : current,
+      );
+      const primaryCourse = (json.data ?? []).find((item) => item.course_id === task.course_id);
+      if (primaryCourse) {
+        setCourse({ id: task.course_id, title: primaryCourse.title ?? null });
+      }
       toast.success('课程组合已保存。');
     } catch {
       setError('网络异常，请重试。');
@@ -316,7 +354,15 @@ export default function LearningTaskDetailPage() {
         const link = `${window.location.origin}/learn/${token}`;
         setPublishResult({ shareToken: token, link });
       }
-      await load();
+      setTask((current) =>
+        current
+          ? {
+              ...current,
+              status: 'published',
+              share_token: token ?? current.share_token,
+            }
+          : current,
+      );
       toast.success('任务已发布。');
     } catch {
       setError('网络异常，请重试。');
@@ -345,7 +391,10 @@ export default function LearningTaskDetailPage() {
         setError(json.error ?? '归档失败');
         return;
       }
-      await load();
+      if (json.data?.status) {
+        setTask((current) => (current ? { ...current, status: json.data.status } : current));
+      }
+      toast.success(isPublished ? '任务已关闭。' : '任务已归档。');
     } catch {
       setError('网络异常，请重试。');
     } finally {
@@ -486,6 +535,9 @@ export default function LearningTaskDetailPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2 rounded-md border p-3">
+              {isDraft && coursesLoading && (
+                <p className="text-sm text-muted-foreground">正在加载可选课程…</p>
+              )}
               {(isDraft
                 ? availableCourses
                 : task.courses.map((item) => ({ id: item.course_id, title: item.title }))
@@ -585,9 +637,9 @@ export default function LearningTaskDetailPage() {
           </CardContent>
         </Card>
 
-        <TaskReport taskId={task.id} />
+        {!isDraft && <TaskReport taskId={task.id} />}
 
-        <TaskAiBrief taskId={task.id} />
+        {!isDraft && <TaskAiBrief taskId={task.id} />}
 
         <Card className="rounded-lg">
           <CardHeader>

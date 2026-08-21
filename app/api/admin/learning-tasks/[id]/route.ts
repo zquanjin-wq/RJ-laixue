@@ -57,30 +57,34 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       throw error;
     }
 
-    // 附学员名单
-    const { data: learners } = await serviceSupabase
-      .from('task_learners')
-      .select(
-        'id, student_id, status, progress_percent, completed_scene_count, total_scene_count, assigned_at',
-      )
-      .eq('task_id', taskId);
+    // 学员名单与课程包彼此独立，避免串行等待两次数据库往返。
+    const [{ data: learners }, { data: taskCourses }] = await Promise.all([
+      serviceSupabase
+        .from('task_learners')
+        .select(
+          'id, student_id, status, progress_percent, completed_scene_count, total_scene_count, assigned_at',
+        )
+        .eq('task_id', taskId),
+      serviceSupabase
+        .from('task_courses')
+        .select('course_id, position, is_required, snapshot_id')
+        .eq('task_id', taskId)
+        .order('position'),
+    ]);
     const learnerIds = (learners ?? []).map((learner) => learner.student_id);
-    const { data: learnerProfiles } = learnerIds.length
-      ? await serviceSupabase.from('students').select('id, name, email').in('id', learnerIds)
-      : { data: [] };
+    const courseIds = (taskCourses ?? []).map((item) => item.course_id);
+    const [{ data: learnerProfiles }, { data: courses }] = await Promise.all([
+      learnerIds.length
+        ? serviceSupabase.from('students').select('id, name, email').in('id', learnerIds)
+        : Promise.resolve({ data: [] }),
+      courseIds.length
+        ? serviceSupabase.from('courses').select('id, title').in('id', courseIds)
+        : Promise.resolve({ data: [] }),
+    ]);
     const learnerProfileById = new Map(
       (learnerProfiles ?? []).map((learner) => [learner.id, learner]),
     );
 
-    const { data: taskCourses } = await serviceSupabase
-      .from('task_courses')
-      .select('course_id, position, is_required, snapshot_id')
-      .eq('task_id', taskId)
-      .order('position');
-    const courseIds = (taskCourses ?? []).map((item) => item.course_id);
-    const { data: courses } = courseIds.length
-      ? await serviceSupabase.from('courses').select('id, title').in('id', courseIds)
-      : { data: [] };
     const titleById = new Map((courses ?? []).map((course) => [course.id, course.title]));
     return NextResponse.json({
       success: true,

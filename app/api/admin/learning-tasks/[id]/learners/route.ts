@@ -90,10 +90,24 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     // 读取最新名单
     const { data: learners } = await svc
       .from('task_learners')
-      .select('id, student_id, status, assigned_at')
+      .select(
+        'id, student_id, status, progress_percent, completed_scene_count, total_scene_count, assigned_at',
+      )
       .eq('task_id', taskId);
+    const learnerIds = (learners ?? []).map((learner) => learner.student_id);
+    const { data: profiles } = learnerIds.length
+      ? await svc.from('students').select('id, name, email').in('id', learnerIds)
+      : { data: [] };
+    const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
 
-    return NextResponse.json({ success: true, data: learners ?? [] });
+    return NextResponse.json({
+      success: true,
+      data: (learners ?? []).map((learner) => ({
+        ...learner,
+        name: profileById.get(learner.student_id)?.name ?? '未知人员',
+        email: profileById.get(learner.student_id)?.email ?? null,
+      })),
+    });
   } catch (error: unknown) {
     console.error('[admin/learning-tasks/[id]/learners] put failed:', error);
     return NextResponse.json(
