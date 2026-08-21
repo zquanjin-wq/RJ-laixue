@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { LearnerPicker } from '../_components/learner-picker';
+import { LearnerPickerDialog } from '../_components/learner-picker-dialog';
 import { TaskReport } from '@/app/admin/learning-tasks/_components/task-report';
 import { TaskAiBrief } from '@/app/admin/learning-tasks/_components/task-ai-brief';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -547,7 +547,7 @@ export default function LearningTaskDetailPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <LearnerPicker
+            <LearnerPickerDialog
               selectedIds={Array.from(selectedLearners)}
               onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
               initialLearners={task.learners.map((learner) => ({
@@ -557,6 +557,7 @@ export default function LearningTaskDetailPage() {
               }))}
               lockedIds={isPublished ? Array.from(assignedLearnerIds) : []}
               disabled={!canUpdateLearners}
+              actionLabel={isPublished ? '增补学员' : '调整学员'}
             />
             {canUpdateLearners && (
               <Button onClick={saveLearners} disabled={saving}>

@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { toTaskTimestamp } from '@/lib/utils/task-datetime';
-import { LearnerPicker } from './learner-picker';
+import { LearnerPickerDialog } from './learner-picker-dialog';
 
 interface CourseOption {
   id: string;
@@ -215,9 +215,9 @@ export function CreateTaskForm({ courses }: CreateTaskFormProps) {
       <div className="space-y-2">
         <Label>学员名单</Label>
         <p className="text-xs text-muted-foreground">
-          按姓名或邮箱搜索，逐页选择参与本任务的人员。
+          创建时可不选；保存草稿后也可继续添加学习对象。
         </p>
-        <LearnerPicker
+        <LearnerPickerDialog
           selectedIds={Array.from(selectedLearners)}
           onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
         />
