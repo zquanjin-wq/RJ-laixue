@@ -87,6 +87,46 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
     });
   }, [keyword, status, tasks]);
 
+  function exportVisibleTasks() {
+    const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const rows = [
+      [
+        '任务名称',
+        '状态',
+        '课程数',
+        '学员数',
+        '已完成人数',
+        '完成率',
+        '开始时间',
+        '截止时间',
+        '创建时间',
+      ],
+      ...visibleTasks.map((task) => {
+        const completion = task.learnerCount
+          ? Math.round((task.completedCount / task.learnerCount) * 100)
+          : 0;
+        return [
+          task.title || '未命名任务',
+          STATUS_LABEL[task.status],
+          task.courseCount,
+          task.learnerCount,
+          task.completedCount,
+          `${completion}%`,
+          task.startAt ? new Date(task.startAt).toLocaleString('zh-CN') : '',
+          task.dueAt ? new Date(task.dueAt).toLocaleString('zh-CN') : '',
+          new Date(task.createdAt).toLocaleString('zh-CN'),
+        ];
+      }),
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map(quote).join(',')).join('\n')}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = '学习任务汇总.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <section className="space-y-3">
       <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center">
@@ -109,6 +149,9 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
             </Button>
           ))}
         </div>
+        <Button type="button" variant="outline" size="sm" onClick={exportVisibleTasks}>
+          导出当前列表
+        </Button>
       </div>
 
       <p className="text-sm text-muted-foreground">显示 {visibleTasks.length} 个任务</p>
