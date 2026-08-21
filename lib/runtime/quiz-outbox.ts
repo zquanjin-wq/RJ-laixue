@@ -231,6 +231,24 @@ export async function quizSubmittedViaOutbox(
     const headPhase = headEntry ? quizPhaseOf(headEntry) : null;
     const headSucceeded = head ? succIds.has(head.tailEntryId) : false;
 
+    // E：相同 attempt、不同持久化 payload → 抛领域错误，事务零写入。
+    // 必须最先检查：即使 reviewed/completed 已入队（后续阶段活跃），只要存在 active
+    // submitted 且 payload 已漂移，也必须抛 mismatch，而非落入状态 D 幂等空转。
+    if (activeSubmit) {
+      const expected = canonicalSubmitBody(sceneId, envelope.answers);
+      const actual = canonicalizeStoredSubmitBody(activeSubmit.body);
+      if (expected !== actual) throw new QuizSubmissionMismatchError(sessionId);
+    }
+
+    // B：相同提交仍为 pending/sending → 复用现有 entry，不新建、不 supersede、不回写 head。
+    // 同时验证 dependency 一致性：activeSubmit 必须精确依赖 activeCreate。
+    if (activeCreate && activeSubmit) {
+      if (activeSubmit.dependsOnEntryId !== activeCreate.id) {
+        throw new QuizSubmissionCorruptError(sessionId, 'create/submit dependency mismatch');
+      }
+      return 'enqueued' as const;
+    }
+
     // D：chain 已进入后续阶段（reviewed/completed/archived 活跃，或 head 已是后续阶段）→ 幂等空转，不回退
     const laterActive = entries.some((e) => {
       const p = quizPhaseOf(e);
@@ -240,23 +258,19 @@ export async function quizSubmittedViaOutbox(
       return 'enqueued' as const;
     }
 
-    // E：相同 attempt、不同持久化 payload → 抛领域错误，事务零写入
-    if (activeSubmit) {
-      const expected = canonicalSubmitBody(sceneId, envelope.answers);
-      const actual = canonicalizeStoredSubmitBody(activeSubmit.body);
-      if (expected !== actual) throw new QuizSubmissionMismatchError(sessionId);
-    }
-
-    // B：相同提交仍为 pending/sending → 复用现有 entry，不新建、不 supersede、不回写 head
-    if (activeCreate && activeSubmit) {
-      return 'enqueued' as const;
-    }
-
     // F：create/submit 已 dead（被级联终结）→ 不得用同一 attemptId 静默重建
     const terminated = entries.find(
       (e) => (e.semanticKey === createKey || e.semanticKey === submitKey) && e.status === 'dead',
     );
     if (terminated) throw new QuizSubmissionBlockedError(sessionId, 'prior submission terminated');
+
+    // F'：孤立 superseded（无 active successor、无成功凭据、无后续链）→ 禁止同 attempt 重建
+    const orphanSuperseded = entries.find(
+      (e) => (e.semanticKey === createKey || e.semanticKey === submitKey) && e.status === 'superseded',
+    );
+    if (orphanSuperseded && !headSucceeded) {
+      throw new QuizSubmissionBlockedError(sessionId, 'prior submission superseded without successor');
+    }
 
     // C：create/submit 已成功（head 指向的 entry 已持有成功凭据）→ 幂等空转
     if (head && headSucceeded) return 'enqueued' as const;

@@ -8,10 +8,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   quizSubmittedViaOutbox, quizReviewedViaOutbox,
-  QuizSubmissionMismatchError,
+  QuizSubmissionMismatchError, QuizSubmissionBlockedError, QuizSubmissionCorruptError,
 } from '@/lib/runtime/quiz-outbox';
 import { drainQuizOutbox } from '@/lib/runtime/quiz-outbox';
 import { db } from '@/lib/utils/database';
+import type { RuntimeOutboxEntry } from '@/lib/utils/database';
 
 const store: Record<string, string> = {};
 vi.stubGlobal('window', {});
@@ -218,5 +219,100 @@ describe('QC：原子幂等与单调链尾', () => {
     expect(after[0].id).toBe(createId);
     expect(after[1].id).toBe(submitId);
     expect(after[1].dependsOnEntryId).toBe(createId);
+  });
+
+  it('QC9 后续阶段已入队时 payload mismatch 仍抛 QuizSubmissionMismatchError', async () => {
+    on();
+    we('sc1', 'att1', { q1: 'A' }); wr('sc1');
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    await quizReviewedViaOutbox('st1', 'sc1');
+    const outboxBefore = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).count();
+    const succBefore = await db.succeededEntries.count();
+    const headBefore = await db.runtimeChainHeads.get(SESSION_ID);
+
+    // 同一 attempt 下修改持久化 answers
+    store['quizAnswers:sc1'] = JSON.stringify({ v: 1, attemptId: 'att1', answers: { q1: 'B' } });
+
+    await expect(quizSubmittedViaOutbox('st1', 'sc1')).rejects.toThrow(QuizSubmissionMismatchError);
+
+    expect(await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).count()).toBe(outboxBefore);
+    expect(await db.succeededEntries.count()).toBe(succBefore);
+    const headAfter = await db.runtimeChainHeads.get(SESSION_ID);
+    expect(headAfter?.tailEntryId).toBe(headBefore?.tailEntryId);
+  });
+
+  it('QC10 dependency 不一致抛 QuizSubmissionCorruptError 且零写入', async () => {
+    on();
+    we('sc1', 'att1', { q1: 'A' });
+    const nowStr = new Date().toISOString();
+    // 构造 active create 与 active submit，但 submit 依赖另一个 ID
+    const createId = crypto.randomUUID();
+    const submitId = crypto.randomUUID();
+    const foreignId = crypto.randomUUID();
+    await db.runtimeOutbox.bulkPut([
+      { id: createId, kind: 'quizAttempt', op: 'create_session', sessionId: SESSION_ID,
+        semanticKey: 'quiz:create:qa:st1:sc1:att1', body: {}, createdAt: nowStr,
+        attempts: 0, nextAttemptAt: nowStr, status: 'pending', sequence: 1 },
+      { id: submitId, kind: 'quizAttempt', op: 'append_record', sessionId: SESSION_ID,
+        semanticKey: 'quiz:submit:qa:st1:sc1:att1',
+        body: { id: `${SESSION_ID}:submit`, sceneId: 'sc1', payload: { phase: 'submitted', answers: { q1: 'A' } } },
+        createdAt: nowStr, attempts: 0, nextAttemptAt: nowStr, status: 'pending', sequence: 2,
+        dependsOnEntryId: foreignId },
+    ] satisfies RuntimeOutboxEntry[]);
+    const outboxBefore = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).count();
+    const headBefore = await db.runtimeChainHeads.get(SESSION_ID);
+
+    await expect(quizSubmittedViaOutbox('st1', 'sc1')).rejects.toThrow(QuizSubmissionCorruptError);
+
+    expect(await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).count()).toBe(outboxBefore);
+    expect(await db.succeededEntries.count()).toBe(0);
+    const headAfter = await db.runtimeChainHeads.get(SESSION_ID);
+    expect(headAfter?.tailEntryId).toBe(headBefore?.tailEntryId);
+  });
+
+  it('QC11 create/submit 已 dead 时再次 submitted 抛 QuizSubmissionBlockedError', async () => {
+    on();
+    we('sc1', 'att1', { q1: 'A' });
+    await quizSubmittedViaOutbox('st1', 'sc1');
+    const entries = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).sortBy('sequence');
+    const createId = entries[0].id;
+    const outboxBefore = entries.length;
+    await db.runtimeOutbox.update(createId, { status: 'dead' });
+
+    await expect(quizSubmittedViaOutbox('st1', 'sc1')).rejects.toThrow(QuizSubmissionBlockedError);
+
+    // 零新增（仍只有原来的 2 条，其中 create 保持 dead）
+    const after = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).sortBy('sequence');
+    expect(after).toHaveLength(outboxBefore);
+    expect(after[0].status).toBe('dead');
+    expect(await db.succeededEntries.count()).toBe(0);
+  });
+
+  it('QC12 孤立 superseded create/submit 禁止同 attempt 重建', async () => {
+    on();
+    we('sc1', 'att1', { q1: 'A' });
+    const nowStr = new Date().toISOString();
+    // 构造孤立 superseded create + submit（无 active successor、无 head、无成功凭据）
+    const createId = crypto.randomUUID();
+    const submitId = crypto.randomUUID();
+    await db.runtimeOutbox.bulkPut([
+      { id: createId, kind: 'quizAttempt', op: 'create_session', sessionId: SESSION_ID,
+        semanticKey: 'quiz:create:qa:st1:sc1:att1', body: {}, createdAt: nowStr,
+        attempts: 0, nextAttemptAt: nowStr, status: 'superseded', sequence: 1 },
+      { id: submitId, kind: 'quizAttempt', op: 'append_record', sessionId: SESSION_ID,
+        semanticKey: 'quiz:submit:qa:st1:sc1:att1',
+        body: { id: `${SESSION_ID}:submit`, sceneId: 'sc1', payload: { phase: 'submitted', answers: { q1: 'A' } } },
+        createdAt: nowStr, attempts: 0, nextAttemptAt: nowStr, status: 'superseded', sequence: 2,
+        dependsOnEntryId: createId },
+    ] satisfies RuntimeOutboxEntry[]);
+
+    await expect(quizSubmittedViaOutbox('st1', 'sc1')).rejects.toThrow(QuizSubmissionBlockedError);
+
+    // 零新增：仍只有原来的 2 条 superseded，未重建 create/submit
+    const after = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).sortBy('sequence');
+    expect(after.map((e) => e.id).sort()).toEqual([createId, submitId].sort());
+    expect(after.every((e) => e.status === 'superseded')).toBe(true);
+    expect(await db.runtimeChainHeads.get(SESSION_ID)).toBeUndefined();
+    expect(await db.succeededEntries.count()).toBe(0);
   });
 });
