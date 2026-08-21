@@ -154,13 +154,19 @@ export async function recordTaskLearningEvent(
       .map((row) => row.scene_id),
   );
   const allScenes = sceneIds(snapshot.snapshot_data);
+  const requiredSceneIds = new Set(allScenes);
+  const completedRequiredScenes = [...completedScenes].filter((sceneId) =>
+    requiredSceneIds.has(sceneId),
+  );
   const requiredChecks = quizSceneIds(snapshot.snapshot_data);
   const progressPercent =
-    allScenes.length === 0 ? 0 : Math.round((completedScenes.size / allScenes.length) * 100);
+    allScenes.length === 0
+      ? 0
+      : Math.round((completedRequiredScenes.length / allScenes.length) * 100);
   const checksReady = requiredChecks.every(
     (sceneId) => submittedChecks.has(sceneId) && reviewedChecks.has(sceneId),
   );
-  const completed = completedScenes.size >= allScenes.length && checksReady;
+  const completed = completedRequiredScenes.length >= allScenes.length && checksReady;
 
   const results = rows.flatMap((row) => {
     if (row.event_type !== 'check_reviewed') return [] as Array<{ correct?: unknown }>;
@@ -180,7 +186,7 @@ export async function recordTaskLearningEvent(
   const coursePatch: Record<string, unknown> = {
     status: completed ? 'completed' : 'in_progress',
     progress_percent: progressPercent,
-    completed_scene_count: Math.min(completedScenes.size, allScenes.length),
+    completed_scene_count: completedRequiredScenes.length,
     total_scene_count: allScenes.length,
     last_seen_at: now,
     last_scene_id: input.sceneId ?? null,
