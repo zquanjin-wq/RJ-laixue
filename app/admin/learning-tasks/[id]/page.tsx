@@ -242,8 +242,8 @@ export default function LearningTaskDetailPage() {
               ...current,
               title: title.trim(),
               description: description.trim() || null,
-              start_at: toTaskTimestamp(startAt),
-              due_at: toTaskTimestamp(dueAt),
+              start_at: toTaskTimestamp(startAt) ?? null,
+              due_at: toTaskTimestamp(dueAt) ?? null,
             }
           : current,
       );
