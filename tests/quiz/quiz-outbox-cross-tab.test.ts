@@ -47,7 +47,7 @@ const SESSION_ID = 'qa:st1:sc1:att1';
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('Q4：跨标签页竞争', () => {
-  it.fails('Q4.1 同时提交相同 envelope 只产生一条 create', async () => {
+  it('Q4.1 同时提交相同 envelope 只产生一条 create', async () => {
     on();
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
 
@@ -58,7 +58,6 @@ describe('Q4：跨标签页竞争', () => {
     ]);
 
     const creates = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).and((e) => e.op === 'create_session').toArray();
-    // 期望：并发幂等压缩应只产生一条 create；当前存在竞态窗口导致多条 create
     expect(creates).toHaveLength(1);
   });
 
@@ -141,7 +140,7 @@ describe('Q4：跨标签页竞争', () => {
     expect({ gate: 'Q4.5', result: 'PASS' }).toEqual({ gate: 'Q4.5', result: 'PASS' });
   });
 
-  it.fails('Q4.6 chain head 不回退', async () => {
+  it('Q4.6 chain head 不回退', async () => {
     on();
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
@@ -151,11 +150,10 @@ describe('Q4：跨标签页竞争', () => {
     // 再次 submitted 不应回退 tail
     await quizSubmittedViaOutbox('st1', 'sc1');
     const tailAfter = await db.runtimeChainHeads.get(SESSION_ID);
-    // 期望：重复 submitted 应被幂等处理，tail 不回退；当前实现会回退 tail
     expect(tailAfter?.tailEntryId).toBe(tailBefore?.tailEntryId);
   });
 
-  it.fails('Q4.7 不产生两个不同 create session', async () => {
+  it('Q4.7 不产生两个不同 create session', async () => {
     on();
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await Promise.all([
@@ -164,7 +162,6 @@ describe('Q4：跨标签页竞争', () => {
       quizSubmittedViaOutbox('st1', 'sc1'),
     ]);
     const creates = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).and((e) => e.op === 'create_session').toArray();
-    // 期望：并发幂等压缩应只产生一条 create；当前实现会产生多条 create
     expect(creates).toHaveLength(1);
   });
 });

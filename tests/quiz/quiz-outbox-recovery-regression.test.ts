@@ -185,7 +185,7 @@ describe('Q2：刷新恢复', () => {
     expect({ gate: 'Q2.4', result: 'PASS' }).toEqual({ gate: 'Q2.4', result: 'PASS' });
   });
 
-  it.fails('Q2.5 刷新后未发送条目不得生成第二条等价 create/submitted', async () => {
+  it('Q2.5 刷新后未发送条目不得生成第二条等价 create/submitted', async () => {
     on();
     we('sc1', 'att1', { q1: 'A' }); wr('sc1');
     await quizSubmittedViaOutbox('st1', 'sc1');
@@ -194,7 +194,6 @@ describe('Q2：刷新恢复', () => {
     await quizSubmittedViaOutbox('st1', 'sc1');
     const entriesAfter = await db.runtimeOutbox.where('sessionId').equals(SESSION_ID).sortBy('sequence');
 
-    // 期望：未发送条目应幂等复用，不应产生新的 create/submit；当前实现会 supersede 旧条目并新建
     const creates = entriesAfter.filter((e) => e.semanticKey.startsWith('quiz:create'));
     const submits = entriesAfter.filter((e) => e.semanticKey.startsWith('quiz:submit'));
     expect(creates).toHaveLength(1);

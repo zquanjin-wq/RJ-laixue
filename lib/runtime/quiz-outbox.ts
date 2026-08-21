@@ -121,6 +121,79 @@ export async function onQuizOutboxStartup(tabId?: string): Promise<{ ready: bool
   return { ready: true };
 }
 
+// ─── Quiz phase 识别 ─────────────────────────────────────────────────────────
+
+type QuizPhase = 'create' | 'submit' | 'reviewed' | 'completed' | 'archived';
+
+const QUIZ_PHASE_ORDER: Record<QuizPhase, number> = {
+  create: 0,
+  submit: 1,
+  reviewed: 2,
+  completed: 3,
+  archived: 4,
+};
+
+function quizPhaseOf(entry: RuntimeOutboxEntry): QuizPhase | null {
+  const k = entry.semanticKey;
+  if (k.startsWith('quiz:create:')) return 'create';
+  if (k.startsWith('quiz:submit:')) return 'submit';
+  if (k.startsWith('quiz:grade:')) return 'reviewed';
+  if (k.startsWith('quiz:completed:')) return 'completed';
+  if (k.startsWith('quiz:archived:')) return 'archived';
+  return null;
+}
+
+// ─── 领域错误 ────────────────────────────────────────────────────────────────
+
+export class QuizSubmissionMismatchError extends Error {
+  constructor(sessionId: string) {
+    super(`Quiz submission payload mismatch for session ${sessionId}`);
+    this.name = 'QuizSubmissionMismatchError';
+  }
+}
+
+export class QuizSubmissionBlockedError extends Error {
+  constructor(sessionId: string, reason: string) {
+    super(`Quiz submission blocked for session ${sessionId}: ${reason}`);
+    this.name = 'QuizSubmissionBlockedError';
+  }
+}
+
+export class QuizSubmissionCorruptError extends Error {
+  constructor(sessionId: string, detail: string) {
+    super(`Quiz submission corrupt state for session ${sessionId}: ${detail}`);
+    this.name = 'QuizSubmissionCorruptError';
+  }
+}
+
+// ─── canonical payload 比较 ──────────────────────────────────────────────────
+
+/**
+ * 稳定序列化：对象 key 排序后递归序列化，使「key 顺序不同但语义相同」的对象
+ * 得到相同字符串。客户端生成时间（createdAt）不参与比较——它不属于业务身份。
+ */
+function stableStringify(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** 新建 submit 的 canonical 表示：只含业务身份字段（sceneId / phase / answers）。 */
+function canonicalSubmitBody(sceneId: string, answers: unknown): string {
+  return stableStringify({ sceneId, phase: 'submitted', answers });
+}
+
+/** 从已持久化的 submit body 提取业务身份字段后做 canonical 表示（排除 createdAt / id）。 */
+function canonicalizeStoredSubmitBody(body: unknown): string {
+  const b = body as { sceneId?: unknown; payload?: { phase?: unknown; answers?: unknown } };
+  return stableStringify({ sceneId: b?.sceneId, phase: b?.payload?.phase, answers: b?.payload?.answers });
+}
+
 // ─── 公开 API — 严格链 ──────────────────────────────────────────────────────
 
 /**
@@ -129,6 +202,10 @@ export async function onQuizOutboxStartup(tabId?: string): Promise<{ ready: bool
  * - submitted: 入队 create → submit
  * - reviewed: 依赖链尾（submit）入队 grade → set_status completed
  * - retry: 依赖链尾（completed）入队 set_status archived
+ *
+ * R3.2 原子幂等（2026-08-21）：同一个 attempt 的 submitted 幂等判定与入队在
+ * 同一个 Dexie rw 事务内完成，覆盖状态 A–G（见实施报告）。同一 attempt 无论
+ * 刷新、重复调用或跨标签页并发，只拥有一套 create/submitted 链，chain head 不回退。
  */
 export async function quizSubmittedViaOutbox(
   stageId: string | null | undefined, sceneId: string,
@@ -138,19 +215,67 @@ export async function quizSubmittedViaOutbox(
   if (!envelope) return 'skipped';
   const sessionId = `qa:${stageId}:${sceneId}:${envelope.attemptId}`;
   const nowStr = new Date().toISOString();
+  const createKey = `quiz:create:${sessionId}`;
+  const submitKey = `quiz:submit:${sessionId}`;
 
-  return db.transaction('rw', db.runtimeOutbox, db.runtimeChainHeads, async () => {
-    const createId = await _qEnqueue({
-      kind: 'quizAttempt', op: 'create_session', sessionId,
-      semanticKey: `quiz:create:${sessionId}`,
-      body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'active', createdAt: nowStr, updatedAt: nowStr },
+  return db.transaction('rw', db.runtimeOutbox, db.runtimeChainHeads, db.succeededEntries, async () => {
+    const entries = await db.runtimeOutbox.where('sessionId').equals(sessionId).toArray();
+    const head = await db.runtimeChainHeads.get(sessionId);
+    const succIds = new Set((await db.succeededEntries.toArray()).map((s) => s.entryId));
+
+    const isActive = (e: RuntimeOutboxEntry) => e.status === 'pending' || e.status === 'sending';
+    const activeCreate = entries.find((e) => e.semanticKey === createKey && isActive(e));
+    const activeSubmit = entries.find((e) => e.semanticKey === submitKey && isActive(e));
+
+    const headEntry = head ? entries.find((e) => e.id === head.tailEntryId) : undefined;
+    const headPhase = headEntry ? quizPhaseOf(headEntry) : null;
+    const headSucceeded = head ? succIds.has(head.tailEntryId) : false;
+
+    // D：chain 已进入后续阶段（reviewed/completed/archived 活跃，或 head 已是后续阶段）→ 幂等空转，不回退
+    const laterActive = entries.some((e) => {
+      const p = quizPhaseOf(e);
+      return p !== null && QUIZ_PHASE_ORDER[p] >= QUIZ_PHASE_ORDER.reviewed && isActive(e);
     });
-    const submitId = await _qEnqueue({
-      kind: 'quizAttempt', op: 'append_record', sessionId,
-      semanticKey: `quiz:submit:${sessionId}`,
+    if (laterActive || (headPhase !== null && QUIZ_PHASE_ORDER[headPhase] >= QUIZ_PHASE_ORDER.reviewed)) {
+      return 'enqueued' as const;
+    }
+
+    // E：相同 attempt、不同持久化 payload → 抛领域错误，事务零写入
+    if (activeSubmit) {
+      const expected = canonicalSubmitBody(sceneId, envelope.answers);
+      const actual = canonicalizeStoredSubmitBody(activeSubmit.body);
+      if (expected !== actual) throw new QuizSubmissionMismatchError(sessionId);
+    }
+
+    // B：相同提交仍为 pending/sending → 复用现有 entry，不新建、不 supersede、不回写 head
+    if (activeCreate && activeSubmit) {
+      return 'enqueued' as const;
+    }
+
+    // F：create/submit 已 dead（被级联终结）→ 不得用同一 attemptId 静默重建
+    const terminated = entries.find(
+      (e) => (e.semanticKey === createKey || e.semanticKey === submitKey) && e.status === 'dead',
+    );
+    if (terminated) throw new QuizSubmissionBlockedError(sessionId, 'prior submission terminated');
+
+    // C：create/submit 已成功（head 指向的 entry 已持有成功凭据）→ 幂等空转
+    if (head && headSucceeded) return 'enqueued' as const;
+
+    // G：异常部分状态 → 不猜测、不拼接，返回明确错误保留现场
+    if (activeSubmit && !activeCreate) throw new QuizSubmissionCorruptError(sessionId, 'submit without create');
+    if (activeCreate && !activeSubmit) throw new QuizSubmissionCorruptError(sessionId, 'create without submit');
+    if (head && !headEntry && !headSucceeded) throw new QuizSubmissionCorruptError(sessionId, 'chain head points to missing entry');
+
+    // A：全新 attempt → 同事务创建 create + submit，head 指向 submit
+    const createId = await _qEnqueueRaw({
+      op: 'create_session', sessionId, semanticKey: createKey,
+      body: { id: sessionId, kind: 'quizAttempt', stageId, status: 'active', createdAt: nowStr, updatedAt: nowStr },
+    }, undefined, entries);
+    const submitId = await _qEnqueueRaw({
+      op: 'append_record', sessionId, semanticKey: submitKey,
       body: { id: `${sessionId}:submit`, createdAt: nowStr, sceneId,
         payload: { phase: 'submitted' as const, answers: envelope.answers } },
-    }, createId);
+    }, createId, entries);
     // 链尾停在 submit——completed 由 reviewed 触发的 grade 成功后一起 set
     await _setTailInTx(sessionId, submitId);
     return 'enqueued' as const;
@@ -233,6 +358,29 @@ export async function quizRetryViaOutbox(
 }
 
 // ─── 内部辅助 ────────────────────────────────────────────────────────────────
+
+/**
+ * 纯净入队：不 supersede、不去重（幂等判定由调用方在同一 rw 事务内完成）。
+ * sequence 取 entriesInTx 中最大值 +1，避免 superseded/dead 行占位产生间隙。
+ */
+async function _qEnqueueRaw(
+  params: { op: RuntimeOutboxEntry['op']; sessionId: string; semanticKey: string; body: unknown },
+  dependsOnEntryId: string | undefined,
+  entriesInTx: RuntimeOutboxEntry[],
+): Promise<string> {
+  const id = crypto.randomUUID();
+  const nowStr = new Date().toISOString();
+  const lastSeq = entriesInTx.length > 0 ? Math.max(...entriesInTx.map((e) => e.sequence ?? 0)) : 0;
+  const entry: RuntimeOutboxEntry = {
+    id, kind: 'quizAttempt', op: params.op,
+    sessionId: params.sessionId, semanticKey: params.semanticKey,
+    body: params.body, createdAt: nowStr, attempts: 0, nextAttemptAt: nowStr,
+    status: 'pending', sequence: lastSeq + 1, dependsOnEntryId,
+  };
+  await db.runtimeOutbox.put(entry);
+  entriesInTx.push(entry);
+  return id;
+}
 
 async function _qEnqueue(
   params: { kind: 'quizAttempt'; op: RuntimeOutboxEntry['op']; sessionId: string; semanticKey: string; body: unknown },
