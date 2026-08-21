@@ -251,6 +251,46 @@ describe('Gate 1A — 权限基础', () => {
     expect(json.errorCode).toBe('TASK_NOT_DRAFT');
   });
 
+  it('已发布任务不可删除', async () => {
+    getServerSupabaseMock.mockResolvedValue(makeAuth({ id: 'teacher-1' }));
+    const mock = new MockSupabase({
+      profile: { role: 'teacher' },
+      tasks: [{ id: 'task-1', status: 'published', created_by: 'teacher-1' }],
+    });
+    getServiceSupabaseMock.mockReturnValue(mock);
+
+    const { DELETE } = await import('@/app/api/admin/learning-tasks/[id]/route');
+    const req = new Request('http://localhost/api/admin/learning-tasks/task-1', {
+      method: 'DELETE',
+    });
+    const res = await DELETE(req as unknown as NextRequest, {
+      params: Promise.resolve({ id: 'task-1' }),
+    });
+    const json = await jsonOf(res);
+    expect(res.status).toBe(400);
+    expect(json.errorCode).toBe('TASK_NOT_DRAFT');
+  });
+
+  it('owner teacher 可删除草稿任务', async () => {
+    getServerSupabaseMock.mockResolvedValue(makeAuth({ id: 'teacher-1' }));
+    const mock = new MockSupabase({
+      profile: { role: 'teacher' },
+      tasks: [{ id: 'task-1', status: 'draft', created_by: 'teacher-1' }],
+    });
+    getServiceSupabaseMock.mockReturnValue(mock);
+
+    const { DELETE } = await import('@/app/api/admin/learning-tasks/[id]/route');
+    const req = new Request('http://localhost/api/admin/learning-tasks/task-1', {
+      method: 'DELETE',
+    });
+    const res = await DELETE(req as unknown as NextRequest, {
+      params: Promise.resolve({ id: 'task-1' }),
+    });
+    const json = await jsonOf(res);
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+  });
+
   it('空学员名单不可发布 → 400', async () => {
     getServerSupabaseMock.mockResolvedValue(makeAuth({ id: 'teacher-1' }));
     const mock = new MockSupabase({

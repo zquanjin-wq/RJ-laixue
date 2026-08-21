@@ -1,6 +1,7 @@
 /**
  * GET    /api/admin/learning-tasks/[id]  — 任务详情
  * PATCH  /api/admin/learning-tasks/[id]  — 更新草稿任务
+ * DELETE /api/admin/learning-tasks/[id]  — 删除草稿任务
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
@@ -220,6 +221,84 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     console.error('[admin/learning-tasks/[id]] patch failed:', error);
     return NextResponse.json(
       { success: false, error: '更新任务失败', errorCode: 'INTERNAL_ERROR' },
+      { status: 500 },
+    );
+  }
+}
+
+// ============================================================
+// DELETE — 删除草稿任务
+// ============================================================
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const serverSupabase = await getServerSupabase();
+    const {
+      data: { user },
+    } = await serverSupabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: '未登录', errorCode: 'UNAUTHENTICATED' },
+        { status: 401 },
+      );
+    }
+
+    const { id: taskId } = await params;
+    const permission = await checkTaskManagePermission(user.id, taskId);
+    if (!permission.ok) {
+      const errorCode = permission.reason === 'task_not_found' ? 'TASK_NOT_FOUND' : 'FORBIDDEN';
+      return NextResponse.json(
+        {
+          success: false,
+          error: errorCode === 'TASK_NOT_FOUND' ? '任务不存在' : '无权删除此任务',
+          errorCode,
+        },
+        { status: errorCode === 'TASK_NOT_FOUND' ? 404 : 403 },
+      );
+    }
+
+    const serviceSupabase = getServiceSupabase();
+    const { data: task, error: taskError } = await serviceSupabase
+      .from('learning_tasks')
+      .select('id, status')
+      .eq('id', taskId)
+      .single();
+
+    if (taskError || !task) {
+      return NextResponse.json(
+        { success: false, error: '任务不存在', errorCode: 'TASK_NOT_FOUND' },
+        { status: 404 },
+      );
+    }
+    if (task.status !== 'draft') {
+      return NextResponse.json(
+        { success: false, error: '只能删除草稿任务', errorCode: 'TASK_NOT_DRAFT' },
+        { status: 400 },
+      );
+    }
+
+    // 补学建议可能保留着该草稿的引用；删除前解除即可，其余任务明细会级联清理。
+    const { error: suggestionError } = await serviceSupabase
+      .from('ai_intervention_suggestions')
+      .update({ created_task_id: null })
+      .eq('created_task_id', taskId);
+    if (suggestionError && (suggestionError as { code?: string }).code !== '42P01')
+      throw suggestionError;
+
+    const { error: deleteError } = await serviceSupabase
+      .from('learning_tasks')
+      .delete()
+      .eq('id', taskId);
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ success: true, data: { id: taskId } });
+  } catch (error: unknown) {
+    console.error('[admin/learning-tasks/[id]] delete failed:', error);
+    return NextResponse.json(
+      { success: false, error: '删除任务失败', errorCode: 'INTERNAL_ERROR' },
       { status: 500 },
     );
   }

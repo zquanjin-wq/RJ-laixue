@@ -2,6 +2,18 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,9 +49,34 @@ function deadlineLabel(task: TaskListItem, now: number) {
 }
 
 export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
+  const router = useRouter();
   const [keyword, setKeyword] = useState('');
   const [status, setStatus] = useState<'all' | TaskStatus>('all');
+  const [taskToDelete, setTaskToDelete] = useState<TaskListItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const now = Date.now();
+
+  async function deleteDraftTask() {
+    if (!taskToDelete) return;
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/admin/learning-tasks/${taskToDelete.id}`, {
+        method: 'DELETE',
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        toast.error(result.error || '删除任务失败');
+        return;
+      }
+      toast.success('草稿任务已删除。');
+      setTaskToDelete(null);
+      router.refresh();
+    } catch {
+      toast.error('删除任务失败，请稍后重试。');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   const visibleTasks = useMemo(() => {
     const query = keyword.trim().toLowerCase();
@@ -109,9 +146,21 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
                 创建于 {new Date(task.createdAt).toLocaleString('zh-CN')}
               </div>
             </div>
-            <Button asChild variant="outline" size="sm" className="md:flex-shrink-0">
-              <Link href={`/admin/learning-tasks/${task.id}`}>查看详情</Link>
-            </Button>
+            <div className="flex flex-wrap gap-2 md:flex-shrink-0">
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/admin/learning-tasks/${task.id}`}>查看详情</Link>
+              </Button>
+              {task.status === 'draft' && (
+                <>
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/admin/learning-tasks/${task.id}`}>编辑</Link>
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={() => setTaskToDelete(task)}>
+                    删除
+                  </Button>
+                </>
+              )}
+            </div>
           </article>
         );
       })}
@@ -121,6 +170,33 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
           没有符合当前条件的任务。
         </div>
       )}
+
+      <AlertDialog
+        open={Boolean(taskToDelete)}
+        onOpenChange={(open) => !open && setTaskToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除草稿任务？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除“{taskToDelete?.title || '未命名任务'}”及其已选课程、学习对象。此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteDraftTask();
+              }}
+            >
+              {isDeleting ? '删除中…' : '确认删除'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
