@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 type ReportData = {
   overview: {
@@ -38,28 +39,54 @@ type ReportData = {
 
 export function TaskReport({ taskId }: { taskId: string }) {
   const [report, setReport] = useState<ReportData | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(
+    async (showLoading = false) => {
+      if (showLoading) setRefreshing(true);
+      try {
+        const response = await fetch(`/api/admin/learning-tasks/${taskId}/report`);
+        const body = (await response.json()) as { success?: boolean; data?: ReportData };
+        if (response.ok && body.success && body.data) setReport(body.data);
+      } catch {
+        // Keep the last successful report visible while a short network interruption recovers.
+      } finally {
+        if (showLoading) setRefreshing(false);
+      }
+    },
+    [taskId],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/admin/learning-tasks/${taskId}/report`)
-      .then(async (response) => {
-        const body = (await response.json()) as { success?: boolean; data?: ReportData };
-        if (!cancelled && response.ok && body.success && body.data) setReport(body.data);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [taskId]);
+    void load();
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
-  if (!report) return null;
+  if (!report) {
+    return <p className="py-8 text-center text-sm text-muted-foreground">正在加载学习数据…</p>;
+  }
 
   return (
     <section className="space-y-6">
       <Card className="rounded-lg">
         <CardHeader>
-          <CardTitle className="text-base">学习概览</CardTitle>
-          <CardDescription>基于本任务内学员的学习记录实时汇总。</CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">学习概览</CardTitle>
+              <CardDescription>
+                基于本任务内学员的学习记录实时汇总，每 30 秒自动更新。
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void load(true)}
+              disabled={refreshing}
+            >
+              {refreshing ? '刷新中…' : '刷新数据'}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

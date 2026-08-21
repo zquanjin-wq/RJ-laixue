@@ -82,7 +82,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const { data: learners } = await svc
       .from('task_learners')
       .select(
-        'id, student_id, status, progress_percent, completed_scene_count, total_scene_count, assigned_at',
+        'id, student_id, status, progress_percent, mastery_percent, effective_seconds, last_seen_at, completed_scene_count, total_scene_count, assigned_at',
       )
       .eq('task_id', taskId);
     const learnerIds = (learners ?? []).map((learner) => learner.student_id);

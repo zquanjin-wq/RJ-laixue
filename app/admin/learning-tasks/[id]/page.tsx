@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LearnerPickerDialog } from '../_components/learner-picker-dialog';
 import { TaskReport } from '@/app/admin/learning-tasks/_components/task-report';
 import { TaskAiBrief } from '@/app/admin/learning-tasks/_components/task-ai-brief';
@@ -63,6 +64,9 @@ interface TaskDetail {
     progress_percent: number;
     completed_scene_count: number;
     total_scene_count: number;
+    mastery_percent: number | null;
+    effective_seconds: number;
+    last_seen_at: string | null;
     assigned_at: string;
     name: string;
     email: string | null;
@@ -118,6 +122,7 @@ export default function LearningTaskDetailPage() {
   const [startAt, setStartAt] = useState('');
   const [dueAt, setDueAt] = useState('');
   const [selectedLearners, setSelectedLearners] = useState<Set<string>>(new Set());
+  const [rosterDirty, setRosterDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -181,6 +186,7 @@ export default function LearningTaskDetailPage() {
       setStartAt(t.start_at ? formatForDatetimeLocal(t.start_at) : '');
       setDueAt(t.due_at ? formatForDatetimeLocal(t.due_at) : '');
       setSelectedLearners(new Set(t.learners.map((l) => l.student_id)));
+      setRosterDirty(false);
       setSelectedCourses(t.courses?.map((item) => item.course_id) ?? [t.course_id]);
       const primaryCourse = t.courses.find((item) => item.course_id === t.course_id);
       setCourse({ id: t.course_id, title: primaryCourse?.title ?? null });
@@ -277,6 +283,7 @@ export default function LearningTaskDetailPage() {
           current ? { ...current, learners: json.data ?? current.learners } : current,
         );
       }
+      setRosterDirty(false);
       toast.success('学员名单已保存。');
     } catch {
       setError('网络异常，请重试。');
@@ -439,7 +446,7 @@ export default function LearningTaskDetailPage() {
 
   return (
     <main className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="mx-auto max-w-5xl space-y-6">
         <header className="flex items-end justify-between gap-4 flex-wrap">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -466,228 +473,322 @@ export default function LearningTaskDetailPage() {
           </div>
         )}
 
-        <Card className="rounded-lg">
-          <CardHeader>
-            <CardTitle className="text-base">任务信息</CardTitle>
-            <CardDescription>
-              {isDraft ? '草稿状态可编辑标题、说明和时间。' : '已发布任务的关键字段已冻结。'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="title">任务标题</Label>
-              <Input
-                id="title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                disabled={!isDraft}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="description">任务说明</Label>
-              <Textarea
-                id="description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                disabled={!isDraft}
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="startAt">开始时间</Label>
-                <Input
-                  id="startAt"
-                  type="datetime-local"
-                  value={startAt}
-                  onChange={(e) => setStartAt(e.target.value)}
-                  disabled={!isDraft}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="dueAt">截止时间</Label>
-                <Input
-                  id="dueAt"
-                  type="datetime-local"
-                  value={dueAt}
-                  onChange={(e) => setDueAt(e.target.value)}
-                  disabled={!isDraft}
-                />
-              </div>
-            </div>
-            {timeError && <p className="text-xs text-destructive">{timeError}</p>}
-            {isDraft && (
-              <Button onClick={saveDraft} disabled={saving || !!timeError}>
-                {saving ? '保存中...' : '保存修改'}
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+        <Tabs defaultValue="overview" className="space-y-5">
+          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border bg-background p-1">
+            <TabsTrigger value="overview">基本信息</TabsTrigger>
+            <TabsTrigger value="courses">课程内容</TabsTrigger>
+            <TabsTrigger value="learners">学员管理（{task.learners.length}）</TabsTrigger>
+            {!isDraft && <TabsTrigger value="progress">学习进展</TabsTrigger>}
+            {!isDraft && <TabsTrigger value="ai">AI 简报</TabsTrigger>}
+          </TabsList>
 
-        <Card className="rounded-lg">
-          <CardHeader>
-            <CardTitle className="text-base">课程组合</CardTitle>
-            <CardDescription>
-              {isDraft
-                ? '可添加、删除或调整课程顺序；发布后组合会保留发布时版本。'
-                : '本次任务的课程组合与学习顺序。'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2 rounded-md border p-3">
-              {isDraft && coursesLoading && (
-                <p className="text-sm text-muted-foreground">正在加载可选课程…</p>
-              )}
-              {(isDraft
-                ? availableCourses
-                : task.courses.map((item) => ({ id: item.course_id, title: item.title }))
-              ).map((item) => {
-                const selected = selectedCourses.includes(item.id);
-                const index = selectedCourses.indexOf(item.id);
-                const move = (direction: -1 | 1) => {
-                  const nextIndex = index + direction;
-                  if (nextIndex < 0 || nextIndex >= selectedCourses.length) return;
-                  const next = [...selectedCourses];
-                  [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-                  setSelectedCourses(next);
-                };
-                return (
-                  <div key={item.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={selected}
+          <TabsContent value="overview" className="space-y-6">
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-base">任务信息</CardTitle>
+                <CardDescription>
+                  {isDraft ? '草稿状态可编辑标题、说明和时间。' : '已发布任务的关键字段已冻结。'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="title">任务标题</Label>
+                  <Input
+                    id="title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    disabled={!isDraft}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="description">任务说明</Label>
+                  <Textarea
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    disabled={!isDraft}
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="startAt">开始时间</Label>
+                    <Input
+                      id="startAt"
+                      type="datetime-local"
+                      value={startAt}
+                      onChange={(e) => setStartAt(e.target.value)}
                       disabled={!isDraft}
-                      onCheckedChange={() =>
-                        setSelectedCourses(
-                          selected
-                            ? selectedCourses.filter((id) => id !== item.id)
-                            : [...selectedCourses, item.id],
-                        )
-                      }
                     />
-                    <span className="min-w-0 flex-1 truncate">{item.title || '未命名课程'}</span>
-                    {selected && (
-                      <>
-                        <span className="text-xs text-muted-foreground">第 {index + 1} 门</span>
-                        {isDraft && (
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dueAt">截止时间</Label>
+                    <Input
+                      id="dueAt"
+                      type="datetime-local"
+                      value={dueAt}
+                      onChange={(e) => setDueAt(e.target.value)}
+                      disabled={!isDraft}
+                    />
+                  </div>
+                </div>
+                {timeError && <p className="text-xs text-destructive">{timeError}</p>}
+                {isDraft && (
+                  <Button onClick={saveDraft} disabled={saving || !!timeError}>
+                    {saving ? '保存中...' : '保存修改'}
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="courses">
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-base">课程组合</CardTitle>
+                <CardDescription>
+                  {isDraft
+                    ? '可添加、删除或调整课程顺序；发布后组合会保留发布时版本。'
+                    : '本次任务的课程组合与学习顺序。'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-2 rounded-md border p-3">
+                  {isDraft && coursesLoading && (
+                    <p className="text-sm text-muted-foreground">正在加载可选课程…</p>
+                  )}
+                  {(isDraft
+                    ? availableCourses
+                    : task.courses.map((item) => ({ id: item.course_id, title: item.title }))
+                  ).map((item) => {
+                    const selected = selectedCourses.includes(item.id);
+                    const index = selectedCourses.indexOf(item.id);
+                    const move = (direction: -1 | 1) => {
+                      const nextIndex = index + direction;
+                      if (nextIndex < 0 || nextIndex >= selectedCourses.length) return;
+                      const next = [...selectedCourses];
+                      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+                      setSelectedCourses(next);
+                    };
+                    return (
+                      <div key={item.id} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={selected}
+                          disabled={!isDraft}
+                          onCheckedChange={() =>
+                            setSelectedCourses(
+                              selected
+                                ? selectedCourses.filter((id) => id !== item.id)
+                                : [...selectedCourses, item.id],
+                            )
+                          }
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {item.title || '未命名课程'}
+                        </span>
+                        {selected && (
                           <>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={index === 0}
-                              onClick={() => move(-1)}
-                            >
-                              上移
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={index === selectedCourses.length - 1}
-                              onClick={() => move(1)}
-                            >
-                              下移
-                            </Button>
+                            <span className="text-xs text-muted-foreground">第 {index + 1} 门</span>
+                            {isDraft && (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={index === 0}
+                                  onClick={() => move(-1)}
+                                >
+                                  上移
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={index === selectedCourses.length - 1}
+                                  onClick={() => move(1)}
+                                >
+                                  下移
+                                </Button>
+                              </>
+                            )}
                           </>
                         )}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-              {!task.courses.length && !isDraft && (
-                <p className="text-sm text-muted-foreground">暂无课程组合记录。</p>
-              )}
-            </div>
-            {isDraft && (
-              <Button onClick={saveCoursePackage} disabled={saving || !selectedCourses.length}>
-                {saving ? '保存中...' : '保存课程组合'}
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-lg">
-          <CardHeader>
-            <CardTitle className="text-base">学员名单</CardTitle>
-            <CardDescription>
-              {isDraft
-                ? '选择参与本次任务的人员。'
-                : '已发布任务也可添加或移除人员；仍在名单中的学习记录会保留。'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <LearnerPickerDialog
-              selectedIds={Array.from(selectedLearners)}
-              onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
-              initialLearners={task.learners.map((learner) => ({
-                id: learner.student_id,
-                name: learner.name,
-                email: learner.email,
-              }))}
-              disabled={!canUpdateLearners}
-              actionLabel="调整学员"
-            />
-            {canUpdateLearners && (
-              <Button onClick={saveLearners} disabled={saving}>
-                {saving ? '保存中...' : '更新学员名单'}
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        {!isDraft && <TaskReport taskId={task.id} />}
-
-        {!isDraft && <TaskAiBrief taskId={task.id} />}
-
-        <Card className="rounded-lg">
-          <CardHeader>
-            <CardTitle className="text-base">操作</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {isDraft && (
-              <Button onClick={() => setConfirmPublish(true)} disabled={publishing}>
-                {publishing ? '发布中...' : '发布任务'}
-              </Button>
-            )}
-
-            {isPublished && task.share_token && (
-              <div className="space-y-2">
-                <Label>分享链接</Label>
-                <div className="flex gap-2">
-                  <Input
-                    readOnly
-                    value={`${typeof window !== 'undefined' ? window.location.origin : ''}/learn/${task.share_token}`}
-                  />
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      navigator.clipboard
-                        .writeText(`${window.location.origin}/learn/${task.share_token}`)
-                        .then(() => {
-                          setCopied(true);
-                          setTimeout(() => setCopied(false), 2000);
-                        })
-                    }
-                  >
-                    {copied ? '已复制' : '复制'}
-                  </Button>
+                      </div>
+                    );
+                  })}
+                  {!task.courses.length && !isDraft && (
+                    <p className="text-sm text-muted-foreground">暂无课程组合记录。</p>
+                  )}
                 </div>
-              </div>
-            )}
+                {isDraft && (
+                  <Button onClick={saveCoursePackage} disabled={saving || !selectedCourses.length}>
+                    {saving ? '保存中...' : '保存课程组合'}
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-            {(isDraft || isPublished || isClosed) && (
-              <div>
-                <Button
-                  variant={isDraft ? 'ghost' : 'outline'}
-                  onClick={() => setConfirmArchive(true)}
-                  disabled={archiving}
-                >
-                  {isPublished ? '关闭任务' : '归档任务'}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          <TabsContent value="learners">
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-base">学员名单</CardTitle>
+                <CardDescription>
+                  {isDraft
+                    ? '选择参与本次任务的人员。'
+                    : '已发布任务也可添加或移除人员；仍在名单中的学习记录会保留。'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full min-w-[720px] text-left text-sm">
+                    <thead className="border-b bg-muted/40 text-muted-foreground">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">姓名</th>
+                        <th className="px-4 py-3 font-medium">邮箱</th>
+                        <th className="px-4 py-3 font-medium">学习状态</th>
+                        <th className="px-4 py-3 font-medium">进度</th>
+                        <th className="px-4 py-3 font-medium">有效时长</th>
+                        <th className="px-4 py-3 font-medium">最后学习</th>
+                        {canUpdateLearners && <th className="px-4 py-3 font-medium">操作</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {task.learners
+                        .filter((learner) => selectedLearners.has(learner.student_id))
+                        .map((learner) => (
+                          <tr key={learner.id} className="border-b last:border-0">
+                            <td className="px-4 py-3 font-medium">{learner.name}</td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {learner.email ?? '—'}
+                            </td>
+                            <td className="px-4 py-3">{learnerStatusLabel(learner.status)}</td>
+                            <td className="px-4 py-3">{Number(learner.progress_percent ?? 0)}%</td>
+                            <td className="px-4 py-3">
+                              {formatDuration(learner.effective_seconds)}
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {learner.last_seen_at
+                                ? new Date(learner.last_seen_at).toLocaleString('zh-CN')
+                                : '—'}
+                            </td>
+                            {canUpdateLearners && (
+                              <td className="px-4 py-3">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedLearners((current) => {
+                                      const next = new Set(current);
+                                      next.delete(learner.student_id);
+                                      return next;
+                                    });
+                                    setRosterDirty(true);
+                                  }}
+                                >
+                                  移除
+                                </Button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                  {task.learners.filter((learner) => selectedLearners.has(learner.student_id))
+                    .length === 0 && (
+                    <p className="p-4 text-sm text-muted-foreground">暂未添加学员。</p>
+                  )}
+                </div>
+                <LearnerPickerDialog
+                  selectedIds={Array.from(selectedLearners)}
+                  onSelectedIdsChange={(ids) => {
+                    setSelectedLearners(new Set(ids));
+                    setRosterDirty(true);
+                  }}
+                  initialLearners={task.learners.map((learner) => ({
+                    id: learner.student_id,
+                    name: learner.name,
+                    email: learner.email,
+                  }))}
+                  disabled={!canUpdateLearners}
+                  actionLabel={task.learners.length ? '添加或调整学员' : '添加学员'}
+                />
+                {rosterDirty && (
+                  <p className="text-sm text-amber-700">名单已调整，点击保存后生效。</p>
+                )}
+                {canUpdateLearners && (
+                  <Button onClick={saveLearners} disabled={saving}>
+                    {saving ? '保存中...' : '更新学员名单'}
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {!isDraft && (
+            <TabsContent value="progress">
+              <TaskReport taskId={task.id} />
+            </TabsContent>
+          )}
+
+          {!isDraft && (
+            <TabsContent value="ai">
+              <TaskAiBrief taskId={task.id} />
+            </TabsContent>
+          )}
+
+          <TabsContent value="overview">
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-base">操作</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {isDraft && (
+                  <Button onClick={() => setConfirmPublish(true)} disabled={publishing}>
+                    {publishing ? '发布中...' : '发布任务'}
+                  </Button>
+                )}
+
+                {isPublished && task.share_token && (
+                  <div className="space-y-2">
+                    <Label>分享链接</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        readOnly
+                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/learn/${task.share_token}`}
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={() =>
+                          navigator.clipboard
+                            .writeText(`${window.location.origin}/learn/${task.share_token}`)
+                            .then(() => {
+                              setCopied(true);
+                              setTimeout(() => setCopied(false), 2000);
+                            })
+                        }
+                      >
+                        {copied ? '已复制' : '复制'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {(isDraft || isPublished || isClosed) && (
+                  <div>
+                    <Button
+                      variant={isDraft ? 'ghost' : 'outline'}
+                      onClick={() => setConfirmArchive(true)}
+                      disabled={archiving}
+                    >
+                      {isPublished ? '关闭任务' : '归档任务'}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
 
         <Dialog open={confirmPublish} onOpenChange={setConfirmPublish}>
           <DialogContent>
@@ -757,4 +858,22 @@ function formatForDatetimeLocal(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function learnerStatusLabel(status: string) {
+  return (
+    {
+      not_started: '未开始',
+      in_progress: '学习中',
+      completed: '已完成',
+    }[status] ?? status
+  );
+}
+
+function formatDuration(seconds: number | null | undefined) {
+  const value = Number(seconds ?? 0);
+  if (value < 60) return `${value} 秒`;
+  const minutes = Math.floor(value / 60);
+  const rest = value % 60;
+  return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分`;
 }

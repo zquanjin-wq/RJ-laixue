@@ -62,7 +62,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       serviceSupabase
         .from('task_learners')
         .select(
-          'id, student_id, status, progress_percent, completed_scene_count, total_scene_count, assigned_at',
+          'id, student_id, status, progress_percent, mastery_percent, effective_seconds, last_seen_at, completed_scene_count, total_scene_count, assigned_at',
         )
         .eq('task_id', taskId),
       serviceSupabase
