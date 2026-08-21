@@ -59,19 +59,23 @@
 
 以下部分**低冲突，可直接借鉴**：
 
-1. **`lib/video-export/` 纯编译器**：依赖 `@openmaic/dsl`（本地已有，同源）。编译逻辑与本地数据模型解耦，是纯函数，移植风险最低。
-2. **`render-service/` 整套服务**：上游已把渲染服务做成**独立、opt-in、无状态**（`RENDER_SERVICE_URL` 未配置时降级为 ZIP 下载）。这份服务与主 app 通过 HTTP 解耦，几乎可以原样部署（只需配 `RENDER_SERVICE_URL`）。
-3. **`emit-hyperframes/` 的字体/公式/效果发射**：KaTeX、Noto CJK、Inter、聚光/激光的确定性发射是生成文件 + 纯函数，可直接复用。
-4. **安全基线**：`render-service` 的 ZIP 解压 bounds（防 zip bomb）、egress lockdown、上传大小限制，是成熟的防御设计，直接沿用。
+1. **`render-service/` 整套服务（最低冲突）**：上游已把渲染服务做成**独立、opt-in、自包含**（`RENDER_SERVICE_URL` 未配置时降级为 ZIP 下载）。与主 app 通过 HTTP 解耦，本身可整体复制部署（Node 22 + Chromium headless shell + FFmpeg 容器），无需改动主 app。
+2. **`emit-hyperframes/` 的字体/公式发射（生成文件）**：KaTeX 0.16.38（`katex-assets.ts`，20 个 WOFF2）、Noto CJK（`noto-cjk-assets.ts`）、Inter（`inter-font.ts`）是生成文件 + 纯函数，可直接复用。
+3. **`render-service` 的安全基线**：ZIP 解压五重 bounds（entry 数/单条大小/总展开/压缩比/路径穿越，`unzip.ts`）、egress lockdown（`docker-entrypoint.sh` iptables）、上传大小限制，是成熟防御，直接沿用。
+4. **`lib/video-export/` 编译器 + 效果发射（中等冲突，见 §4）**：编译逻辑本身是纯函数，但**依赖本地缺失的 `lib/choreography/`**（聚光/激光 descriptor 与 `resolveActionTimeline` 都在这里），需一起移植。不能只复制 `lib/video-export/` 单目录。
 
 ## 4. 哪些必须按本地架构改写
 
-以下部分**冲突或缺失，必须改写/补写**：
+以下部分**冲突或缺失，必须改写/补写**（逐条经上游文件 import 反查确认）：
 
-1. **`collect.ts` 的媒体解析层（最大冲突点）**：上游 `collect.ts` 依赖 `lib/media/use-asset-url`、`lib/media/resolve-media-ref`、`lib/media/media-task-resolution`、`lib/media/slide-media-slots`、`lib/store/media-generation`。本地 `lib/media/` 结构不同（只有 `media-orchestrator`、`video-providers`、`image-providers`、`video-manifest`、`types`），且 `use-asset-url`/`resolve-media-ref`/`media-task-resolution`/`slide-media-slots` **本地不存在**。必须按本地 media 层重写「mediaRef → 可渲染 blob/URL」的解析，复用本地已有的 `media-orchestrator` 语义。
-2. **鉴权（本地必须补）**：上游 `app/api/export-video/render/route.ts` 和 `download/route.ts` **无显式 auth 校验**（上游默认单用户自部署，仅靠 `clientIdentity` 做可选 per-user 限流）。本地是 admin/teacher/learner 三级 + RLS，必须加 `requireAuthOrTeacher` + `checkCourseReadAccess`，并让 download 链路校验 jobId ↔ 当前用户课程的绑定关系。
-3. **`lib/server/capped-stream.ts`**：上游 render route 依赖 `capBodyStream`（流式限字节上传），本地 `lib/server/` 无此文件，需补。
-4. **`lib/server/render-service.ts` 客户端**：本地有 `proxy-fetch.ts`，但需确认 SSRF guard 与 `RENDER_SERVICE_URL`（内部服务地址）的交互——上游明确该 URL 不走 SSRF guard（`lib/server/render-service.ts` 注释），本地需评估此豁免是否可接受。
+1. **`collect.ts` / `timeline-deps.ts` 的媒体解析层（最大改写点）**：上游依赖本地缺失的 `lib/media/` 7+ 文件——`resolve-media-ref.ts`、`media-task-resolution.ts`、`slide-media-slots.ts`、`resolve-audio-bytes.ts`、`use-asset-url.ts`、`polled-task.ts`、`media-ref.ts`。本地 `lib/media/` 结构不同（`media-orchestrator`/`video-providers`/`image-providers`/`video-manifest`），必须按本地 media 层重写「mediaRef → 可渲染 blob/URL」解析。
+2. **`lib/choreography/` 整个目录缺失**：上游 `passes/timeline.ts` 与 `emit-hyperframes/effects.ts` 依赖它（`resolveActionTimeline`、`spotlight.v1`/`laser.v1` descriptor）。缺它编译器无法工作，必须一起移植。
+3. **`@openmaic/renderer/src/snapshot/` 漂移**：上游有 `measure.ts` + `katex-fonts-embed.ts`，本地只有 `slideToPng`（`snapshot/index.ts`）；且本地 `slideToPng` 是纯 html2canvas-pro 版，上游是 html2canvas-pro + native paint 回退版。`timeline-deps.ts` 依赖 `measureSlideElementGeometry`，本地缺失。
+4. **DSL 契约漂移**：本地 `@openmaic/dsl` 的 `SceneContent = SlideContent | QuizContent`（二元组）；上游把 `InteractiveContent`/`PBLContent` 下沉进 dsl 契约（四元组）。本地 `lib/types/stage.ts` 自己在 app 层定义 interactive/pbl。编译器若按四元组读写 SceneContent，需适配。
+5. **`lib/document-store/` 缺失**：上游 `build-export-zip.ts` 用 `accessDocument(stage.id)` 拿 stage 名；本地只有 `lib/document-bridge/`（无 `accessDocument`），需适配或改从本地 stage store 直接读名。
+6. **`lib/store/video-render.ts` 缺失**：上游渲染生命周期（全局 zustand store，progress 跨菜单存活）本地无，需新写。
+7. **鉴权（本地必须补）**：上游 `app/api/export-video/**` 四个 route 无 per-user/per-course 鉴权，仅靠 `middleware.ts` 的 HMAC `openmaic_access` cookie（部署级共享口令，`ACCESS_CODE` 未设则放行）。本地是 admin/teacher/learner 三级 + RLS，必须加 `requireAuthOrTeacher` + `checkCourseReadAccess` + jobId↔用户绑定。
+8. **`lib/server/capped-stream.ts` 缺失**：上游 render route 依赖 `capBodyStream`（流式限字节上传），本地需补。
 
 ## 5. 是否需要独立 render-service
 
@@ -83,14 +87,20 @@
 
 因此 render-service 必须独立部署（云 VM / 容器服务 / 自建服务器），主 app 通过 `RENDER_SERVICE_URL` 调用。这是本任务唯一的**外部资源**，也是最主要的工程前置项。
 
+**部署细节（影响 V0 目标，需注意）**：
+- 默认 `InMemoryJobStore`（进程内存 Map）+ `LocalDiskArtifactStore`（MP4 留 `/tmp/openmaic-renders` 本地磁盘，**不是 S3**），产物 TTL 30 分钟。S3/Redis 是上游标注的后续 swap 点，尚未实现。
+- **jobId 不持久化**：`jobId` 是 `randomUUID()`，只存浏览器内存的 `lib/store/video-render.ts`（全局 zustand store，跨菜单存活），**无 localStorage/IndexedDB 持久化**，render-service **无 job 列表接口**。因此「关闭页面/刷新后恢复下载」在上游是**不支持的**——服务端渲染继续，但客户端拿不回 jobId（只能等 TTL 过期）。
+
 ## 6. 推荐的 V0 范围
 
 **包含**：
 - 教师导出自己的课程（`requireAuthOrTeacher` + `checkCourseReadAccess` 校验）
 - 输出 MP4
-- 页面关闭后任务继续（job 持久化在 render-service，主 app 轮询）
-- 完成后可回来下载（jobId 查询 + 下载）
 - 文本、图片、音频、字幕、中文字体（Noto CJK）、KaTeX 公式、聚光指示
+
+**V0 目标「页面关闭后继续、完成后回来下载」是本地必须补写的能力**（上游不支持）：
+- 「关闭导出菜单/切场景」上游已支持（`video-render.ts` 全局 store）；
+- 「关闭页面/刷新后回来下载」**上游不支持**（jobId 不持久化、无 job 列表接口）。本地 V0 需补：jobId 落 Supabase（或 localStorage）+ 「我的导出任务」列表 + 完成后下载入口。这是本地相对上游的**净新增**，工作量需计入。
 
 **暂不做**（与任务卡一致）：在线剪辑、多清晰度、学生导出、永久公开分享、自定义片头/水印、多语言重配音。
 
@@ -99,12 +109,13 @@
 ## 7. 分成哪几步实施
 
 1. **P0：独立部署 render-service**（几乎原样复用上游 `render-service/`，配 `RENDER_SERVICE_URL`，跑通 `/health`）。这是 GO 的硬前提。
-2. **P1：移植 `lib/video-export/` 纯编译器 + `emit-hyperframes/`**（低冲突，依赖本地已有 `@openmaic/dsl`），补 `gen:video-export-katex` 生成脚本。
-3. **P2：按本地 media 层改写 `collect.ts`**（最高工作量/风险点），复用本地 `media-orchestrator` + `@openmaic/renderer/snapshot/slideToPng`，产出与上游同构的资产 plan。
-4. **P3：移植 `app/api/export-video/*` + 补鉴权 + 补 `capped-stream`**，接入 `requireAuthOrTeacher`/`checkCourseReadAccess`。
-5. **P4：前端导出对话框 + 入口**（`video-export-dialog.tsx` + `use-render-video.ts` + 下载 ZIP 降级路径），接本地 i18n。
+2. **P1：移植编译链 + 效果发射**：`lib/video-export/` + `emit-hyperframes/` + **`lib/choreography/`**（前者硬依赖后者），补 `gen:video-export-katex` 生成脚本，适配 dsl `SceneContent` 二元组→四元组漂移。
+3. **P2：按本地 media 层改写 `collect.ts` + `timeline-deps.ts`**（最高工作量/风险点）：补齐/适配缺失的 7+ 个 `lib/media/*`、`renderer/snapshot` 的 `measure.ts`，复用本地 `media-orchestrator` + `slideToPng`。
+4. **P3：补写「关页恢复」**：jobId 落 Supabase + 「我的导出任务」列表 + 完成下载入口（上游无此能力，本地净新增）。
+5. **P4：移植 `app/api/export-video/*` + 补鉴权 + 补 `capped-stream`**，接入 `requireAuthOrTeacher`/`checkCourseReadAccess` + jobId↔用户绑定。
+6. **P5：前端导出对话框 + 入口**（`video-export-dialog.tsx` + `use-render-video.ts` + `lib/store/video-render.ts` + 下载 ZIP 降级路径），接本地 i18n。
 
-主要难点集中在 P2（媒体解析改写）和 P0（外部服务部署），其余是可预期的移植工作。
+主要难点集中在 P2（媒体解析改写）、P3（关页恢复净新增）、P0（外部服务部署）。整体移植风险为**中等偏高**：上游缺失依赖的本地闭包较大，不能只复制 `lib/video-export/` 单目录。
 
 ## 8. 是否建议现在开工
 
@@ -117,10 +128,11 @@
 **GO WITH CONDITIONS** —— 满足以下前提后进入本地渲染验证：
 
 1. **独立 render-service 已部署且 `/health` 可达**（Node 22 + Chromium headless shell + FFmpeg 容器，4–10 GiB 内存，egress lockdown 策略明确）；
-2. **鉴权方案已确认**：视频导出的 render/download 链路补齐 `requireAuthOrTeacher` + `checkCourseReadAccess`，并建立 jobId ↔ 课程/用户的绑定校验（上游无鉴权，本地多用户场景不可直接沿用）；
-3. **collect 媒体解析改写的范围已评估**：确认本地 `lib/media/` 与上游媒体解析管线的差异可控，或接受 V0 先以「视频片段显示首帧」缩小改写面。
+2. **鉴权方案已确认**：视频导出的 render/download 链路补齐 `requireAuthOrTeacher` + `checkCourseReadAccess`，并建立 jobId ↔ 课程/用户的绑定校验（上游无 per-user 鉴权，本地多用户场景不可直接沿用）；
+3. **缺失依赖移植范围已评估**：确认 `lib/choreography`、`lib/media/` 7+ 文件、`renderer/snapshot/measure.ts`、`lib/store/video-render.ts`、`lib/document-store`（本地为 `document-bridge`）的本地依赖闭包可控；
+4. **「关页恢复」能力已纳入 V0 范围**：上游 jobId 不持久化，本地需补写 jobId 落库 + 任务列表，这是净新增，需单独评估工作量。
 
-未满足前两条时，结论退化为 **NO-GO（暂缓）**——不应在没有渲染服务与鉴权的情况下启动本地渲染验证。
+未满足前两条时，结论退化为 **NO-GO（暂缓）**——不应在没有渲染服务与鉴权的情况下启动本地渲染验证。整体移植风险为**中等偏高**（非低风险），不能只复制 `lib/video-export/` 单目录。
 
 ---
 
@@ -128,16 +140,19 @@
 
 | 风险 | 上游现状 | 本地必须处理 |
 |---|---|---|
-| 课程权限 | render/download route 无 auth | 加 `requireAuthOrTeacher` + `checkCourseReadAccess` |
-| 私有资源访问 | 课件打包成自包含 ZIP，媒体在浏览器端内联/解析后打包，render-service 不直接访问课程资源（egress lockdown 兜底） | 确认本地媒体 blob 打包路径无外泄 |
+| 课程权限 | render/download route 无 per-user/per-course auth；仅 `middleware.ts` HMAC `openmaic_access` cookie（部署级共享口令，`ACCESS_CODE` 未设则放行） | 加 `requireAuthOrTeacher` + `checkCourseReadAccess` |
+| 私有资源访问 | 课件打包成自包含 ZIP，媒体在浏览器端内联/解析后打包，render-service 不直接访问课程资源（egress lockdown 兜底，渲染零出站） | 确认本地媒体 blob 打包路径无外泄 |
 | 任意 URL / SSRF | render-service egress lockdown（iptables）防 SSRF；`RENDER_SERVICE_URL` 明确不走 SSRF guard（内部服务地址） | 评估 `RENDER_SERVICE_URL` 豁免是否可接受，保留其余 SSRF guard |
-| 下载链接 | download route 直接按 jobId 下载，无 auth | jobId 加用户绑定校验，下载链接私有化 |
-| 上传炸弹 | render-service 解压 bounds（entry 数/大小/压缩比） | 沿用 |
+| 下载链接 | download route 直接按 jobId 下载，无 auth，jobId 无 per-user 绑定 | jobId 加用户绑定校验，下载链接私有化 |
+| 上传炸弹 | render-service 解压五重 bounds（entry 数/单条大小/总展开/压缩比/路径穿越） | 沿用 |
 
 ### 附：证据文件索引
 
 - 本地导出现状：`lib/export/use-export-classroom.ts:43-242`（zip 导出全流程）、`lib/media/video-manifest.ts:9-24`（文生视频 manifest）
-- 上游渲染服务：`render-service/package.json`（`@hyperframes/producer@0.7.60`）、`render-service/README.md`（环境变量、资源画像、安全隔离、HTTP API）
-- 上游编译/收集：`lib/video-export-app/collect.ts`（Dexie 记录 + `slideToPng` + media 解析）、`lib/video-export/emit-hyperframes/`（字体/公式/效果）
-- 上游鉴权缺口：`app/api/export-video/render/route.ts`（POST 无 auth）、`render/[jobId]/download/route.ts`（GET 无 auth）
+- 上游渲染服务：`render-service/package.json`（`@hyperframes/producer@0.7.60`）、`render-service/README.md`（环境变量、资源画像、安全隔离、HTTP API）、`render-service/Dockerfile`（chromium-headless-shell + ffmpeg）
+- 上游编译/收集：`lib/video-export-app/collect.ts`（Dexie 记录 + `slideToPng` + media 解析）、`lib/video-export/emit-hyperframes/`（字体/公式/效果）、`lib/video-export/passes/timeline.ts`（依赖 `lib/choreography`）
+- 上游渲染执行：`render-service/src/render-executor.ts:164-212`（`InProcessExecutor.execute` 调 `@hyperframes/producer`）
+- 上游任务生命周期：`render-service/src/job-store.ts`（InMemoryJobStore）、`render-service/src/artifact-store.ts`（LocalDiskArtifactStore）、`lib/store/video-render.ts`（jobId 仅内存）
+- 上游鉴权缺口：`app/api/export-video/render/route.ts`（POST 无 auth）、`render/[jobId]/download/route.ts`（GET 无 auth）、`middleware.ts:43-64`（HMAC cookie，ACCESS_CODE 未设则放行）
+- 本地缺失硬依赖：`lib/choreography/`、`lib/media/{resolve-media-ref,media-task-resolution,slide-media-slots,resolve-audio-bytes,use-asset-url,polled-task,media-ref}.ts`、`lib/document-store/`、`lib/store/video-render.ts`
 - 本地安全设施：`lib/server/api-guard.ts:60`、`lib/server/course-access.ts:22`、`lib/server/ssrf-guard.ts`、`lib/server/proxy-fetch.ts`
