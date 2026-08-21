@@ -260,6 +260,9 @@ function GenerationPreviewContent() {
 
       // Step 0: Extract uploaded course material if needed
       if (hasPdfToAnalyze) {
+        // Count from the learner's action, including request setup and any
+        // provider-side queueing before the async job ID is returned.
+        const pdfAnalysisStartedAt = Date.now();
         log.debug('=== Generation Preview: Extracting course material ===');
         // 4.5MB 上传限制修复:文件已在选文件阶段直传到 Supabase Storage,
         // 现在只把 storage path 传给 /api/extract-document,
@@ -325,7 +328,6 @@ function GenerationPreviewContent() {
 
         // 2) Poll loop: every 3s until done/failed, with elapsed counter
         let parseResult: any = null;
-        const pollStartMs = Date.now();
         const POLL_INTERVAL_MS = 3_000;
         const MAX_POLL_MS = 20 * 60 * 1_000; // 20 min
 
@@ -337,11 +339,11 @@ function GenerationPreviewContent() {
         };
 
         while (!parseResult) {
-          if (Date.now() - pollStartMs > MAX_POLL_MS) {
+          if (Date.now() - pdfAnalysisStartedAt > MAX_POLL_MS) {
             throw new Error('解析超时，请重试');
           }
 
-          const elapsedSecs = Math.floor((Date.now() - pollStartMs) / 1000);
+          const elapsedSecs = Math.floor((Date.now() - pdfAnalysisStartedAt) / 1000);
           updateProgress(elapsedSecs);
 
           const pollResponse = await fetch('/api/extract-document/poll', {
@@ -815,7 +817,16 @@ function GenerationPreviewContent() {
                           });
                           return;
                         } else if (evt.type === 'error') {
-                          reject(new Error(evt.error));
+                          // The service has already retried empty outline streams.
+                          // Do not expose the provider's English diagnostic to the
+                          // teacher after all attempts are exhausted.
+                          reject(
+                            new Error(
+                              evt.error === 'LLM returned empty response'
+                                ? t('generation.outlineEmptyResponse')
+                                : evt.error,
+                            ),
+                          );
                           return;
                         }
                       } catch (e) {
