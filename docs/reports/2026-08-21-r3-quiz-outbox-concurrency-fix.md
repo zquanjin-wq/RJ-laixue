@@ -89,7 +89,7 @@ quizSubmittedViaOutbox (单个 rw 事务，覆盖 runtimeOutbox + runtimeChainHe
 - 后续阶段不能被 submitted 覆盖：状态 D 直接短路，不回写 head。
 - 并发事务中较旧阶段不能覆盖较新阶段：入队只在「无 active create/submit 且无 head」的状态 A 发生，其余状态零写入。
 - 刷新重入不重置 head：head 由 Dexie 持久化，入队不覆盖已有 head。
-- dead/superseded 不被当作正常新链尾：dead → 抛错，superseded 视为「有更新的活跃条目存在」从而命中 B/D/C。
+- dead/superseded 不被当作正常新链尾：dead → 抛错；superseded 有明确 successor 时按 B/D/C 处理，孤立 superseded 命中 F′。
 - 未按 `updatedAt` 判断更新，全部按真实 entry 的 phase/dependency 判断单调性。
 
 ## 7. Q2.5 / Q4.1 / Q4.6 / Q4.7 转绿证据
