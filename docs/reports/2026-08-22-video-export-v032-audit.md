@@ -59,7 +59,7 @@
 
 以下部分**低冲突，可直接借鉴**：
 
-1. **`render-service/` 整套服务（最低冲突）**：上游已把渲染服务做成**独立、opt-in、自包含**（`RENDER_SERVICE_URL` 未配置时降级为 ZIP 下载）。与主 app 通过 HTTP 解耦，本身可整体复制部署（Node 22 + Chromium headless shell + FFmpeg 容器），无需改动主 app。
+1. **`render-service/` 代码相对自包含（运行环境要求高）**：上游已把渲染服务做成**独立、opt-in**（`RENDER_SERVICE_URL` 未配置时降级为 ZIP 下载），代码与主 app 通过 HTTP 解耦，可整体复制。但其**运行环境要求高**（Node 22 + Chromium headless shell + FFmpeg + 4–10 GiB 内存 + `CAP_NET_ADMIN`），应标记为 **PORT_MANUALLY**，不能当「低风险直接复制」。需先本地跑通 ZIP→MP4 证明可行，再谈外部部署（见 §7）。
 2. **`emit-hyperframes/` 的字体/公式发射（生成文件）**：KaTeX 0.16.38（`katex-assets.ts`，20 个 WOFF2）、Noto CJK（`noto-cjk-assets.ts`）、Inter（`inter-font.ts`）是生成文件 + 纯函数，可直接复用。
 3. **`render-service` 的安全基线**：ZIP 解压五重 bounds（entry 数/单条大小/总展开/压缩比/路径穿越，`unzip.ts`）、egress lockdown（`docker-entrypoint.sh` iptables）、上传大小限制，是成熟防御，直接沿用。
 4. **`lib/video-export/` 编译器 + 效果发射（中等冲突，见 §4）**：编译逻辑本身是纯函数，但**依赖本地缺失的 `lib/choreography/`**（聚光/激光 descriptor 与 `resolveActionTimeline` 都在这里），需一起移植。不能只复制 `lib/video-export/` 单目录。
@@ -74,16 +74,22 @@
 4. **DSL 契约漂移**：本地 `@openmaic/dsl` 的 `SceneContent = SlideContent | QuizContent`（二元组）；上游把 `InteractiveContent`/`PBLContent` 下沉进 dsl 契约（四元组）。本地 `lib/types/stage.ts` 自己在 app 层定义 interactive/pbl。编译器若按四元组读写 SceneContent，需适配。
 5. **`lib/document-store/` 缺失**：上游 `build-export-zip.ts` 用 `accessDocument(stage.id)` 拿 stage 名；本地只有 `lib/document-bridge/`（无 `accessDocument`），需适配或改从本地 stage store 直接读名。
 6. **`lib/store/video-render.ts` 缺失**：上游渲染生命周期（全局 zustand store，progress 跨菜单存活）本地无，需新写。
-7. **鉴权（本地必须补）**：上游 `app/api/export-video/**` 四个 route 无 per-user/per-course 鉴权，仅靠 `middleware.ts` 的 HMAC `openmaic_access` cookie（部署级共享口令，`ACCESS_CODE` 未设则放行）。本地是 admin/teacher/learner 三级 + RLS，必须加 `requireAuthOrTeacher` + `checkCourseReadAccess` + jobId↔用户绑定。
+7. **鉴权（本地必须补，且不能只靠「教师 + 课程读权限」）**：上游 `app/api/export-video/**` 四个 route 无 per-user/per-course 鉴权，仅靠 `middleware.ts` 的 HMAC `openmaic_access` cookie（部署级共享口令，`ACCESS_CODE` 未设则放行）。本地是 admin/teacher/learner 三级 + RLS，且「能读取课程」≠「有权消耗渲染资源」。V0 的授权矩阵必须明确：
+   - **admin**：允许；
+   - **course owner/creator**：允许；
+   - **普通 teacher（非 owner）**：默认拒绝，除非另有授权；
+   - **learner**：拒绝；
+   - **匿名分享用户**：拒绝。
+   POST 创建任务时持久化 `userId`/`courseId`/`sourceRevision`/`jobId`；`status`/`download`/`cancel` 每次都要**重新验证绑定**，不能只凭 jobId。
 8. **`lib/server/capped-stream.ts` 缺失**：上游 render route 依赖 `capBodyStream`（流式限字节上传），本地需补。
 
 ## 5. 是否需要独立 render-service
 
 **需要，且是硬前提。**
 
-`render-service` 需要 Node ≥ 22 + Chromium headless shell + FFmpeg + 4–10 GiB 内存 + `CAP_NET_ADMIN`（egress lockdown），渲染一个 10 分钟视频可耗时数十分钟。**Vercel serverless 无法承载**：
+`render-service` 需要 Node ≥ 22 + Chromium headless shell + FFmpeg + 4–10 GiB 内存 + `CAP_NET_ADMIN`（egress lockdown），渲染一个 10 分钟视频可耗时数十分钟。**Vercel 不适合作为当前主渲染环境**：
 - 函数 `maxDuration` 300s（本地 `vercel.json` 已设 300s），远低于渲染时长；
-- 无 Chromium/FFmpeg 运行时、无持久磁盘（`/tmp` 之外的产物无法保存）、内存受限。
+- 函数时长、内存、包体、临时文件（`/tmp` 之外不可持久）和「长任务」模型都不适合承载这条渲染链——不是简单地「没有 Chromium/FFmpeg 运行时」能概括，而是整个 serverless 执行模型不匹配。
 
 因此 render-service 必须独立部署（云 VM / 容器服务 / 自建服务器），主 app 通过 `RENDER_SERVICE_URL` 调用。这是本任务唯一的**外部资源**，也是最主要的工程前置项。
 
@@ -98,9 +104,15 @@
 - 输出 MP4
 - 文本、图片、音频、字幕、中文字体（Noto CJK）、KaTeX 公式、聚光指示
 
-**V0 目标「页面关闭后继续、完成后回来下载」是本地必须补写的能力**（上游不支持）：
-- 「关闭导出菜单/切场景」上游已支持（`video-render.ts` 全局 store）；
-- 「关闭页面/刷新后回来下载」**上游不支持**（jobId 不持久化、无 job 列表接口）。本地 V0 需补：jobId 落 Supabase（或 localStorage）+ 「我的导出任务」列表 + 完成后下载入口。这是本地相对上游的**净新增**，工作量需计入。
+**V0 目标「页面关闭后继续、完成后回来下载」是本地必须补写的能力**（上游不支持）。仅持久化 jobId 只能解决「刷新找回 ID」，**不能解决服务端重启**（`InMemoryJobStore` 重启丢状态、`LocalDiskArtifactStore` 容器重建丢 MP4、Supabase 里留的 jobId 可能 render-service 已不认识）。既然是面向教师的正式功能，V0 采用**正式方案**（非轻量方案）：
+- 持久化 job registry（render-service 任务状态可恢复或明确失败）；
+- MP4 上传**持久对象存储**（非本地临时磁盘），本地临时文件只作处理中间物；
+- worker 重启后能恢复或明确失败；
+- 主应用保存 `userId`/`courseId`/`sourceRevision`/`jobId`/`outputKey` 绑定；
+- 下载经鉴权或短期签名 URL；
+- 跨设备下载有可靠产物（不依赖 render-service 容器存活）。
+
+这是本地相对上游的**净新增**（上游 `InMemoryJobStore` + `LocalDiskArtifactStore` 都不满足），工作量需计入 V0，不能省略。
 
 **暂不做**（与任务卡一致）：在线剪辑、多清晰度、学生导出、永久公开分享、自定义片头/水印、多语言重配音。
 
@@ -108,18 +120,21 @@
 
 ## 7. 分成哪几步实施
 
-1. **P0：独立部署 render-service**（几乎原样复用上游 `render-service/`，配 `RENDER_SERVICE_URL`，跑通 `/health`）。这是 GO 的硬前提。
-2. **P1：移植编译链 + 效果发射**：`lib/video-export/` + `emit-hyperframes/` + **`lib/choreography/`**（前者硬依赖后者），补 `gen:video-export-katex` 生成脚本，适配 dsl `SceneContent` 二元组→四元组漂移。
-3. **P2：按本地 media 层改写 `collect.ts` + `timeline-deps.ts`**（最高工作量/风险点）：补齐/适配缺失的 7+ 个 `lib/media/*`、`renderer/snapshot` 的 `measure.ts`，复用本地 `media-orchestrator` + `slideToPng`。
-4. **P3：补写「关页恢复」**：jobId 落 Supabase + 「我的导出任务」列表 + 完成下载入口（上游无此能力，本地净新增）。
-5. **P4：移植 `app/api/export-video/*` + 补鉴权 + 补 `capped-stream`**，接入 `requireAuthOrTeacher`/`checkCourseReadAccess` + jobId↔用户绑定。
-6. **P5：前端导出对话框 + 入口**（`video-export-dialog.tsx` + `use-render-video.ts` + `lib/store/video-render.ts` + 下载 ZIP 降级路径），接本地 i18n。
+**实施顺序以「本地渲染证明优先」为原则**：先本地跑通 ZIP→MP4，再谈外部部署，避免「先产生云资源/运维成本，最后才发现本地课件编译不出 render-service 能消费的 ZIP」。
 
-主要难点集中在 P2（媒体解析改写）、P3（关页恢复净新增）、P0（外部服务部署）。整体移植风险为**中等偏高**：上游缺失依赖的本地闭包较大，不能只复制 `lib/video-export/` 单目录。
+1. **S1：本地启动上游 render-service**（PORT_MANUALLY，本地容器/进程，不部署外部资源）——复现 `@hyperframes/producer` 渲染链，确认 Node 22 + Chromium headless shell + FFmpeg 环境可搭建。
+2. **S2：用上游固定 fixture 验证 ZIP → MP4**——不依赖本地课件，先证明 render-service 本身可用。
+3. **S3：移植最小编译闭包**——`lib/video-export/` + `emit-hyperframes/` + `lib/choreography/`，补 `gen:video-export-katex`，适配 dsl `SceneContent` 漂移。
+4. **S4：用本地固定课件生成 ZIP**——按本地 media 层改写 `collect.ts` + `timeline-deps.ts`（补齐 7+ 缺失 `lib/media/*` + `renderer/snapshot/measure.ts`），产出与上游同构的资产 plan。
+5. **S5：本地完成 ZIP → MP4**——打通本地课件 → 编译 → render-service → MP4 的端到端链路。
+6. **S6：基准测试**——内存、耗时、文件大小基线（决定后续资源画像与成本）。
+7. **S7（仅 S1–S6 通过后）**：选择并部署外部容器服务 + 持久 job store + 持久 artifact store + 鉴权 + 关页恢复。
+
+整体移植风险为**中等偏高**：上游缺失依赖的本地闭包较大（`lib/choreography`、`lib/media` 7+ 文件、`renderer/snapshot/measure.ts`、`lib/store/video-render.ts`、`lib/document-store`），不能只复制 `lib/video-export/` 单目录。
 
 ## 8. 是否建议现在开工
 
-建议**有条件开工**。上游实现的完整度和可移植性都较高：纯编译器与渲染服务与本地架构解耦，可复用；但存在两个必须先解决的前置项（独立 render-service 部署、鉴权方案确认）和一个高工作量改写点（collect 媒体解析）。在 render-service 部署条件未落实前，不应进入本地渲染验证。
+建议**有条件开工**，且以「本地渲染证明」为第一步：先在本地容器跑通上游 render-service + fixture ZIP→MP4，再移植编译链 + 本地课件 ZIP→MP4，**全部通过后再部署外部容器**。不先产生云资源/运维成本。前置风险是：render-service 运行环境要求高（Node 22 + Chromium + FFmpeg，PORT_MANUALLY）、鉴权矩阵需明确、collect 媒体解析改写量大。在本地渲染证明未通过前，不应进入外部部署。
 
 ---
 
@@ -127,12 +142,18 @@
 
 **GO WITH CONDITIONS** —— 满足以下前提后进入本地渲染验证：
 
-1. **独立 render-service 已部署且 `/health` 可达**（Node 22 + Chromium headless shell + FFmpeg 容器，4–10 GiB 内存，egress lockdown 策略明确）；
-2. **鉴权方案已确认**：视频导出的 render/download 链路补齐 `requireAuthOrTeacher` + `checkCourseReadAccess`，并建立 jobId ↔ 课程/用户的绑定校验（上游无 per-user 鉴权，本地多用户场景不可直接沿用）；
-3. **缺失依赖移植范围已评估**：确认 `lib/choreography`、`lib/media/` 7+ 文件、`renderer/snapshot/measure.ts`、`lib/store/video-render.ts`、`lib/document-store`（本地为 `document-bridge`）的本地依赖闭包可控；
-4. **「关页恢复」能力已纳入 V0 范围**：上游 jobId 不持久化，本地需补写 jobId 落库 + 任务列表，这是净新增，需单独评估工作量。
+1. **本地渲染证明优先**：先在本地容器跑通上游 render-service + fixture ZIP→MP4，再移植编译链 + 本地课件 ZIP→MP4，全部通过后才部署外部容器。GO 的前提是「render-service 可在目标环境部署」，**不是「已经部署」**。
+2. **鉴权矩阵已确认（owner 权限收紧）**：admin / course owner 允许；普通 teacher 非 owner 默认拒绝；learner / 匿名拒绝。POST 持久化 `userId`/`courseId`/`sourceRevision`/`jobId`，`status`/`download`/`cancel` 每次重新验证绑定，不能只凭 jobId。
+3. **缺失依赖移植范围已评估**：确认 `lib/choreography`、`lib/media/` 7+ 文件、`renderer/snapshot/measure.ts`、`lib/store/video-render.ts`、`lib/document-store`（本地为 `document-bridge`）的本地依赖闭包可控。
+4. **关页恢复采用正式 V0 方案**：持久 job registry + MP4 持久对象存储 + worker 重启恢复（或明确失败）+ 主应用保存 `userId/courseId/jobId/outputKey` 绑定 + 鉴权/短期签名下载。不接受只持久化 jobId 的轻量方案（无法覆盖服务端重启与跨设备下载）。
 
-未满足前两条时，结论退化为 **NO-GO（暂缓）**——不应在没有渲染服务与鉴权的情况下启动本地渲染验证。整体移植风险为**中等偏高**（非低风险），不能只复制 `lib/video-export/` 单目录。
+**验收门禁**（进入外部部署前必须通过）：
+- 本地 fixture ZIP → MP4 成功；
+- 本地固定课件 → ZIP → MP4 端到端成功；
+- 内存/耗时/文件大小基准已记录；
+- **容器重启恢复**：render-service 重启后，持久 job registry 能恢复任务状态或明确失败，持久 artifact store 中已完成的 MP4 仍可下载。
+
+未满足前两条时，结论退化为 **NO-GO（暂缓）**。整体移植风险为**中等偏高**（非低风险），不能只复制 `lib/video-export/` 单目录。
 
 ---
 
@@ -140,7 +161,7 @@
 
 | 风险 | 上游现状 | 本地必须处理 |
 |---|---|---|
-| 课程权限 | render/download route 无 per-user/per-course auth；仅 `middleware.ts` HMAC `openmaic_access` cookie（部署级共享口令，`ACCESS_CODE` 未设则放行） | 加 `requireAuthOrTeacher` + `checkCourseReadAccess` |
+| 课程权限 | render/download route 无 per-user/per-course auth；仅 `middleware.ts` HMAC `openmaic_access` cookie（部署级共享口令，`ACCESS_CODE` 未设则放行） | owner 矩阵：admin / course owner 允许，普通 teacher 非 owner 默认拒绝，learner / 匿名拒绝；POST 持久化 userId/courseId/sourceRevision/jobId，status/download/cancel 每次重验绑定 |
 | 私有资源访问 | 课件打包成自包含 ZIP，媒体在浏览器端内联/解析后打包，render-service 不直接访问课程资源（egress lockdown 兜底，渲染零出站） | 确认本地媒体 blob 打包路径无外泄 |
 | 任意 URL / SSRF | render-service egress lockdown（iptables）防 SSRF；`RENDER_SERVICE_URL` 明确不走 SSRF guard（内部服务地址） | 评估 `RENDER_SERVICE_URL` 豁免是否可接受，保留其余 SSRF guard |
 | 下载链接 | download route 直接按 jobId 下载，无 auth，jobId 无 per-user 绑定 | jobId 加用户绑定校验，下载链接私有化 |
