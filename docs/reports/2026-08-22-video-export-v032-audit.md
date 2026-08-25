@@ -140,7 +140,7 @@
 
 ## 结论
 
-**GO WITH CONDITIONS** —— 满足以下前提后进入本地渲染验证：
+**GO WITH CONDITIONS** —— 现授权进入 S1–S2 本地渲染证明；S1–S6 全部通过后，才允许申请外部部署：
 
 1. **本地渲染证明优先**：先在本地容器跑通上游 render-service + fixture ZIP→MP4，再移植编译链 + 本地课件 ZIP→MP4，全部通过后才部署外部容器。GO 的前提是「render-service 可在目标环境部署」，**不是「已经部署」**。
 2. **鉴权矩阵已确认（owner 权限收紧）**：admin / course owner 允许；普通 teacher 非 owner 默认拒绝；learner / 匿名拒绝。POST 持久化 `userId`/`courseId`/`sourceRevision`/`jobId`，`status`/`download`/`cancel` 每次重新验证绑定，不能只凭 jobId。
