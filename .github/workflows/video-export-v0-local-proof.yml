@@ -223,9 +223,9 @@ jobs:
           cat /tmp/frame0.md5 /tmp/frame36.md5 /tmp/frame71.md5 \
               /tmp/frame-seek-start.md5 /tmp/frame-seek-mid.md5 /tmp/frame-seek-end.md5 > /tmp/framemd5.txt
           cat /tmp/framemd5.txt
-          # 验证：6 个 hash（3 个 n 索引 + 3 个 seek 时间）互不相同 → 至少 4 个唯一值
+          # 验证：6 个 md5 结果（3 个 n 索引 + 3 个 seek 时间）中至少 4 个唯一值
           UNIQUE=$(awk 'NF>0' /tmp/framemd5.txt | sort -u | wc -l)
-          echo "unique frame hashes: $UNIQUE"
+          echo "unique frame hashes (out of 6): $UNIQUE"
           if [ "$UNIQUE" -lt 4 ]; then
             echo "FAIL: animation not detected (frames too similar)"
             exit 1

@@ -1,15 +1,18 @@
-# 视频导出 V0.0 本地渲染证明 — PASSED（v3 验证）
+# 视频导出 V0.0 本地渲染证明 — SIGNED（v3 验证）
 
 - 日期：2026-08-25
-- 分支：`test/video-export-v0-local-proof`（HEAD `5ec3fa724d17e6664df1090df7fbf7fb3a1ad80f`，与远端一致）
+- 分支：`test/video-export-v0-local-proof`（HEAD `8ba0fc551b6f390a65a977ca710f7172b0c1d96a`，与远端一致）
+- 工作树：`D:/WorkBuddy 地界/RJ-laixue-storage-b3`（干净，工作树无 staged/modified，仅未跟踪 `.workbuddy/memory/2026-08-25.md`）
 - 基线：`chore/video-export-v032-audit` HEAD `c41ac51c89674c95778404830561f1e245614dec`
 - 上游基准：`v0.3.2`（commit `673af150`）
+- Report commit：`8ba0fc551b6f390a65a977ca710f7172b0c1d96a`（含 v3 PASSED 修订与本次勘误）
 - GitHub Actions run：`32840296794`（conclusion: success，v3 终态）
 - 历史 runs：
   - `32833881053`：v1，ffprobe 步骤缺 ffmpeg，失败
   - `32834107075`：v2（装 ffmpeg），404 假门禁，cancel/framemd5 未测
   - `32839913348`：v3（404 真门禁 + cancel + framemd5 v1），framemd5 提取失败
   - `32840296794`（本次）：v4（framemd5 修复为 6 次独立调用），**全部 18 步骤 success**
+- V0.0 技术签字：✅ SIGNED（4 项真门禁全过）
 - 状态：**PASSED**（门禁完整、main 处置见 §10）
 
 ---
@@ -19,7 +22,7 @@
 Chromium + FFmpeg + Hyperframes 渲染链**端到端成功**，4 个真门禁（404 真返回、cancel 端到端、framemd5 帧差异、SHA-256 一致性）全部通过。剩余唯一阻塞项是 main 污染处置（PR #5 待签字合并），不影响 V0.0 技术结论。
 
 1. **main 污染**：补强授权要求 workflow 仅合入 test 分支；dispatch 实际需要 workflow 在 default branch 注册，PR #4 把 13 个文件（其中 12 个不属于授权范围）合入 main `4c6f4f06`。已创建 **revert PR #5**（`1937f7ae901bfce873484b7346e3a88bf2b9ff6b`）撤销该合入，**未直接 push main**，等待签字。
-2. **worktree 损坏**：原 `D:/WorkBuddy 地界/RJ-laixue-storage-b2` 因早期 rebase 事故残留 779 个 D 状态文件。已用 `git checkout HEAD -- .` 恢复，并创建全新 worktree **`D:/WorkBuddy 地界/RJ-laixue-storage-b3`** 接替，0 个变更，干净。
+2. **worktree 损坏**：原 `D:/WorkBuddy 地界/RJ-laixue-storage-b2` 因早期 rebase 事故残留 779 个 D 状态文件。已用 `git checkout HEAD -- .` 恢复，并创建全新 worktree **`D:/WorkBuddy 地界/RJ-laixue-storage-b3`** 接替：HEAD `8ba0fc55`，工作树无 staged/modified 变更，仅未跟踪 `.workbuddy/memory/2026-08-25.md`。
 3. **验证门禁弱**：404 是假门禁、cancel 未实测、帧亮度只能证明非全黑不能证明动画发生。
 
 报告已根据上述修正，并扩展了 workflow（404 真门禁、cancel 端到端、framemd5 帧差异）。
@@ -158,7 +161,7 @@ MD5=42ec0ac5372024c975c00b4aa48a4399   ← seek end（第 60 帧附近，duratio
 
 - 原 `D:/WorkBuddy 地界/RJ-laixue-storage-b2` 因早期 `git rebase origin/main` 失败留下 779 个 D 状态（index vs HEAD 不一致）+ 1 个 `.workbuddy` 未跟踪
 - 处置：先 `git checkout HEAD -- .` 把 779 个 D 文件按 HEAD 恢复到工作树；然后用 `git worktree add --detach D:/WorkBuddy 地界/RJ-laixue-storage-b3 test/video-export-v0-local-proof` 创建全新 worktree；原 b2 转为 detached HEAD 保留（保留 commit 对象，仅 worktree 关系脱钩）
-- 当前工作 tree：`D:/WorkBuddy 地界/RJ-laixue-storage-b3`，HEAD `ba1b52fb`，0 个变更
+- 当前工作 tree：`D:/WorkBuddy 地界/RJ-laixue-storage-b3`，HEAD `8ba0fc55`，工作树无 staged/modified，仅未跟踪 `.workbuddy/memory/2026-08-25.md`
 - b2 旧目录保留（commit 链完整），如无用处可后续人工删除
 
 ## 12. 后续处置建议
@@ -177,7 +180,7 @@ MD5=42ec0ac5372024c975c00b4aa48a4399   ← seek end（第 60 帧附近，duratio
 **仍需处置（治理项）**：
 
 1. **PR #5 合并**（撤销 PR #4），main 恢复至 `01952dfd419e1b4a2d674900c019b046d1e96089`
-2. **CI workflow 注册策略**：用 `main-ci` 分支或 sparse-checkout 替代直接合 main
+2. **CI workflow 注册策略**：~~main-ci 分支可注册 workflow_dispatch 不成立~~（手动 workflow 必须存在于 default branch）。改用**未合并 PR 的 `pull_request` CI**（运行结束关闭 PR 即可），避免污染 main
 
 **S3 准备**：技术结论证明渲染链可用，进入 S3（本地固定课件 → ZIP → MP4 端到端）的剩余工作是接入上游 `lib/video-export/` 编译器与本地 `lib/media/` 改写，属于已签字视频导出审计（commit `75463b16`）的 S3 步骤。
 
@@ -202,7 +205,7 @@ MD5=42ec0ac5372024c975c00b4aa48a4399   ← seek end（第 60 帧附近，duratio
 - Branch：`test/video-export-v0-local-proof`
 - Base commit：`c41ac51c89674c95778404830561f1e245614dec`
 - Test commit（v3）：`5ec3fa724d17e6664df1090df7fbf7fb3a1ad80f`
-- Report commit：`(待补)`
+- Report commit：`8ba0fc551b6f390a65a977ca710f7172b0c1d96a`
 - Report：`docs/reports/2026-08-25-video-export-v0-local-proof.md`
 - Docker build：成功（v0.3.2 原版 render-service）
 - Health：200 OK
@@ -216,7 +219,7 @@ MD5=42ec0ac5372024c975c00b4aa48a4399   ← seek end（第 60 帧附近，duratio
 - Upstream source modified：否
 - Cloud operations：无云部署，使用授权的 GitHub Actions runner + 1 天 artifact 保留
 - Cleanup：容器 `docker rm -f render` 已清理
-- 最大遗留风险：①PR #5 待签字合并；②CI workflow 注册策略待定（main-ci 分支 / sparse-checkout）
+- 最大遗留风险：①PR #5 待合并（撤销 PR #4 引入的差异）；②CI workflow 注册策略改用未合并 PR 的 `pull_request` CI
 - Render job：`38b39131-1652-4ddc-b2ff-f2573bd29faf`，status=succeeded，72/72 帧
 - Cancel job：`e9228f4f-7959-4392-b464-b27e0eac1882`，终态 cancelled
 - MP4：64249 bytes，h264 Constrained Baseline，1280×720，24fps，3.0s
