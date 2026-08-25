@@ -13,8 +13,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import JSZip from 'jszip';
 import { compileTwoPageCourse } from '../../scripts/video-mini-compiler/compile.js';
+import { writeTwoPageFixtureZip } from '../../scripts/video-mini-compiler/write-fixture.js';
 import { twoPageSample } from './fixtures.js';
 
 async function unzip(bytes: Uint8Array): Promise<Record<string, string>> {
@@ -87,5 +91,12 @@ describe('mini-compiler ZIP contract (S3 V0.0)', () => {
     expect(html).toContain('tl.set("#scene-2-base", { autoAlpha: 0 }, 0);');
     expect(html).toContain('tl.set("#scene-1-base", { autoAlpha: 0 }, 3.0000);');
     expect(html).toContain('tl.set("#scene-2-base", { autoAlpha: 1 }, 3.0000);');
+  });
+
+  it('writes the fixed fixture ZIP for the render runner', async () => {
+    const outputPath = join(mkdtempSync(join(tmpdir(), 'video-mini-')), 'fixture.zip');
+    await writeTwoPageFixtureZip(outputPath);
+    const entries = await unzip(readFileSync(outputPath));
+    expect(entries['index.html']).toContain('第二页 — 输出资料合同');
   });
 });
