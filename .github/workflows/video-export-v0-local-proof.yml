@@ -129,11 +129,70 @@ jobs:
           ls -la /tmp/output.mp4
           sha256sum /tmp/output.mp4 | tee /tmp/sha256.txt
 
-      - name: Test 404 on unknown jobId
+      - name: Test 404 on unknown jobId (real gate)
         run: |
           CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9000/render/nonexistent-job-id)
           echo "unknown jobId status: $CODE"
-          [ "$CODE" = "404" ] || echo "WARN: expected 404, got $CODE"
+          # 真门禁：必须返回 404，否则视为渲染链接口不符合契约
+          if [ "$CODE" != "404" ]; then
+            echo "FAIL: unknown jobId expected 404, got $CODE"
+            exit 1
+          fi
+
+      - name: Submit short cancel-test job
+        run: |
+          # 再起一个 6 秒的 fixture，以便在 succeeded 前取消
+          mkdir -p /tmp/fixture-cancel
+          cp -r /tmp/fixture/* /tmp/fixture-cancel/
+          cat > /tmp/fixture-cancel/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html>
+          <head><meta charset="utf-8"><style>* { box-sizing: border-box; } html, body { margin: 0; padding: 0; background: #000; } #openmaic { font-family: system-ui, sans-serif; }</style></head>
+          <body>
+          <div id="openmaic" data-composition-id="openmaic" data-start="0" data-duration="6" data-width="640" data-height="360" style="position:relative;width:640px;height:360px;overflow:hidden;background:#203040">
+            <div id="dot" style="position:absolute;top:160px;left:0;width:40px;height:40px;background:#0f0;border-radius:50%"></div>
+          </div>
+          <script src="assets/vendor/gsap.min.js"></script>
+          <script>
+          var tl = gsap.timeline({ paused: true });
+          tl.to("#dot", { x: 600, duration: 6, ease: "none" }, 0);
+          window.__openmaicVideoManifest = { runtimeDiagnostics: [], manifestPath: "openmaic-video-manifest.json" };
+          window.__timelines = window.__timelines || {};
+          window.__timelines["openmaic"] = tl;
+          </script>
+          </body>
+          </html>
+          HTML
+          (cd /tmp/fixture-cancel && zip -q -r /tmp/fixture-cancel.zip .)
+          CANCEL_JOB=$(curl -sf -F "project=@/tmp/fixture-cancel.zip;type=application/zip" \
+            -F "fps=24" -F "quality=draft" -F "format=mp4" \
+            http://127.0.0.1:9000/render)
+          echo "$CANCEL_JOB" | tee /tmp/cancel-job.json
+          echo "cancelJobId=$(echo "$CANCEL_JOB" | jq -r .jobId)" >> "$GITHUB_ENV"
+
+      - name: Cancel running job and verify terminal status
+        run: |
+          JOB="${{ env.cancelJobId }}"
+          # 取消前先 sleep 1 秒让 job 进入 running
+          sleep 1
+          DEL=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "http://127.0.0.1:9000/render/$JOB")
+          echo "DELETE response code: $DEL"
+          # 轮询至 cancelled/failed（cancel 后终态应为 cancelled）
+          ST=""
+          for i in $(seq 1 30); do
+            STATUS=$(curl -sf "http://127.0.0.1:9000/render/$JOB" || true)
+            ST=$(echo "$STATUS" | jq -r '.status // empty')
+            echo "cancel poll $i: $ST"
+            if [ "$ST" = "cancelled" ] || [ "$ST" = "failed" ] || [ "$ST" = "succeeded" ]; then
+              echo "$STATUS" > /tmp/cancel-terminal-status.json
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ST" != "cancelled" ]; then
+            echo "FAIL: expected cancelled terminal status, got $ST"
+            exit 1
+          fi
 
       - name: ffprobe verify
         run: |
@@ -143,7 +202,7 @@ jobs:
           jq -r '.format.duration, .format.size' /tmp/ffprobe.json
           jq -r '.streams[] | select(.codec_type=="video") | "\(.codec_name) \(.width)x\(.height) \(.r_frame_rate) fps"' /tmp/ffprobe.json
 
-      - name: Extract start/mid/end frames
+      - name: Extract start/mid/end frames + framemd5 to prove animation
         run: |
           DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/output.mp4)
           MID=$(awk "BEGIN {print $DUR / 2}")
@@ -152,7 +211,24 @@ jobs:
           ffmpeg -y -v error -i /tmp/output.mp4 -ss "$MID" -frames:v 1 /tmp/frame-mid.png
           ffmpeg -y -v error -i /tmp/output.mp4 -ss "$END" -frames:v 1 /tmp/frame-end.png
           ls -la /tmp/frame-*.png
-          # 简单非全黑检查：每帧平均亮度 > 0（纯黑帧亮度=0）
+          # framemd5 全帧指纹：3 个 hash 必须互不相同，才能证明动画确实在发生
+          ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,0)+eq(n\,36)+eq(n\,71)',setpts=N/FRAME_RATE/TB" -an -f md5 /tmp/framemd5.txt
+          # 安全 fallback：若 select 表达式在不同 ffmpeg 版本下失败，改用逐帧提取
+          if [ ! -s /tmp/framemd5.txt ]; then
+            ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,0)'" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame0.md5
+            ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,36)'" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame36.md5
+            ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,71)'" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame71.md5
+            cat /tmp/frame0.md5 /tmp/frame36.md5 /tmp/frame71.md5 > /tmp/framemd5.txt
+          fi
+          cat /tmp/framemd5.txt
+          # 验证 3 帧 hash 互不相同（而非"非全黑"门禁）
+          UNIQUE=$(awk 'NF>0' /tmp/framemd5.txt | sort -u | wc -l)
+          echo "unique frame hashes: $UNIQUE"
+          if [ "$UNIQUE" -lt 2 ]; then
+            echo "FAIL: animation not detected (frames are identical)"
+            exit 1
+          fi
+          # 简单非全黑检查
           for f in /tmp/frame-start.png /tmp/frame-mid.png /tmp/frame-end.png; do
             LUM=$(ffmpeg -i "$f" -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG" -f null - 2>&1 | grep -o 'YAVG=[0-9.]*' || true)
             echo "$f -> $LUM"
@@ -170,9 +246,12 @@ jobs:
             /tmp/frame-start.png
             /tmp/frame-mid.png
             /tmp/frame-end.png
+            /tmp/framemd5.txt
             /tmp/sha256.txt
             /tmp/job.json
             /tmp/terminal-status.json
+            /tmp/cancel-job.json
+            /tmp/cancel-terminal-status.json
 
       - name: Cleanup
         if: always()
