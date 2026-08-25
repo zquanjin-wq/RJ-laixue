@@ -1,0 +1,175 @@
+name: video-export-v0-local-proof
+
+# V0.0 本地渲染证明：用 GitHub 临时 Linux runner 验证上游 v0.3.2 render-service
+# 的 Chromium + FFmpeg + Hyperframes 渲染链（ZIP → MP4）。
+#
+# 安全边界：仅手动触发（workflow_dispatch），不使用任何 Production/Supabase/
+# Vercel/课程数据，不读取 secrets，fixture 为非业务最小示例，不部署服务，
+# 不开放公网端口，不执行 SQL，不修改环境变量，产物仅作临时 Actions artifact（保留 1 天）。
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  render-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout upstream OpenMAIC v0.3.2 (render-service source)
+        run: |
+          git clone --depth 1 --branch v0.3.2 https://github.com/THU-MAIC/OpenMAIC.git /tmp/upstream
+          echo "=== render-service 目录确认 ==="
+          ls -la /tmp/upstream/render-service
+
+      - name: Prepare minimal Hyperframes fixture
+        run: |
+          mkdir -p /tmp/fixture/assets/vendor
+          # 从上游 vendored 资产复制 GSAP（渲染时无 CDN，必须本地内联）
+          cp /tmp/upstream/public/vendor/gsap.min.js /tmp/fixture/assets/vendor/gsap.min.js
+
+          cat > /tmp/fixture/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html>
+          <head>
+          <meta charset="utf-8">
+          <style>
+            * { box-sizing: border-box; }
+            html, body { margin: 0; padding: 0; background: #000; }
+            #openmaic { font-family: system-ui, sans-serif; }
+          </style>
+          </head>
+          <body>
+          <div id="openmaic" data-composition-id="openmaic" data-start="0" data-duration="3" data-width="1280" data-height="720" style="position:relative;width:1280px;height:720px;overflow:hidden;background:#102030">
+            <div id="box" style="position:absolute;top:260px;left:0;width:200px;height:200px;background:#ff5722;border-radius:16px"></div>
+            <div id="label" style="position:absolute;top:60px;left:0;width:1280px;text-align:center;color:#fff;font-size:48px">OpenMAIC render-service proof</div>
+          </div>
+          <script src="assets/vendor/gsap.min.js"></script>
+          <script>
+          var tl = gsap.timeline({ paused: true });
+          tl.to("#box", { x: 1080, duration: 3, ease: "none" }, 0);
+          tl.fromTo("#label", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 0);
+          window.__openmaicVideoManifest = { runtimeDiagnostics: [], manifestPath: "openmaic-video-manifest.json" };
+          window.__timelines = window.__timelines || {};
+          window.__timelines["openmaic"] = tl;
+          </script>
+          </body>
+          </html>
+          HTML
+
+          cat > /tmp/fixture/openmaic-video-manifest.json <<'JSON'
+          { "note": "minimal non-business fixture for local render-chain proof (V0.0)" }
+          JSON
+
+          (cd /tmp/fixture && zip -q -r /tmp/fixture.zip .)
+          echo "=== fixture 内容 ==="
+          unzip -l /tmp/fixture.zip
+
+      - name: Build render-service image
+        run: |
+          docker build -t render-service /tmp/upstream/render-service 2>&1 | tail -40
+
+      - name: Run render-service container (low-memory, egress lockdown off)
+        run: |
+          # GitHub runner 无 CAP_NET_ADMIN，无法装 iptables egress lockdown，
+          # 故按上游文档显式 RENDER_EGRESS_LOCKDOWN=false（仅本机回环验证，无公网暴露）。
+          docker run -d --name render \
+            -e RENDER_EGRESS_LOCKDOWN=false \
+            -e RENDER_RESOURCE_PROFILE=low-memory \
+            -p 127.0.0.1:9000:9000 \
+            render-service
+          sleep 5
+          docker ps --filter name=render
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/health; then
+              echo ""
+              echo "health OK after ${i} tries"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "health FAILED"
+          docker logs render
+          exit 1
+
+      - name: Submit render job
+        run: |
+          JOB=$(curl -sf -F "project=@/tmp/fixture.zip;type=application/zip" \
+            -F "fps=24" -F "quality=draft" -F "format=mp4" \
+            http://127.0.0.1:9000/render)
+          echo "$JOB" | tee /tmp/job.json
+          echo "jobId=$(echo "$JOB" | jq -r .jobId)" >> "$GITHUB_ENV"
+
+      - name: Poll job until terminal
+        run: |
+          ST=""
+          for i in $(seq 1 120); do
+            STATUS=$(curl -sf http://127.0.0.1:9000/render/${{ env.jobId }} || true)
+            echo "poll $i: $STATUS"
+            ST=$(echo "$STATUS" | jq -r '.status // empty')
+            if [ "$ST" = "succeeded" ] || [ "$ST" = "failed" ] || [ "$ST" = "cancelled" ]; then
+              echo "$STATUS" > /tmp/terminal-status.json
+              break
+            fi
+            sleep 10
+          done
+          echo "final status: $ST"
+          [ "$ST" = "succeeded" ] || { echo "=== render 日志 ==="; docker logs render; exit 1; }
+
+      - name: Download MP4
+        run: |
+          curl -sf http://127.0.0.1:9000/render/${{ env.jobId }}/download -o /tmp/output.mp4
+          ls -la /tmp/output.mp4
+          sha256sum /tmp/output.mp4 | tee /tmp/sha256.txt
+
+      - name: Test 404 on unknown jobId
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9000/render/nonexistent-job-id)
+          echo "unknown jobId status: $CODE"
+          [ "$CODE" = "404" ] || echo "WARN: expected 404, got $CODE"
+
+      - name: ffprobe verify
+        run: |
+          ffprobe -v error -show_format -show_streams -of json /tmp/output.mp4 > /tmp/ffprobe.json
+          cat /tmp/ffprobe.json
+          echo "=== 关键字段 ==="
+          jq -r '.format.duration, .format.size' /tmp/ffprobe.json
+          jq -r '.streams[] | select(.codec_type=="video") | "\(.codec_name) \(.width)x\(.height) \(.r_frame_rate) fps"' /tmp/ffprobe.json
+
+      - name: Extract start/mid/end frames
+        run: |
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/output.mp4)
+          MID=$(awk "BEGIN {print $DUR / 2}")
+          END=$(awk "BEGIN {print $DUR - 0.5}")
+          ffmpeg -y -v error -i /tmp/output.mp4 -ss 0.5 -frames:v 1 /tmp/frame-start.png
+          ffmpeg -y -v error -i /tmp/output.mp4 -ss "$MID" -frames:v 1 /tmp/frame-mid.png
+          ffmpeg -y -v error -i /tmp/output.mp4 -ss "$END" -frames:v 1 /tmp/frame-end.png
+          ls -la /tmp/frame-*.png
+          # 简单非全黑检查：每帧平均亮度 > 0（纯黑帧亮度=0）
+          for f in /tmp/frame-start.png /tmp/frame-mid.png /tmp/frame-end.png; do
+            LUM=$(ffmpeg -i "$f" -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG" -f null - 2>&1 | grep -o 'YAVG=[0-9.]*' || true)
+            echo "$f -> $LUM"
+          done
+
+      - name: Upload artifacts (retention 1 day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-export-v0-proof
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            /tmp/output.mp4
+            /tmp/ffprobe.json
+            /tmp/frame-start.png
+            /tmp/frame-mid.png
+            /tmp/frame-end.png
+            /tmp/sha256.txt
+            /tmp/job.json
+            /tmp/terminal-status.json
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f render || true
