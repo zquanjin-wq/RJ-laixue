@@ -2,7 +2,10 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
+import { getCurrentModelConfig } from '@/lib/utils/model-config';
 
 type Report = {
   course: { title: string | null };
@@ -39,6 +42,9 @@ function duration(seconds: number) {
 export function CourseDataReport({ courseId }: { courseId: string }) {
   const [report, setReport] = useState<Report | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+  const [question, setQuestion] = useState('');
+  const [insight, setInsight] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
   useEffect(() => {
     fetch(`/api/admin/courses/${courseId}/report`)
       .then((response) => response.json())
@@ -49,6 +55,34 @@ export function CourseDataReport({ courseId }: { courseId: string }) {
   }, [courseId]);
   if (!report) return <p className="text-sm text-muted-foreground">正在加载课程数据…</p>;
   const selectedChapter = report.chapters.find((chapter) => chapter.sceneId === selectedSceneId);
+  async function askInsight(nextQuestion = question) {
+    const text = nextQuestion.trim();
+    if (!text) return;
+    setQuestion(text);
+    setAnalyzing(true);
+    setInsight('');
+    try {
+      const response = await fetch(`/api/admin/courses/${courseId}/insight`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: text, report, ...getCurrentModelConfig() }),
+      });
+      const body = (await response.json()) as {
+        success?: boolean;
+        data?: { answer?: string };
+        error?: string;
+      };
+      setInsight(
+        response.ok && body.success
+          ? body.data?.answer || '暂无可用解读。'
+          : body.error || '暂时无法生成解读，请稍后重试。',
+      );
+    } catch {
+      setInsight('网络异常，请稍后重试。');
+    } finally {
+      setAnalyzing(false);
+    }
+  }
   return (
     <section className="space-y-6">
       <Card>
@@ -61,6 +95,50 @@ export function CourseDataReport({ courseId }: { courseId: string }) {
           <Metric label="学习人数" value={report.overview.learnerCount} />
           <Metric label="完成率" value={`${report.overview.completionRate}%`} />
           <Metric label="有效时长" value={duration(report.overview.effectiveSeconds)} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>AI 课程数据解读</CardTitle>
+          <CardDescription>根据本课程跨任务学习数据，辅助判断下一步教学重点。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {['这门课当前最需要关注什么？', '哪些章节值得优先优化？', '请给出下一步教学建议。'].map(
+              (prompt) => (
+                <Button
+                  key={prompt}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void askInsight(prompt)}
+                  disabled={analyzing}
+                >
+                  {prompt}
+                </Button>
+              ),
+            )}
+          </div>
+          <Textarea
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="例如：为什么这门课完成率不高？"
+            rows={3}
+          />
+          <Button
+            className="w-full"
+            onClick={() => void askInsight()}
+            disabled={analyzing || !question.trim()}
+          >
+            {analyzing ? '正在分析…' : '问 AI'}
+          </Button>
+          {insight && (
+            <div className="rounded-lg bg-muted/60 p-3 text-sm leading-6 whitespace-pre-wrap">
+              {insight}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            AI 只解释当前可见的课程汇总数据，不会自动修改课程或创建任务。
+          </p>
         </CardContent>
       </Card>
       <Card>
