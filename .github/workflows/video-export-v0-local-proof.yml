@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
+      - name: Install ffprobe (ubuntu-24.04 base image 不带 ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Checkout upstream OpenMAIC v0.3.2 (render-service source)
         run: |
           git clone --depth 1 --branch v0.3.2 https://github.com/THU-MAIC/OpenMAIC.git /tmp/upstream
