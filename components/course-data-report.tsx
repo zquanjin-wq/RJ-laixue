@@ -27,6 +27,8 @@ type Report = {
     title: string;
     completedLearners: number;
     questionsAsked: number;
+    completedLearnerNames: string[];
+    questions: string[];
   }>;
 };
 function duration(seconds: number) {
@@ -36,6 +38,7 @@ function duration(seconds: number) {
 }
 export function CourseDataReport({ courseId }: { courseId: string }) {
   const [report, setReport] = useState<Report | null>(null);
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   useEffect(() => {
     fetch(`/api/admin/courses/${courseId}/report`)
       .then((response) => response.json())
@@ -45,6 +48,7 @@ export function CourseDataReport({ courseId }: { courseId: string }) {
       .catch(() => undefined);
   }, [courseId]);
   if (!report) return <p className="text-sm text-muted-foreground">正在加载课程数据…</p>;
+  const selectedChapter = report.chapters.find((chapter) => chapter.sceneId === selectedSceneId);
   return (
     <section className="space-y-6">
       <Card>
@@ -94,19 +98,52 @@ export function CourseDataReport({ courseId }: { courseId: string }) {
           {report.chapters.length ? (
             <div className="space-y-3">
               {report.chapters.map((item) => (
-                <div
+                <button
+                  type="button"
                   key={item.sceneId}
-                  className="flex justify-between gap-4 border-b pb-3 text-sm last:border-0"
+                  onClick={() =>
+                    setSelectedSceneId((current) =>
+                      current === item.sceneId ? null : item.sceneId,
+                    )
+                  }
+                  className="flex w-full items-center justify-between gap-4 rounded-md border-b px-1 py-3 text-left text-sm last:border-0 hover:bg-muted/50"
                 >
                   <span>{item.title}</span>
                   <span className="shrink-0 text-muted-foreground">
-                    完成 {item.completedLearners} 人 · 提问 {item.questionsAsked} 次
+                    完成 {item.completedLearners} 人 · 提问 {item.questionsAsked} 次 · 查看详情
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">暂无章节学习数据。</p>
+          )}
+          {selectedChapter && (
+            <div className="mt-4 rounded-md border bg-muted/20 p-4 text-sm">
+              <p className="font-medium">{selectedChapter.title}</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">完成该章节的学员</p>
+                  <p className="mt-1">
+                    {selectedChapter.completedLearnerNames.length
+                      ? selectedChapter.completedLearnerNames.join('、')
+                      : '暂无完成记录'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">学员提问</p>
+                  {selectedChapter.questions.length ? (
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {selectedChapter.questions.map((question, index) => (
+                        <li key={`${selectedChapter.sceneId}-${index}`}>{question}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1">暂无提问记录</p>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
