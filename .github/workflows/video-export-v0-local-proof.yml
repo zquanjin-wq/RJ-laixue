@@ -211,21 +211,23 @@ jobs:
           ffmpeg -y -v error -i /tmp/output.mp4 -ss "$MID" -frames:v 1 /tmp/frame-mid.png
           ffmpeg -y -v error -i /tmp/output.mp4 -ss "$END" -frames:v 1 /tmp/frame-end.png
           ls -la /tmp/frame-*.png
-          # framemd5 全帧指纹：3 个 hash 必须互不相同，才能证明动画确实在发生
-          ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,0)+eq(n\,36)+eq(n\,71)',setpts=N/FRAME_RATE/TB" -an -f md5 /tmp/framemd5.txt
-          # 安全 fallback：若 select 表达式在不同 ffmpeg 版本下失败，改用逐帧提取
-          if [ ! -s /tmp/framemd5.txt ]; then
-            ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,0)'" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame0.md5
-            ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,36)'" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame36.md5
-            ffmpeg -y -v error -i /tmp/output.mp4 -vf "select='eq(n\,71)'" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame71.md5
-            cat /tmp/frame0.md5 /tmp/frame36.md5 /tmp/frame71.md5 > /tmp/framemd5.txt
-          fi
+          # framemd5：ubuntu-24.04 ffmpeg 7.x 上单次 select='eq(n\,0)+eq(n\,36)+eq(n\,71)' 只输出 1 帧，
+          # 必须分 3 次独立调用以拿到 3 个独立 md5。
+          ffmpeg -y -v error -i /tmp/output.mp4 -vf "select=eq(n\,0)" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame0.md5
+          ffmpeg -y -v error -i /tmp/output.mp4 -vf "select=eq(n\,36)" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame36.md5
+          ffmpeg -y -v error -i /tmp/output.mp4 -vf "select=eq(n\,71)" -vsync 0 -frame_pts 1 -an -f md5 /tmp/frame71.md5
+          # 也用 seek 路径作为二次保险（不依赖帧索引）
+          ffmpeg -y -v error -i /tmp/output.mp4 -ss 0 -frames:v 1 -an -f md5 /tmp/frame-seek-start.md5
+          ffmpeg -y -v error -i /tmp/output.mp4 -ss "$MID" -frames:v 1 -an -f md5 /tmp/frame-seek-mid.md5
+          ffmpeg -y -v error -i /tmp/output.mp4 -ss "$END" -frames:v 1 -an -f md5 /tmp/frame-seek-end.md5
+          cat /tmp/frame0.md5 /tmp/frame36.md5 /tmp/frame71.md5 \
+              /tmp/frame-seek-start.md5 /tmp/frame-seek-mid.md5 /tmp/frame-seek-end.md5 > /tmp/framemd5.txt
           cat /tmp/framemd5.txt
-          # 验证 3 帧 hash 互不相同（而非"非全黑"门禁）
+          # 验证：6 个 hash（3 个 n 索引 + 3 个 seek 时间）互不相同 → 至少 4 个唯一值
           UNIQUE=$(awk 'NF>0' /tmp/framemd5.txt | sort -u | wc -l)
           echo "unique frame hashes: $UNIQUE"
-          if [ "$UNIQUE" -lt 2 ]; then
-            echo "FAIL: animation not detected (frames are identical)"
+          if [ "$UNIQUE" -lt 4 ]; then
+            echo "FAIL: animation not detected (frames too similar)"
             exit 1
           fi
           # 简单非全黑检查
