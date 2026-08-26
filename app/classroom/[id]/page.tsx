@@ -702,7 +702,9 @@ export default function ClassroomDetailPage() {
       const stage = useStageStore.getState().stage;
       const { selection: next, isUserSet } = restoreAgentSelection({
         persisted: { mode: settings.agentMode, selectedAgentIds: settings.selectedAgentIds },
-        persistedIsUserSet: settings.agentSelectionIsUserSet,
+        // A learning task is a course delivery context. Its AI roles come from
+        // the assigned course, never from a teacher's older browser selection.
+        persistedIsUserSet: readOnlyShare ? false : settings.agentSelectionIsUserSet,
         generatedAgentIds,
         stageAgentIds: stage?.agentIds,
         isPresetAgent: (id) => {
@@ -725,7 +727,7 @@ export default function ClassroomDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [classroomId, loadFromStorage, authReady]);
+  }, [classroomId, loadFromStorage, authReady, readOnlyShare]);
 
   useEffect(() => {
     // Reset loading state on course switch to unmount Stage during transition,
