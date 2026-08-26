@@ -1,7 +1,8 @@
 name: video-export-s3-two-page
 
 # Unmerged pull-request proof only: compile the fixed local fixture and render
-# it on the runner's loopback address. No secrets, deployments, or app APIs.
+# it on the runner's loopback address. Page two includes a local SVG so its
+# uploaded screenshot can be visually inspected. No secrets, deployments, or app APIs.
 on:
   pull_request:
     paths:

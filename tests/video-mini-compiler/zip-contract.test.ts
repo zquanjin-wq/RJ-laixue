@@ -36,6 +36,7 @@ const REQUIRED_PATHS = [
   'index.html',
   'openmaic-video-manifest.json',
   'assets/vendor/gsap.min.js',
+  'assets/images/mini-course-illustration.svg',
 ];
 
 describe('mini-compiler ZIP contract (S3 V0.0)', () => {
@@ -57,6 +58,7 @@ describe('mini-compiler ZIP contract (S3 V0.0)', () => {
     expect(html).toContain('id="scene-2-base"');
     expect(html).toContain('opacity:0;visibility:hidden');
     expect(html).toContain('assets/vendor/gsap.min.js');
+    expect(html).toContain('src="assets/images/mini-course-illustration.svg"');
     expect(html).toContain('window.__openmaicVideoManifest');
     // Chinese text pass-through (one of the fixture sentences).
     expect(html).toContain('Node.js + Chromium');
@@ -98,5 +100,6 @@ describe('mini-compiler ZIP contract (S3 V0.0)', () => {
     await writeTwoPageFixtureZip(outputPath);
     const entries = await unzip(readFileSync(outputPath));
     expect(entries['index.html']).toContain('第二页 — 输出资料合同');
+    expect(entries['assets/images/mini-course-illustration.svg']).toContain('课程渲染流程示意图');
   });
 });

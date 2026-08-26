@@ -9,7 +9,7 @@
  *      openmaic-video-manifest.json   — VideoTimeline-shaped manifest
  *      assets/vendor/gsap.min.js      — vendored GSAP (no CDN)
  *
- * **Out of scope.** Images, audio, KaTeX, Noto CJK, spotlight, Quiz/PBL, video
+ * **Out of scope.** Audio, KaTeX, Noto CJK, spotlight, Quiz/PBL, video
  * clips, IR validation (zod), runtime wiring, AppSurface glue. Each is a
  * later S3.x task.
  *
@@ -22,6 +22,8 @@ import JSZip from 'jszip';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GSAP_PATH = resolve(__dirname, 'vendor/gsap.min.js');
+const SAMPLE_IMAGE_PATH = resolve(__dirname, 'assets/mini-course-illustration.svg');
+const SAMPLE_IMAGE_ZIP_PATH = 'assets/images/mini-course-illustration.svg';
 
 /** Public input — exactly two pages. */
 export interface MiniPage {
@@ -73,7 +75,7 @@ function buildIndexHtml(course: MiniCourse, totalDurationMs: number): string {
   const scene2Start = scene1.durationMs;
   const totalSec = (totalDurationMs / 1000).toFixed(4);
 
-  const style = `  * { box-sizing: border-box; }\n  html, body { margin: 0; padding: 0; background: #000; }\n  #openmaic { font-family: system-ui, sans-serif; color: #f5f5f5; }\n  .clip-title { position: absolute; top: 6%; left: 0; width: 100%; text-align: center; font-size: 2.4vw; font-weight: 700; }\n  .clip-body { position: absolute; top: 18%; left: 8%; width: 84%; font-size: 1.6vw; line-height: 1.6; white-space: pre-wrap; }`;
+  const style = `  * { box-sizing: border-box; }\n  html, body { margin: 0; padding: 0; background: #000; }\n  #openmaic { font-family: system-ui, sans-serif; color: #f5f5f5; }\n  .clip-title { position: absolute; top: 6%; left: 0; width: 100%; text-align: center; font-size: 2.4vw; font-weight: 700; }\n  .clip-body { position: absolute; top: 18%; left: 8%; width: 84%; font-size: 1.6vw; line-height: 1.6; white-space: pre-wrap; }\n  #scene-2-base .clip-body { width: 52%; }\n  .clip-image { position: absolute; top: 24%; right: 9%; width: 27%; height: auto; }`;
 
   const scene1Div =
     `<div id="scene-1-base" class="clip" data-start="${(scene1Start / 1000).toFixed(4)}" data-duration="${(scene1.durationMs / 1000).toFixed(4)}" data-track-index="0" style="position:absolute;inset:0;background:#0f172a;opacity:1">` +
@@ -85,6 +87,7 @@ function buildIndexHtml(course: MiniCourse, totalDurationMs: number): string {
     `<div id="scene-2-base" class="clip" data-start="${(scene2Start / 1000).toFixed(4)}" data-duration="${(scene2.durationMs / 1000).toFixed(4)}" data-track-index="0" style="position:absolute;inset:0;background:#1e293b;opacity:0;visibility:hidden">` +
     `\n  <div dir="auto" class="clip-title">${escapeHtml(scene2.title)}</div>` +
     `\n  <div dir="auto" class="clip-body">${escapeHtml(scene2.body)}</div>` +
+    `\n  <img class="clip-image" src="${SAMPLE_IMAGE_ZIP_PATH}" alt="课程示意图" />` +
     `\n</div>`;
 
   const statements: string[] = [
@@ -203,5 +206,6 @@ export async function compileTwoPageCourse(course: MiniCourse): Promise<Uint8Arr
   zip.file('index.html', indexHtml, { date });
   zip.file('openmaic-video-manifest.json', manifestJson, { date });
   zip.file('assets/vendor/gsap.min.js', gsapBytes, { date });
+  zip.file(SAMPLE_IMAGE_ZIP_PATH, readFileSync(SAMPLE_IMAGE_PATH), { date });
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 }
