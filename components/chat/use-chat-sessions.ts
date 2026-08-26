@@ -495,6 +495,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
         model?: string;
         providerType?: string;
         thinkingConfig?: ThinkingConfig;
+        useServerModel?: boolean;
       },
       controller: AbortController,
       sessionType: SessionType,
@@ -525,6 +526,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
           model: requestTemplate.model,
           providerType: requestTemplate.providerType,
           thinkingConfig: requestTemplate.thinkingConfig,
+          useServerModel: requestTemplate.useServerModel,
         },
         {
           getStoreState: (): AgentLoopStoreState => {

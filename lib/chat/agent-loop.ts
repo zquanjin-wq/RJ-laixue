@@ -58,6 +58,8 @@ export interface AgentLoopRequest {
   model?: string;
   providerType?: string;
   thinkingConfig?: ThinkingConfig;
+  /** Use the organization-configured model for assigned learner tasks. */
+  useServerModel?: boolean;
 }
 
 /** Per-iteration outcome extracted from the done event */
@@ -161,6 +163,7 @@ export async function runAgentLoop(
       model: request.model,
       providerType: request.providerType,
       thinkingConfig: request.thinkingConfig,
+      useServerModel: request.useServerModel,
     };
 
     // Fetch
