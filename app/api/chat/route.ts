@@ -19,12 +19,68 @@ import type { StatelessChatRequest, StatelessEvent } from '@/lib/types/chat';
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModel } from '@/lib/server/resolve-model';
-import { getTokenPlanChatModel } from '@/lib/server/provider-config';
+import { getServerSupabase } from '@/lib/supabase/server';
+import { loadTaskSnapshot } from '@/lib/server/learning-tasks/snapshot-loader';
 import type { ThinkingConfig } from '@/lib/types/provider';
 const log = createLogger('Chat API');
 
 // Allow streaming responses up to 60 seconds
 export const maxDuration = 60;
+
+type TaskCourseAiConfig = {
+  modelString?: string;
+  providerType?: string;
+  thinkingConfig?: ThinkingConfig;
+  agentIds?: string[];
+  agentConfigs?: StatelessChatRequest['config']['agentConfigs'];
+};
+
+async function loadTaskCourseAiConfig(
+  taskId: string,
+  courseId?: string,
+): Promise<TaskCourseAiConfig | null> {
+  const serverSupabase = await getServerSupabase();
+  const {
+    data: { user },
+  } = await serverSupabase.auth.getUser();
+  if (!user) return null;
+
+  const snapshot = await loadTaskSnapshot(user.id, taskId, courseId);
+  if (!snapshot.ok) return null;
+
+  const stage = snapshot.data.stage as Record<string, unknown>;
+  const authoringModel = stage.teacherModelConfig as
+    | {
+        modelString?: unknown;
+        providerType?: unknown;
+        thinkingConfig?: unknown;
+      }
+    | undefined;
+  const configuredAgentIds = Array.isArray(stage.agentIds)
+    ? stage.agentIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  const generatedAgentConfigs = Array.isArray(stage.generatedAgentConfigs)
+    ? (stage.generatedAgentConfigs as StatelessChatRequest['config']['agentConfigs'])
+    : undefined;
+  const agentIds =
+    configuredAgentIds.length > 0
+      ? configuredAgentIds
+      : generatedAgentConfigs?.map((agent) => agent.id).filter(Boolean);
+
+  return {
+    ...(typeof authoringModel?.modelString === 'string'
+      ? { modelString: authoringModel.modelString }
+      : {}),
+    ...(typeof authoringModel?.providerType === 'string'
+      ? { providerType: authoringModel.providerType }
+      : {}),
+    ...(authoringModel?.thinkingConfig && typeof authoringModel.thinkingConfig === 'object'
+      ? { thinkingConfig: authoringModel.thinkingConfig as ThinkingConfig }
+      : {}),
+    ...(agentIds?.length ? { agentIds } : {}),
+    ...(generatedAgentConfigs?.length ? { agentConfigs: generatedAgentConfigs } : {}),
+  };
+}
 
 /**
  * POST /api/chat
@@ -65,13 +121,20 @@ export async function POST(req: NextRequest) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: config.agentIds');
     }
 
-    const chatConfig = body.useServerModel
+    if (body.useServerModel && !body.taskContext?.taskId) {
+      return apiError('TASK_CONTEXT_REQUIRED', 400, '学习任务缺少课程上下文');
+    }
+    const taskAiConfig = body.useServerModel
+      ? await loadTaskCourseAiConfig(body.taskContext!.taskId, body.taskContext!.courseId)
+      : null;
+    if (body.useServerModel && !taskAiConfig) {
+      return apiError('TASK_CONTEXT_UNAVAILABLE', 403, '无法读取任务的课程配置');
+    }
+    const chatConfig = taskAiConfig
       ? {
           ...body.config,
-          // Learners use the platform's built-in AI teacher. A task must not
-          // depend on an editor browser's generated-agent registry.
-          agentIds: ['default-1'],
-          agentConfigs: undefined,
+          ...(taskAiConfig.agentIds ? { agentIds: taskAiConfig.agentIds } : {}),
+          ...(taskAiConfig.agentConfigs ? { agentConfigs: taskAiConfig.agentConfigs } : {}),
         }
       : body.config;
 
@@ -81,19 +144,20 @@ export async function POST(req: NextRequest) {
       providerId,
       thinkingConfig: resolvedThinking,
     } = await resolveModel({
-      // A learner task is company-provided learning. Its AI teacher must use
-      // the configured organization model rather than a stale browser-local
-      // model selection left by a previous teacher/admin session.
-      modelString: body.useServerModel
-        ? getTokenPlanChatModel() || body.model
-        : body.model,
+      // In a learner task, the course snapshot is the source of truth. This
+      // keeps the author-selected AI teacher/model intact and ignores whatever
+      // model the learner's browser happened to use previously.
+      modelString: taskAiConfig?.modelString ?? (body.useServerModel ? undefined : body.model),
       stage: 'chat-adapter',
-      apiKey: body.apiKey,
-      baseUrl: body.baseUrl,
-      providerType: body.providerType,
+      apiKey: body.useServerModel ? undefined : body.apiKey,
+      baseUrl: body.useServerModel ? undefined : body.baseUrl,
+      providerType:
+        taskAiConfig?.providerType ?? (body.useServerModel ? undefined : body.providerType),
       // Let resolveModel arbitrate thinking too: a routed chat-adapter's thinking
       // wins, an unrouted one honors this client thinking (see resolve-model.ts).
-      thinkingConfig: body.thinkingConfig ?? body.thinking,
+      thinkingConfig:
+        taskAiConfig?.thinkingConfig ??
+        (body.useServerModel ? undefined : (body.thinkingConfig ?? body.thinking)),
     });
 
     if (isProviderKeyRequired(providerId) && !resolvedApiKey) {

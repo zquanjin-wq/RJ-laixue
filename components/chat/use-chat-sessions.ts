@@ -71,6 +71,15 @@ function isLearnerTaskContext(): boolean {
   return params.has('task') && params.get('share') === '1';
 }
 
+function getLearnerTaskContext(): { taskId: string; courseId?: string } | undefined {
+  if (!isLearnerTaskContext()) return undefined;
+  const params = new URLSearchParams(window.location.search);
+  const taskId = params.get('task');
+  if (!taskId) return undefined;
+  const courseId = params.get('course') || undefined;
+  return { taskId, ...(courseId ? { courseId } : {}) };
+}
+
 interface UseChatSessionsOptions {
   onLiveSpeech?: (text: string | null, agentId?: string | null) => void;
   onSpeechProgress?: (ratio: number | null) => void;
@@ -496,6 +505,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
         providerType?: string;
         thinkingConfig?: ThinkingConfig;
         useServerModel?: boolean;
+        taskContext?: { taskId: string; courseId?: string };
       },
       controller: AbortController,
       sessionType: SessionType,
@@ -527,6 +537,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
           providerType: requestTemplate.providerType,
           thinkingConfig: requestTemplate.thinkingConfig,
           useServerModel: requestTemplate.useServerModel,
+          taskContext: requestTemplate.taskContext,
         },
         {
           getStoreState: (): AgentLoopStoreState => {
@@ -974,6 +985,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             providerType: mc.providerType,
             thinkingConfig: mc.thinkingConfig,
             useServerModel: isLearnerTaskContext(),
+            taskContext: getLearnerTaskContext(),
           },
           controller,
           session.type,
@@ -1203,6 +1215,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             providerType: mc.providerType,
             thinkingConfig: mc.thinkingConfig,
             useServerModel: isLearnerTaskContext(),
+            taskContext: getLearnerTaskContext(),
           },
           controller,
           sessionType,
@@ -1349,6 +1362,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             providerType: mc.providerType,
             thinkingConfig: mc.thinkingConfig,
             useServerModel: isLearnerTaskContext(),
+            taskContext: getLearnerTaskContext(),
           },
           controller,
           'discussion',

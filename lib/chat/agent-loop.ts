@@ -58,8 +58,9 @@ export interface AgentLoopRequest {
   model?: string;
   providerType?: string;
   thinkingConfig?: ThinkingConfig;
-  /** Use the organization-configured model for assigned learner tasks. */
+  /** Use the immutable course configuration for assigned learner tasks. */
   useServerModel?: boolean;
+  taskContext?: { taskId: string; courseId?: string };
 }
 
 /** Per-iteration outcome extracted from the done event */
@@ -164,6 +165,7 @@ export async function runAgentLoop(
       providerType: request.providerType,
       thinkingConfig: request.thinkingConfig,
       useServerModel: request.useServerModel,
+      taskContext: request.taskContext,
     };
 
     // Fetch

@@ -301,7 +301,12 @@ export interface StatelessChatRequest {
   baseUrl?: string;
   model?: string;
   providerType?: string;
-  /** Use the organization-managed teaching model for a learner task. */
+  /** Immutable task-course context used by the server to load the authoring setup. */
+  taskContext?: {
+    taskId: string;
+    courseId?: string;
+  };
+  /** Use the task snapshot's author-selected teaching configuration. */
   useServerModel?: boolean;
   /**
    * Opt-in: enable provider-side thinking for this request. Default is

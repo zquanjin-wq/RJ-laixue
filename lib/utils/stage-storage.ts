@@ -64,11 +64,16 @@ export async function saveStageData(stageId: string, data: StageStoreData): Prom
       generatedAgentConfigs: data.stage.generatedAgentConfigs,
       teacherVoiceConfig: (data.stage as unknown as Record<string, unknown>)
         .teacherVoiceConfig as import('./database').StageRecord['teacherVoiceConfig'],
+      teacherModelConfig: (data.stage as unknown as Record<string, unknown>)
+        .teacherModelConfig as import('./database').StageRecord['teacherModelConfig'],
       // Trust model fields (v15). Cast through unknown because Stage's
       // DSL interface is intentionally narrow — these fields live on the
       // persisted StageRecord only.
-      sceneOrderTrusted: (data.stage as unknown as Record<string, unknown>).sceneOrderTrusted as boolean | undefined,
-      sceneOrderRepairedAt: (data.stage as unknown as Record<string, unknown>).sceneOrderRepairedAt as number | undefined,
+      sceneOrderTrusted: (data.stage as unknown as Record<string, unknown>).sceneOrderTrusted as
+        | boolean
+        | undefined,
+      sceneOrderRepairedAt: (data.stage as unknown as Record<string, unknown>)
+        .sceneOrderRepairedAt as number | undefined,
     });
 
     // Delete old scenes first to avoid orphaned data
@@ -162,10 +167,13 @@ export async function loadStageData(stageId: string): Promise<StageStoreData | n
     const { orderSceneRecordsForDisplay } = await import('./scene-order');
     const rawScenes = await db.scenes.where('stageId').equals(stageId).toArray();
     const stageIsTrusted = stage.sceneOrderTrusted === true;
-    const { ordered: scenesOrdered, source, duplicateIdsRemoved } =
-      orderSceneRecordsForDisplay(rawScenes, {
-        prefer: stageIsTrusted ? 'auto' : 'createdAt',
-      });
+    const {
+      ordered: scenesOrdered,
+      source,
+      duplicateIdsRemoved,
+    } = orderSceneRecordsForDisplay(rawScenes, {
+      prefer: stageIsTrusted ? 'auto' : 'createdAt',
+    });
     if (duplicateIdsRemoved.length > 0) {
       log.warn('[loadStageData] Duplicate scene ids removed', {
         stageId,

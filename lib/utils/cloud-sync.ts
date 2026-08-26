@@ -10,6 +10,7 @@ import { createLogger } from '@/lib/logger';
 import { externalizeCourseAssets } from '@/lib/course-assets/externalize';
 import { prepareCourseForAssetUploads } from '@/lib/course-assets/prepare-course';
 import { stripRuntimeOnly } from '@/lib/dsl-extensions/serialize';
+import { getCurrentModelConfig } from '@/lib/utils/model-config';
 
 const log = createLogger('CloudSync');
 
@@ -101,6 +102,26 @@ export async function saveStageToCloud(stageId: string) {
   const { id, title, topic, outlines } = collected;
   let stage = collected.stage;
   let scenes = collected.scenes;
+
+  // A course owns its teaching model just like it owns its teacher voice. Store
+  // the author's choice with the course data, never the API key. Task snapshots
+  // then replay the same classroom configuration for learners.
+  const stageRecord = stage as unknown as Record<string, unknown>;
+  if (!stageRecord.teacherModelConfig) {
+    const model = getCurrentModelConfig();
+    if (model.modelString) {
+      const teacherModelConfig = {
+        modelString: model.modelString,
+        ...(model.providerType ? { providerType: model.providerType } : {}),
+        ...(model.thinkingConfig ? { thinkingConfig: model.thinkingConfig } : {}),
+      };
+      stage = {
+        ...stage,
+        teacherModelConfig,
+      } as typeof stage;
+      await db.stages.update(stageId, { teacherModelConfig });
+    }
+  }
 
   // ── Phase 0: Ensure the course row exists on the cloud BEFORE we publish
   // any audio. Production's sign-upload endpoint (post upstream commit

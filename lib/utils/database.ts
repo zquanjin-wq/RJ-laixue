@@ -67,6 +67,12 @@ export interface StageRecord {
     voiceId: string;
     modelId?: string;
   };
+  /** Language model selected by the course author. Never contains credentials. */
+  teacherModelConfig?: {
+    modelString: string;
+    providerType?: string;
+    thinkingConfig?: unknown;
+  };
   /** Scene order trust flag (added in v15).
    *  - `true`  : this stage's scene `seq` is authoritative; loadStageData
    *              uses prefer='auto' (trust seq).
@@ -309,16 +315,16 @@ export interface RuntimeChainHead {
  * 每次有效的已持久化播放周期对应一行。主键 visitId 为全局唯一 32-hex ID。
  */
 export interface PlaybackVisit {
-  visitId: string;           // PK
+  visitId: string; // PK
   stageId: string;
-  tabOwnerId: string;        // 32 hex
-  sessionId: string;         // = "pb:<stageId>:<visitId>"（legacy = "pb:<stageId>"）
+  tabOwnerId: string; // 32 hex
+  sessionId: string; // = "pb:<stageId>:<visitId>"（legacy = "pb:<stageId>"）
   status: 'active' | 'completed';
   createEntryId?: string;
   completedStatusEntryId?: string;
   createdAt: string;
   completedCredentialAt?: string;
-  isLegacyAdopted?: boolean;  // v17→v18 迁移标记
+  isLegacyAdopted?: boolean; // v17→v18 迁移标记
 }
 
 /**
@@ -326,7 +332,7 @@ export interface PlaybackVisit {
  * 与 legacy playbackState 行对应，但按 visitId 隔离，消除跨标签页覆盖。
  */
 export interface PlaybackVisitState {
-  visitId: string;           // PK
+  visitId: string; // PK
   stageId: string;
   sceneIndex: number;
   actionIndex: number;
@@ -713,9 +719,7 @@ class MAICDatabase extends Dexie {
           // Unconditional delete + bulkPut: v14 always rewrites seq/order,
           // because the goal is to overwrite v13's poisoned seq.
           await table.where('stageId').equals(stageId).delete();
-          await table.bulkPut(
-            result.ordered as Array<Record<string, unknown>>,
-          );
+          await table.bulkPut(result.ordered as Array<Record<string, unknown>>);
           totalReordered += list.length;
         }
         v14Log.info('[v14 Migration] Complete', {
@@ -802,7 +806,8 @@ class MAICDatabase extends Dexie {
       voiceProfiles: 'id, providerId, kind, updatedAt',
       autoVoiceCache: 'voiceId, updatedAt',
       agentEditSessions: 'id, stageId, [stageId+updatedAt]',
-      runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
+      runtimeOutbox:
+        'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
       succeededEntries: 'entryId, deletedAt',
     });
 
@@ -821,64 +826,68 @@ class MAICDatabase extends Dexie {
       voiceProfiles: 'id, providerId, kind, updatedAt',
       autoVoiceCache: 'voiceId, updatedAt',
       agentEditSessions: 'id, stageId, [stageId+updatedAt]',
-      runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
+      runtimeOutbox:
+        'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
       succeededEntries: 'entryId, deletedAt',
       runtimeChainHeads: 'sessionId',
     });
 
     // R3.1a Playback visit-session lifecycle（v18）
-    this.version(18).stores({
-      stages: 'id, updatedAt',
-      scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
-      audioFiles: 'id, createdAt',
-      imageFiles: 'id, createdAt',
-      snapshots: '++id',
-      chatSessions: 'id, stageId, [stageId+createdAt]',
-      playbackState: 'stageId',
-      playbackVisits: 'visitId, [stageId+status], [tabOwnerId+stageId], completedCredentialAt',
-      playbackVisitStates: 'visitId, [stageId+visitId]',
-      stageOutlines: 'stageId',
-      mediaFiles: 'id, stageId, [stageId+type]',
-      generatedAgents: 'id, stageId',
-      voiceProfiles: 'id, providerId, kind, updatedAt',
-      autoVoiceCache: 'voiceId, updatedAt',
-      agentEditSessions: 'id, stageId, [stageId+updatedAt]',
-      runtimeOutbox: 'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
-      succeededEntries: 'entryId, deletedAt',
-      runtimeChainHeads: 'sessionId',
-    }).upgrade(async (tx) => {
-      // v17→v18 migration: legacy playbackState → visits + visitStates
-      const oldRows = await tx.table('playbackState').toArray();
-      if (oldRows.length === 0) return;
+    this.version(18)
+      .stores({
+        stages: 'id, updatedAt',
+        scenes: 'id, stageId, order, seq, [stageId+order], [stageId+seq]',
+        audioFiles: 'id, createdAt',
+        imageFiles: 'id, createdAt',
+        snapshots: '++id',
+        chatSessions: 'id, stageId, [stageId+createdAt]',
+        playbackState: 'stageId',
+        playbackVisits: 'visitId, [stageId+status], [tabOwnerId+stageId], completedCredentialAt',
+        playbackVisitStates: 'visitId, [stageId+visitId]',
+        stageOutlines: 'stageId',
+        mediaFiles: 'id, stageId, [stageId+type]',
+        generatedAgents: 'id, stageId',
+        voiceProfiles: 'id, providerId, kind, updatedAt',
+        autoVoiceCache: 'voiceId, updatedAt',
+        agentEditSessions: 'id, stageId, [stageId+updatedAt]',
+        runtimeOutbox:
+          'id, kind, status, createdAt, semanticKey, sessionId, sequence, dependsOnEntryId, [kind+status], [sessionId+sequence]',
+        succeededEntries: 'entryId, deletedAt',
+        runtimeChainHeads: 'sessionId',
+      })
+      .upgrade(async (tx) => {
+        // v17→v18 migration: legacy playbackState → visits + visitStates
+        const oldRows = await tx.table('playbackState').toArray();
+        if (oldRows.length === 0) return;
 
-      const legacyVisits: PlaybackVisit[] = oldRows.map((row: any) => ({
-        visitId: `legacy-${row.stageId}`,
-        stageId: row.stageId,
-        tabOwnerId: 'legacy-unknown',
-        sessionId: `pb:${row.stageId}`,  // 旧 outbox session identity 原样保留
-        status: row.completed ? 'completed' : 'active',
-        createdAt: new Date(row.updatedAt || Date.now()).toISOString(),
-        isLegacyAdopted: true,
-      }));
-      await tx.table('playbackVisits').bulkAdd(legacyVisits);
+        const legacyVisits: PlaybackVisit[] = oldRows.map((row: any) => ({
+          visitId: `legacy-${row.stageId}`,
+          stageId: row.stageId,
+          tabOwnerId: 'legacy-unknown',
+          sessionId: `pb:${row.stageId}`, // 旧 outbox session identity 原样保留
+          status: row.completed ? 'completed' : 'active',
+          createdAt: new Date(row.updatedAt || Date.now()).toISOString(),
+          isLegacyAdopted: true,
+        }));
+        await tx.table('playbackVisits').bulkAdd(legacyVisits);
 
-      const newStates: PlaybackVisitState[] = oldRows.map((row: any) => ({
-        visitId: `legacy-${row.stageId}`,
-        stageId: row.stageId,
-        sceneIndex: row.sceneIndex ?? 0,
-        actionIndex: row.actionIndex ?? 0,
-        consumedDiscussions: row.consumedDiscussions ?? [],
-        sceneId: row.sceneId,
-        capturedAt: row.capturedAt,
-        updatedAt: row.updatedAt ?? Date.now(),
-        completed: row.completed,
-        runtimeShadowEventId: row.runtimeShadowEventId,
-        shadowPending: row.shadowPending,
-      }));
-      await tx.table('playbackVisitStates').bulkAdd(newStates);
+        const newStates: PlaybackVisitState[] = oldRows.map((row: any) => ({
+          visitId: `legacy-${row.stageId}`,
+          stageId: row.stageId,
+          sceneIndex: row.sceneIndex ?? 0,
+          actionIndex: row.actionIndex ?? 0,
+          consumedDiscussions: row.consumedDiscussions ?? [],
+          sceneId: row.sceneId,
+          capturedAt: row.capturedAt,
+          updatedAt: row.updatedAt ?? Date.now(),
+          completed: row.completed,
+          runtimeShadowEventId: row.runtimeShadowEventId,
+          shadowPending: row.shadowPending,
+        }));
+        await tx.table('playbackVisitStates').bulkAdd(newStates);
 
-      // 旧 playbackState 行不删除（v19+ 另案）
-    });
+        // 旧 playbackState 行不删除（v19+ 另案）
+      });
   }
 }
 
