@@ -19,6 +19,7 @@ import type { StatelessChatRequest, StatelessEvent } from '@/lib/types/chat';
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModel } from '@/lib/server/resolve-model';
+import { getTokenPlanChatModel } from '@/lib/server/provider-config';
 import type { ThinkingConfig } from '@/lib/types/provider';
 const log = createLogger('Chat API');
 
@@ -70,7 +71,12 @@ export async function POST(req: NextRequest) {
       providerId,
       thinkingConfig: resolvedThinking,
     } = await resolveModel({
-      modelString: body.model,
+      // A learner task is company-provided learning. Its AI teacher must use
+      // the configured organization model rather than a stale browser-local
+      // model selection left by a previous teacher/admin session.
+      modelString: body.useServerModel
+        ? getTokenPlanChatModel() || body.model
+        : body.model,
       stage: 'chat-adapter',
       apiKey: body.apiKey,
       baseUrl: body.baseUrl,

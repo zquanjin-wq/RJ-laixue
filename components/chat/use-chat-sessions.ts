@@ -65,6 +65,12 @@ function buildQuizResultsForStoreState(
   };
 }
 
+function isLearnerTaskContext(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.has('task') && params.get('share') === '1';
+}
+
 interface UseChatSessionsOptions {
   onLiveSpeech?: (text: string | null, agentId?: string | null) => void;
   onSpeechProgress?: (ratio: number | null) => void;
@@ -965,6 +971,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             model: mc.modelString,
             providerType: mc.providerType,
             thinkingConfig: mc.thinkingConfig,
+            useServerModel: isLearnerTaskContext(),
           },
           controller,
           session.type,
@@ -1193,6 +1200,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             model: mc.modelString,
             providerType: mc.providerType,
             thinkingConfig: mc.thinkingConfig,
+            useServerModel: isLearnerTaskContext(),
           },
           controller,
           sessionType,
@@ -1338,6 +1346,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             model: mc.modelString,
             providerType: mc.providerType,
             thinkingConfig: mc.thinkingConfig,
+            useServerModel: isLearnerTaskContext(),
           },
           controller,
           'discussion',

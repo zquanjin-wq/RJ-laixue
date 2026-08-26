@@ -464,6 +464,27 @@ export function getServerTokenPlan(): { configured: boolean; presetId?: string }
   return getConfig().tokenPlan;
 }
 
+/**
+ * The organization-wide teaching chat model, when a Token Plan is enabled.
+ *
+ * Learners should not need to inherit a teacher's browser-local model choice.
+ * The Token Plan is the explicit organization-level choice, so task learning
+ * uses its first allowed language model. Undefined means the caller should
+ * keep its normal model-selection behaviour.
+ */
+export function getTokenPlanChatModel(): string | undefined {
+  const config = getConfig();
+  if (
+    !config.tokenPlan.configured ||
+    config.tokenPlan.presetId !== MINIMAX_TOKEN_PLAN.presetId
+  ) {
+    return undefined;
+  }
+
+  const modelId = config.providers[MINIMAX_TOKEN_PLAN.llm.providerId]?.models?.[0];
+  return modelId ? `${MINIMAX_TOKEN_PLAN.llm.providerId}:${modelId}` : undefined;
+}
+
 function resolveSectionApiKey(
   section: ProviderSection,
   providerId: string,

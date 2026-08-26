@@ -301,6 +301,8 @@ export interface StatelessChatRequest {
   baseUrl?: string;
   model?: string;
   providerType?: string;
+  /** Use the organization-managed teaching model for a learner task. */
+  useServerModel?: boolean;
   /**
    * Opt-in: enable provider-side thinking for this request. Default is
    * `{ enabled: false }` (low-latency chat). Eval harness sets this to
