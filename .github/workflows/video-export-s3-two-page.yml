@@ -1,8 +1,8 @@
 name: video-export-s3-two-page
 
 # Unmerged pull-request proof only: compile the fixed local fixture and render
-# it on the runner's loopback address. Page two includes a local SVG so its
-# uploaded screenshot can be visually inspected. No secrets, deployments, or app APIs.
+# it on the runner's loopback address. The fixture has a self-generated local
+# WAV narration track and two timed subtitles. No secrets, deployments, or app APIs.
 on:
   pull_request:
     paths:
@@ -77,10 +77,11 @@ jobs:
           echo "$STATUS" > /tmp/render-status.json
           curl -sf "http://127.0.0.1:9000/render/$JOB_ID/download" -o /tmp/two-page-course.mp4
 
-      - name: Inspect video and two-page switch
+      - name: Inspect video, audio stream, and two-page switch
         run: |
           ffprobe -v error -show_format -show_streams -of json /tmp/two-page-course.mp4 > /tmp/ffprobe.json
           jq -e 'any(.streams[]; .codec_type == "video" and .codec_name == "h264" and .width == 1280 and .height == 720)' /tmp/ffprobe.json
+          jq -e 'any(.streams[]; .codec_type == "audio")' /tmp/ffprobe.json
           jq -e '.format.duration | tonumber >= 5.5 and tonumber <= 6.5' /tmp/ffprobe.json
           ffmpeg -y -v error -ss 1 -i /tmp/two-page-course.mp4 -frames:v 1 /tmp/page-one.png
           ffmpeg -y -v error -ss 4 -i /tmp/two-page-course.mp4 -frames:v 1 /tmp/page-two.png
