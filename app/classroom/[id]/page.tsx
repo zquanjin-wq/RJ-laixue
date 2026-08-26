@@ -1007,12 +1007,20 @@ export default function ClassroomDetailPage() {
                 onRetryOutline={retrySingleOutline}
                 readOnlyShare={readOnlyShare}
                 playbackHeaderExtra={
-                  !readOnlyShare &&
-                  !viewMode &&
-                  canSave &&
-                  generationComplete &&
-                  !editorAutoOpen &&
-                  stageMode !== 'edit' ? (
+                  taskId && readOnlyShare && taskToken ? (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/learn/${encodeURIComponent(taskToken)}`)}
+                      className="inline-flex h-9 shrink-0 items-center rounded-full border bg-background/95 px-3 text-sm font-medium shadow-sm backdrop-blur hover:bg-muted"
+                    >
+                      返回任务列表
+                    </button>
+                  ) : !readOnlyShare &&
+                    !viewMode &&
+                    canSave &&
+                    generationComplete &&
+                    !editorAutoOpen &&
+                    stageMode !== 'edit' ? (
                     <button
                       type="button"
                       onClick={() => void handleSaveToCloud()}
@@ -1025,19 +1033,6 @@ export default function ClassroomDetailPage() {
                   ) : null
                 }
               />
-              {taskId && readOnlyShare && (
-                <div className="fixed right-60 top-6 z-50 flex items-center gap-2">
-                  {taskToken && (
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/learn/${encodeURIComponent(taskToken)}`)}
-                      className="rounded-full border bg-background/95 px-3 py-2 text-sm font-medium shadow-sm backdrop-blur hover:bg-muted"
-                    >
-                      返回任务列表
-                    </button>
-                  )}
-                </div>
-              )}
             </>
           )}
         </div>

@@ -1321,6 +1321,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
               onToggleEditMode={onEnterProMode}
               hideBackButton={readOnlyShare}
               hideProMode={readOnlyShare}
+              hideExport={readOnlyShare}
               extraControls={headerExtra}
             />
           )}
