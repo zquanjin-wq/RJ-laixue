@@ -15,6 +15,7 @@ interface HeaderProps {
   readonly hideBackButton?: boolean;
   readonly hideProMode?: boolean;
   readonly hideExport?: boolean;
+  readonly hideSettings?: boolean;
   readonly extraControls?: ReactNode;
 }
 
@@ -26,6 +27,7 @@ export function Header({
   hideBackButton = false,
   hideProMode = false,
   hideExport = false,
+  hideSettings = false,
   extraControls,
 }: HeaderProps) {
   const { t } = useI18n();
@@ -74,6 +76,7 @@ export function Header({
           onToggleEditMode={onToggleEditMode}
           hideProMode={hideProMode}
           hideExport={hideExport}
+          hideSettings={hideSettings}
           extraControls={extraControls}
         />
       </header>

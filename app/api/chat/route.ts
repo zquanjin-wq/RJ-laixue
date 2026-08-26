@@ -65,6 +65,16 @@ export async function POST(req: NextRequest) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: config.agentIds');
     }
 
+    const chatConfig = body.useServerModel
+      ? {
+          ...body.config,
+          // Learners use the platform's built-in AI teacher. A task must not
+          // depend on an editor browser's generated-agent registry.
+          agentIds: ['default-1'],
+          agentConfigs: undefined,
+        }
+      : body.config;
+
     const {
       model: languageModel,
       apiKey: resolvedApiKey,
@@ -92,7 +102,7 @@ export async function POST(req: NextRequest) {
 
     log.info('Processing request');
     log.info(
-      `Agents: ${body.config.agentIds.join(', ')}, Messages: ${body.messages.length}, Turn: ${body.directorState?.turnCount ?? 0}`,
+      `Agents: ${chatConfig.agentIds.join(', ')}, Messages: ${body.messages.length}, Turn: ${body.directorState?.turnCount ?? 0}`,
     );
 
     // Use the native request signal for abort propagation
@@ -138,6 +148,7 @@ export async function POST(req: NextRequest) {
         const generator = statelessGenerate(
           {
             ...body,
+            config: chatConfig,
             apiKey: resolvedApiKey,
           },
           signal,

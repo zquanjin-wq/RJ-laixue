@@ -37,6 +37,8 @@ interface HeaderControlsProps {
   readonly hideProMode?: boolean;
   /** Hide file exports for learner task playback. */
   readonly hideExport?: boolean;
+  /** Learner task playback uses organization-managed settings only. */
+  readonly hideSettings?: boolean;
   /** Course-level action placed beside export/download, never over the lesson body. */
   readonly extraControls?: ReactNode;
   /**
@@ -67,6 +69,7 @@ export function HeaderControls({
   onToggleEditMode,
   hideProMode = false,
   hideExport = false,
+  hideSettings = false,
   extraControls,
   variant = 'default',
 }: HeaderControlsProps) {
@@ -181,14 +184,15 @@ export function HeaderControls({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Settings */}
-        <button
-          onClick={() => setSettingsOpen(true)}
-          className="p-2 rounded-full text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm transition-all group"
-          aria-label={t('settings.title')}
-        >
-          <Settings className="w-4 h-4 group-hover:rotate-90 transition-transform duration-500" />
-        </button>
+        {!hideSettings && (
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2 rounded-full text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm transition-all group"
+            aria-label={t('settings.title')}
+          >
+            <Settings className="w-4 h-4 group-hover:rotate-90 transition-transform duration-500" />
+          </button>
+        )}
       </div>
 
       {/* Pro Switch — toggle property: on/off both clickable, not a
