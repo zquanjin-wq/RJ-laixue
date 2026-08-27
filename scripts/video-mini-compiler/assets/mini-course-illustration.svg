@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" role="img" aria-label="课程渲染流程示意图">
+  <rect width="480" height="300" rx="28" fill="#e0f2fe"/>
+  <path d="M88 150h90m124 0h90" stroke="#0284c7" stroke-width="12" stroke-linecap="round"/>
+  <path d="m166 124 28 26-28 26m112-52 28 26-28 26" fill="none" stroke="#0284c7" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="38" y="85" width="94" height="130" rx="18" fill="#0f766e"/>
+  <rect x="193" y="85" width="94" height="130" rx="18" fill="#f97316"/>
+  <rect x="348" y="85" width="94" height="130" rx="18" fill="#7c3aed"/>
+  <text x="85" y="158" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="30" font-weight="700">课件</text>
+  <text x="240" y="158" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="30" font-weight="700">ZIP</text>
+  <text x="395" y="158" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="30" font-weight="700">视频</text>
+</svg>
