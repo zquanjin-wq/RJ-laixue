@@ -9,22 +9,30 @@
  *      openmaic-video-manifest.json   — VideoTimeline-shaped manifest
  *      assets/vendor/gsap.min.js      — vendored GSAP (no CDN)
  *
- * **Out of scope.** KaTeX, Noto CJK, spotlight, Quiz/PBL, video clips, IR
+ * **Out of scope.** Noto CJK, spotlight, Quiz/PBL, video clips, IR
  * validation (zod), runtime wiring, AppSurface glue. Each is a later S3.x
  * task.
  *
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import JSZip from 'jszip';
+import katex from 'katex';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GSAP_PATH = resolve(__dirname, 'vendor/gsap.min.js');
 const SAMPLE_IMAGE_PATH = resolve(__dirname, 'assets/mini-course-illustration.svg');
 const SAMPLE_IMAGE_ZIP_PATH = 'assets/images/mini-course-illustration.svg';
 const SAMPLE_AUDIO_ZIP_PATH = 'assets/audio/two-page-tone.wav';
+const require = createRequire(import.meta.url);
+const KATEX_CSS_PATH = require.resolve('katex/dist/katex.min.css');
+const KATEX_DIST_PATH = dirname(KATEX_CSS_PATH);
+const KATEX_FONT_PATH = resolve(KATEX_DIST_PATH, 'fonts');
+const KATEX_ZIP_ROOT = 'assets/vendor/katex';
+const FORMULA_TEX = String.raw`\frac{6}{2} = 3`;
 
 /** Public input — exactly two pages. */
 export interface MiniPage {
@@ -136,7 +144,8 @@ function buildIndexHtml(course: MiniCourse, totalDurationMs: number): string {
   const scene2Start = scene1.durationMs;
   const totalSec = (totalDurationMs / 1000).toFixed(4);
 
-  const style = `  * { box-sizing: border-box; }\n  html, body { margin: 0; padding: 0; background: #000; }\n  #openmaic { font-family: system-ui, sans-serif; color: #f5f5f5; }\n  .clip-title { position: absolute; top: 6%; left: 0; width: 100%; text-align: center; font-size: 2.4vw; font-weight: 700; }\n  .clip-body { position: absolute; top: 18%; left: 8%; width: 84%; font-size: 1.6vw; line-height: 1.6; white-space: pre-wrap; }\n  #scene-2-base .clip-body { width: 52%; }\n  .clip-image { position: absolute; top: 24%; right: 9%; width: 27%; height: auto; }\n  .subtitle { position:absolute;left:12%;right:12%;bottom:7%;z-index:10;padding:14px 22px;border-radius:10px;background:rgba(0,0,0,.72);text-align:center;font-size:1.6vw; }`;
+  const style = `  * { box-sizing: border-box; }\n  html, body { margin: 0; padding: 0; background: #000; }\n  #openmaic { font-family: system-ui, sans-serif; color: #f5f5f5; }\n  .clip-title { position: absolute; top: 6%; left: 0; width: 100%; text-align: center; font-size: 2.4vw; font-weight: 700; }\n  .clip-body { position: absolute; top: 18%; left: 8%; width: 84%; font-size: 1.6vw; line-height: 1.6; white-space: pre-wrap; }\n  #scene-2-base .clip-body { width: 52%; }\n  .clip-image { position: absolute; top: 24%; right: 9%; width: 27%; height: auto; }\n  .clip-formula { position:absolute;top:51%;left:9%;font-size:3.5vw;color:#fde68a; }\n  .subtitle { position:absolute;left:12%;right:12%;bottom:7%;z-index:10;padding:14px 22px;border-radius:10px;background:rgba(0,0,0,.72);text-align:center;font-size:1.6vw; }`;
+  const formulaHtml = katex.renderToString(FORMULA_TEX, { displayMode: true, output: 'html' });
 
   const scene1Div =
     `<div id="scene-1-base" class="clip" data-start="${(scene1Start / 1000).toFixed(4)}" data-duration="${(scene1.durationMs / 1000).toFixed(4)}" data-track-index="0" style="position:absolute;inset:0;background:#0f172a;opacity:1">` +
@@ -148,6 +157,7 @@ function buildIndexHtml(course: MiniCourse, totalDurationMs: number): string {
     `<div id="scene-2-base" class="clip" data-start="${(scene2Start / 1000).toFixed(4)}" data-duration="${(scene2.durationMs / 1000).toFixed(4)}" data-track-index="0" style="position:absolute;inset:0;background:#1e293b;opacity:0;visibility:hidden">` +
     `\n  <div dir="auto" class="clip-title">${escapeHtml(scene2.title)}</div>` +
     `\n  <div dir="auto" class="clip-body">${escapeHtml(scene2.body)}</div>` +
+    `\n  <div class="clip-formula" aria-label="6 除以 2 等于 3">${formulaHtml}</div>` +
     `\n  <img class="clip-image" src="${SAMPLE_IMAGE_ZIP_PATH}" alt="课程示意图" />` +
     `\n</div>`;
 
@@ -170,6 +180,7 @@ function buildIndexHtml(course: MiniCourse, totalDurationMs: number): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(course.stageName)} \u2014 OpenMAIC video</title>
+<link rel="stylesheet" href="${KATEX_ZIP_ROOT}/katex.min.css" />
 <style>
 ${style}
 </style>
@@ -277,6 +288,10 @@ export async function compileTwoPageCourse(course: MiniCourse): Promise<Uint8Arr
   zip.file('assets/vendor/gsap.min.js', gsapBytes, { date });
   zip.file(SAMPLE_IMAGE_ZIP_PATH, readFileSync(SAMPLE_IMAGE_PATH), { date });
   zip.file(SAMPLE_AUDIO_ZIP_PATH, createTwoPageToneWav(totalDurationMs, course.pages[0].durationMs), { date });
+  zip.file(`${KATEX_ZIP_ROOT}/katex.min.css`, readFileSync(KATEX_CSS_PATH), { date });
+  for (const name of readdirSync(KATEX_FONT_PATH).filter((entry) => entry.endsWith('.woff2'))) {
+    zip.file(`${KATEX_ZIP_ROOT}/fonts/${name}`, readFileSync(resolve(KATEX_FONT_PATH, name)), { date });
+  }
   zip.file('subtitles.srt', subtitles.srt, { date });
   zip.file('subtitles.vtt', subtitles.vtt, { date });
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });

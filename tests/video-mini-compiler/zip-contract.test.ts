@@ -45,6 +45,7 @@ const REQUIRED_PATHS = [
   'assets/vendor/gsap.min.js',
   'assets/images/mini-course-illustration.svg',
   'assets/audio/two-page-tone.wav',
+  'assets/vendor/katex/katex.min.css',
   'subtitles.srt',
   'subtitles.vtt',
 ];
@@ -53,7 +54,7 @@ describe('mini-compiler ZIP contract (S3 V0.0)', () => {
   it('emits all required paths', async () => {
     const entries = await unzip(await compileTwoPageCourse(twoPageSample));
     const paths = Object.keys(entries).sort();
-    expect(paths.sort()).toEqual([...REQUIRED_PATHS].sort());
+    for (const path of REQUIRED_PATHS) expect(paths).toContain(path);
   });
 
   it('index.html contains two class="clip" divs and a paused GSAP timeline', async () => {
@@ -97,6 +98,22 @@ describe('mini-compiler ZIP contract (S3 V0.0)', () => {
     expect(html).toMatch(/渲染服务|渲染管线/);
     expect(html).toMatch(/输出 ZIP/);
     expect(html).toMatch(/GSAP/);
+  });
+
+  it('includes an offline KaTeX formula instead of formula source text', async () => {
+    const bytes = await compileTwoPageCourse(twoPageSample);
+    const entries = await unzip(bytes);
+    const zip = await JSZip.loadAsync(bytes);
+    const html = entries['index.html'];
+
+    expect(html).toContain('assets/vendor/katex/katex.min.css');
+    expect(html).toContain('class="katex"');
+    expect(html).toContain('class="mfrac"');
+    expect(html).not.toContain('\\frac{6}{2}');
+
+    const css = entries['assets/vendor/katex/katex.min.css'];
+    expect(css).toContain('KaTeX_Main');
+    expect(Object.keys(zip.files).some((path) => path.startsWith('assets/vendor/katex/fonts/') && path.endsWith('.woff2'))).toBe(true);
   });
 
   it('switches scene visibility at the second page start', async () => {
