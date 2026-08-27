@@ -36,6 +36,7 @@ jobs:
 
       - name: Start the published image
         run: |
+          docker logout ghcr.io
           docker image rm "$IMAGE_NAME"
           docker pull "$IMAGE_NAME"
           docker run -d --name render-service \
