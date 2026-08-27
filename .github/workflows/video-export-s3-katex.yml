@@ -1,0 +1,110 @@
+name: video-export-s3-katex
+
+# Temporary unmerged PR proof only. It renders the fixed offline fixture on the
+# runner loopback address; it has no secrets, deployments, or application APIs.
+on:
+  pull_request:
+    paths:
+      - 'scripts/video-mini-compiler/**'
+      - 'tests/video-mini-compiler/**'
+      - '.github/workflows/video-export-s3-katex.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  render-katex-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install compiler dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Compile the fixed offline KaTeX ZIP
+        run: pnpm exec tsx scripts/video-mini-compiler/write-fixture.ts /tmp/katex-course.zip
+
+      - name: Check the local ZIP contract
+        run: pnpm exec vitest run tests/video-mini-compiler/zip-contract.test.ts
+
+      - name: Install video inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Fetch upstream render-service
+        run: git clone --depth 1 --branch v0.3.2 https://github.com/THU-MAIC/OpenMAIC.git /tmp/openmaic
+
+      - name: Build and start render-service
+        run: |
+          docker build -t openmaic-render-service /tmp/openmaic/render-service
+          docker run -d --name render-service \
+            -e RENDER_EGRESS_LOCKDOWN=false \
+            -e RENDER_RESOURCE_PROFILE=low-memory \
+            -p 127.0.0.1:9000:9000 \
+            openmaic-render-service
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:9000/health && exit 0
+            sleep 2
+          done
+          docker logs render-service
+          exit 1
+
+      - name: Render the local ZIP
+        run: |
+          JOB=$(curl -sf -F 'project=@/tmp/katex-course.zip;type=application/zip' \
+            -F fps=24 -F quality=draft -F format=mp4 http://127.0.0.1:9000/render)
+          echo "$JOB" > /tmp/job.json
+          JOB_ID=$(echo "$JOB" | jq -r .jobId)
+          for i in $(seq 1 90); do
+            STATUS=$(curl -sf "http://127.0.0.1:9000/render/$JOB_ID")
+            echo "$STATUS"
+            STATE=$(echo "$STATUS" | jq -r .status)
+            [ "$STATE" = succeeded ] && break
+            [ "$STATE" = failed ] && exit 1
+            sleep 2
+          done
+          [ "$STATE" = succeeded ]
+          echo "$STATUS" > /tmp/render-status.json
+          curl -sf "http://127.0.0.1:9000/render/$JOB_ID/download" -o /tmp/katex-course.mp4
+
+      - name: Inspect the video and capture the formula page
+        run: |
+          ffprobe -v error -show_format -show_streams -of json /tmp/katex-course.mp4 > /tmp/ffprobe.json
+          jq -e 'any(.streams[]; .codec_type == "video" and .codec_name == "h264" and .width == 1280 and .height == 720)' /tmp/ffprobe.json
+          jq -e 'any(.streams[]; .codec_type == "audio")' /tmp/ffprobe.json
+          jq -e '.format.duration | tonumber >= 5.5 and tonumber <= 6.5' /tmp/ffprobe.json
+          ffmpeg -y -v error -ss 1 -i /tmp/katex-course.mp4 -frames:v 1 /tmp/page-one.png
+          ffmpeg -y -v error -ss 4 -i /tmp/katex-course.mp4 -frames:v 1 /tmp/formula-page.png
+          test -s /tmp/page-one.png
+          test -s /tmp/formula-page.png
+          if cmp -s /tmp/page-one.png /tmp/formula-page.png; then
+            echo 'Expected the formula page to differ from page one'
+            exit 1
+          fi
+
+      - name: Upload proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-export-s3-katex-proof
+          retention-days: 1
+          path: |
+            /tmp/katex-course.zip
+            /tmp/katex-course.mp4
+            /tmp/job.json
+            /tmp/render-status.json
+            /tmp/ffprobe.json
+            /tmp/page-one.png
+            /tmp/formula-page.png
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f render-service || true
