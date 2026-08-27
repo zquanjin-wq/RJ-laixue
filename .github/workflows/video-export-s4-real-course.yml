@@ -1,0 +1,91 @@
+name: video-export-s4-real-course
+
+# Temporary, unmerged PR proof only. It renders a three-scene classroom export
+# fixture on the runner loopback address. No secrets, deployments or app APIs.
+on:
+  pull_request:
+    paths:
+      - 'lib/video-export/**'
+      - 'scripts/video-course-adapter/**'
+      - 'tests/video-export/**'
+      - '.github/workflows/video-export-s4-real-course.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  render-real-course-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Compile classroom-structured ZIP
+        run: pnpm exec tsx scripts/video-course-adapter/write-fixture.ts /tmp/real-course.zip
+      - name: Check adapter and compiler contracts
+        run: pnpm exec vitest run tests/video-export/course-video-source.test.ts tests/video-export/compile-course-video.test.ts
+      - name: Install video inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Fetch upstream render-service
+        run: git clone --depth 1 --branch v0.3.2 https://github.com/THU-MAIC/OpenMAIC.git /tmp/openmaic
+      - name: Build and start render-service
+        run: |
+          docker build -t openmaic-render-service /tmp/openmaic/render-service
+          docker run -d --name render-service -e RENDER_EGRESS_LOCKDOWN=false -e RENDER_RESOURCE_PROFILE=low-memory -p 127.0.0.1:9000:9000 openmaic-render-service
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/health && exit 0; sleep 2; done
+          docker logs render-service
+          exit 1
+      - name: Render the classroom-structured ZIP
+        run: |
+          JOB=$(curl -sf -F 'project=@/tmp/real-course.zip;type=application/zip' -F fps=24 -F quality=draft -F format=mp4 http://127.0.0.1:9000/render)
+          JOB_ID=$(echo "$JOB" | jq -r .jobId)
+          echo "$JOB" > /tmp/job.json
+          for i in $(seq 1 90); do
+            STATUS=$(curl -sf "http://127.0.0.1:9000/render/$JOB_ID")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            [ "$STATE" = succeeded ] && break
+            [ "$STATE" = failed ] && exit 1
+            sleep 2
+          done
+          [ "$STATE" = succeeded ]
+          echo "$STATUS" > /tmp/render-status.json
+          curl -sf "http://127.0.0.1:9000/render/$JOB_ID/download" -o /tmp/real-course.mp4
+      - name: Inspect the three scene video
+        run: |
+          ffprobe -v error -show_format -show_streams -of json /tmp/real-course.mp4 > /tmp/ffprobe.json
+          jq -e 'any(.streams[]; .codec_type == "video" and .codec_name == "h264" and .width == 1280 and .height == 720)' /tmp/ffprobe.json
+          jq -e 'any(.streams[]; .codec_type == "audio")' /tmp/ffprobe.json
+          jq -e '.format.duration | tonumber >= 11.5 and tonumber <= 12.5' /tmp/ffprobe.json
+          ffmpeg -y -v error -ss 1 -i /tmp/real-course.mp4 -frames:v 1 /tmp/slide.png
+          ffmpeg -y -v error -ss 4 -i /tmp/real-course.mp4 -frames:v 1 /tmp/quiz-cover.png
+          ffmpeg -y -v error -ss 9 -i /tmp/real-course.mp4 -frames:v 1 /tmp/interactive-cover.png
+          test -s /tmp/slide.png && test -s /tmp/quiz-cover.png && test -s /tmp/interactive-cover.png
+          if cmp -s /tmp/slide.png /tmp/quiz-cover.png || cmp -s /tmp/quiz-cover.png /tmp/interactive-cover.png; then
+            echo 'Expected the slide and cover pages to render differently'
+            exit 1
+          fi
+      - name: Upload proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-export-s4-real-course-proof
+          retention-days: 1
+          path: |
+            /tmp/real-course.zip
+            /tmp/real-course.mp4
+            /tmp/job.json
+            /tmp/render-status.json
+            /tmp/ffprobe.json
+            /tmp/slide.png
+            /tmp/quiz-cover.png
+            /tmp/interactive-cover.png
+      - name: Cleanup
+        if: always()
+        run: docker rm -f render-service || true
