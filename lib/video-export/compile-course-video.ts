@@ -73,9 +73,13 @@ function pageHtml(timed: TimedPage): string {
   const { page } = timed;
   const base = `<div id="${page.id}" class="scene" data-start="${(timed.startMs / 1000).toFixed(3)}" data-duration="${(timed.durationMs / 1000).toFixed(3)}" style="opacity:0;visibility:hidden">`;
   if (page.kind === 'slide') {
-    return `${base}<img class="slide-image" src="assets/scenes/${page.id}.png" alt="${escapeHtml(page.title)}" /></div>`;
+    return `${base}<img class="slide-image" src="${sceneImagePath(page)}" alt="${escapeHtml(page.title)}" /></div>`;
   }
   return `${base}<div class="cover-title">${escapeHtml(page.title)}</div><div class="cover-body">${escapeHtml(page.body)}</div></div>`;
+}
+
+function sceneImagePath(page: Extract<VideoSourcePage, { kind: 'slide' }>): string {
+  return `assets/scenes/${page.id}.${page.image.type === 'image/svg+xml' ? 'svg' : 'png'}`;
 }
 
 function buildIndexHtml(source: CourseVideoSource, timedPages: TimedPage[], totalDurationMs: number): string {
@@ -161,7 +165,7 @@ export async function compileCourseVideo(
 
   for (const timed of timedPages) {
     if (timed.page.kind === 'slide') {
-      zip.file(`assets/scenes/${timed.page.id}.png`, await blobBytes(timed.page.image));
+      zip.file(sceneImagePath(timed.page), await blobBytes(timed.page.image));
     }
   }
 
