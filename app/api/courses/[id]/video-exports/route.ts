@@ -3,8 +3,11 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { requireAuthOrTeacher } from '@/lib/server/api-guard';
 import {
   cancelCourseVideoExportJob,
+  createCourseVideoDownloadUrl,
   createCourseVideoExportJob,
   getCourseVideoExportJob,
+  startCourseVideoExportJob,
+  syncCourseVideoExportJob,
   type CourseVideoExportJob,
 } from '@/lib/server/course-video-export-jobs';
 import { getServiceSupabase } from '@/lib/supabase/server';
@@ -22,7 +25,7 @@ async function canManageCourseVideoExport(courseId: string, userId: string) {
   return course.created_by === userId || profile?.role === 'admin' ? 'ok' as const : 'forbidden' as const;
 }
 
-function present(job: CourseVideoExportJob) {
+function present(job: CourseVideoExportJob, downloadUrl?: string | null) {
   return {
     id: job.id,
     status: job.status,
@@ -31,6 +34,7 @@ function present(job: CourseVideoExportJob) {
     done: ['succeeded', 'failed', 'cancelled'].includes(job.status),
     createdAt: job.created_at,
     updatedAt: job.updated_at,
+    downloadUrl: downloadUrl ?? undefined,
   };
 }
 
@@ -59,9 +63,37 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   if (access !== 'ok') return apiError('NOT_FOUND', 404, '任务不存在');
   const jobId = request.nextUrl.searchParams.get('jobId');
   if (!jobId) return apiError('INVALID_REQUEST', 400, '缺少任务 ID');
-  const job = await getCourseVideoExportJob(jobId);
+  let job = await getCourseVideoExportJob(jobId);
   if (!job || job.course_id !== courseId) return apiError('NOT_FOUND', 404, '任务不存在');
-  return apiSuccess({ job: present(job) });
+  try {
+    job = await syncCourseVideoExportJob(jobId);
+    if (!job) return apiError('NOT_FOUND', 404, '任务不存在');
+    const downloadUrl = await createCourseVideoDownloadUrl(job);
+    return apiSuccess({ job: present(job, downloadUrl), pollIntervalMs: 3000 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return apiError('INTERNAL_ERROR', 500, message);
+  }
+}
+
+export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+  if (!auth.ok) return auth.response;
+  const { id: courseId } = await context.params;
+  const access = await canManageCourseVideoExport(courseId, auth.user.id);
+  if (access !== 'ok') return apiError('NOT_FOUND', 404, '任务不存在');
+  const body = (await request.json().catch(() => null)) as { jobId?: string } | null;
+  if (!body?.jobId) return apiError('INVALID_REQUEST', 400, '缺少任务 ID');
+  const job = await getCourseVideoExportJob(body.jobId);
+  if (!job || job.course_id !== courseId) return apiError('NOT_FOUND', 404, '任务不存在');
+  try {
+    const started = await startCourseVideoExportJob(job.id);
+    if (!started) return apiError('NOT_FOUND', 404, '任务不存在');
+    return apiSuccess({ job: present(started), pollIntervalMs: 3000 }, 202);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return apiError('INTERNAL_ERROR', 500, message);
+  }
 }
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
