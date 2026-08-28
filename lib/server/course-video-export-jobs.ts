@@ -74,7 +74,8 @@ export async function createCourseVideoExportJob(courseId: string, userId: strin
   const { data, error: uploadError } = await service.storage
     .from(COURSE_ASSET_BUCKET)
     .createSignedUploadUrl(inputPath, { upsert: true });
-  if (uploadError || !data) throw new Error(`创建视频导出上传地址失败：${uploadError?.message ?? 'unknown'}`);
+  if (uploadError || !data)
+    throw new Error(`创建视频导出上传地址失败：${uploadError?.message ?? 'unknown'}`);
   return { job: created as CourseVideoExportJob, upload: data };
 }
 
@@ -140,9 +141,10 @@ export async function syncCourseVideoExportJob(jobId: string) {
     '查询视频渲染状态',
   );
   if (render.status === 'queued' || render.status === 'running') {
-    const progress = render.totalFrames && typeof render.frame === 'number'
-      ? `（${render.frame}/${render.totalFrames} 帧）`
-      : '';
+    const progress =
+      render.totalFrames && typeof render.frame === 'number'
+        ? `（${render.frame}/${render.totalFrames} 帧）`
+        : '';
     const { data, error } = await service
       .from('course_video_export_jobs')
       .update({ message: `正在生成课程视频${progress}`, updated_at: new Date().toISOString() })
@@ -199,8 +201,8 @@ export async function syncCourseVideoExportJob(jobId: string) {
 
 export async function createCourseVideoDownloadUrl(job: CourseVideoExportJob) {
   if (job.status !== 'succeeded' || !job.output_path) return null;
-  const { data, error } = await getServiceSupabase().storage
-    .from(COURSE_ASSET_BUCKET)
+  const { data, error } = await getServiceSupabase()
+    .storage.from(COURSE_ASSET_BUCKET)
     .createSignedUrl(job.output_path, 60 * 60);
   if (error || !data) throw new Error(`创建视频下载地址失败：${error?.message ?? 'unknown'}`);
   return data.signedUrl;
@@ -216,7 +218,11 @@ export async function cancelCourseVideoExportJob(jobId: string) {
   }
   const { data, error } = await service
     .from('course_video_export_jobs')
-    .update({ status: 'cancelled', message: '已取消视频导出', completed_at: new Date().toISOString() })
+    .update({
+      status: 'cancelled',
+      message: '已取消视频导出',
+      completed_at: new Date().toISOString(),
+    })
     .eq('id', jobId)
     .in('status', ['uploading', 'queued', 'running'])
     .select('*')

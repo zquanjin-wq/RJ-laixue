@@ -5,6 +5,7 @@ import {
   Archive,
   Download,
   FileDown,
+  Film,
   Loader2,
   Monitor,
   Moon,
@@ -19,6 +20,7 @@ import { useStageStore } from '@/lib/store';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useExportClassroom } from '@/lib/export/use-export-classroom';
+import { useExportCourseVideo } from '@/lib/export/use-export-course-video';
 import { LanguageSwitcher } from '../language-switcher';
 import { SettingsDialog } from '../settings';
 import {
@@ -88,6 +90,7 @@ export function HeaderControls({
   const mediaTasks = useMediaGenerationStore((s) => s.tasks);
   const { exporting: isExporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const { exporting: isExportingZip, exportClassroomZip } = useExportClassroom();
+  const videoExport = useExportCourseVideo();
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -255,27 +258,27 @@ export function HeaderControls({
         <div className="relative" ref={exportRef}>
           <button
             onClick={() => {
-              if (canExport && !isExporting && !isExportingZip) {
+              if (canExport && !isExporting && !isExportingZip && !videoExport.preparing) {
                 setExportMenuOpen(!exportMenuOpen);
               }
             }}
-            disabled={!canExport || isExporting || isExportingZip}
+            disabled={!canExport || isExporting || isExportingZip || videoExport.preparing}
             title={
               canExport
-                ? isExporting || isExportingZip
+                ? isExporting || isExportingZip || videoExport.preparing
                   ? t('export.exporting')
                   : t('export.pptx')
                 : t('share.notReady')
             }
             className={cn(
               'shrink-0 p-2 rounded-full transition-all',
-              canExport && !isExporting && !isExportingZip
+              canExport && !isExporting && !isExportingZip && !videoExport.preparing
                 ? 'text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm'
                 : 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-50',
             )}
             aria-label={t('export.pptx')}
           >
-            {isExporting || isExportingZip ? (
+            {isExporting || isExportingZip || videoExport.preparing ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Download className="w-4 h-4" />
@@ -321,6 +324,35 @@ export function HeaderControls({
                   <div>{t('export.classroomZip')}</div>
                   <div className="text-[11px] text-gray-400 dark:text-gray-500">
                     {t('export.classroomZipDesc')}
+                  </div>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  if (videoExport.job?.status === 'succeeded') videoExport.download();
+                  else void videoExport.start();
+                }}
+                disabled={videoExport.active}
+                className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5 disabled:opacity-60 disabled:cursor-wait"
+              >
+                {videoExport.active ? (
+                  <Loader2 className="w-4 h-4 text-purple-500 shrink-0 animate-spin" />
+                ) : (
+                  <Film className="w-4 h-4 text-purple-500 shrink-0" />
+                )}
+                <div>
+                  <div>
+                    {videoExport.job?.status === 'succeeded'
+                      ? '下载课程视频'
+                      : videoExport.active
+                        ? videoExport.job?.message || '正在准备课程视频'
+                        : '导出课程视频'}
+                  </div>
+                  <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                    {videoExport.job?.status === 'succeeded'
+                      ? 'MP4 已生成'
+                      : '生成带讲解与字幕的 MP4'}
                   </div>
                 </div>
               </button>

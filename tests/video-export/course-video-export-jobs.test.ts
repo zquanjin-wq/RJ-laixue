@@ -5,35 +5,40 @@ const state = vi.hoisted(() => ({
   uploads: [] as Array<{ path: string; body: unknown; options: unknown }>,
 }));
 
-const getServiceSupabase = vi.hoisted(() => vi.fn(() => ({
-  from: () => ({
-    select: () => ({
-      eq: () => ({ maybeSingle: async () => ({ data: state.job, error: null }) }),
-    }),
-    update: (patch: Record<string, unknown>) => ({
-      eq: () => {
-        const finish = async () => {
+const getServiceSupabase = vi.hoisted(() =>
+  vi.fn(() => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: state.job, error: null }) }),
+      }),
+      update: (patch: Record<string, unknown>) => ({
+        eq: () => {
+          const finish = async () => {
             state.job = { ...state.job, ...patch };
             return { data: state.job, error: null };
-        };
-        return {
-          select: () => ({ single: finish }),
-          in: () => ({ select: () => ({ maybeSingle: finish }) }),
-        };
-      },
+          };
+          return {
+            select: () => ({ single: finish }),
+            in: () => ({ select: () => ({ maybeSingle: finish }) }),
+          };
+        },
+      }),
     }),
-  }),
-  storage: {
-    from: () => ({
-      download: async () => ({ data: new Blob(['zip']), error: null }),
-      upload: async (path: string, body: unknown, options: unknown) => {
-        state.uploads.push({ path, body, options });
-        return { error: null };
-      },
-      createSignedUrl: async () => ({ data: { signedUrl: 'https://download.test/course.mp4' }, error: null }),
-    }),
-  },
-})));
+    storage: {
+      from: () => ({
+        download: async () => ({ data: new Blob(['zip']), error: null }),
+        upload: async (path: string, body: unknown, options: unknown) => {
+          state.uploads.push({ path, body, options });
+          return { error: null };
+        },
+        createSignedUrl: async () => ({
+          data: { signedUrl: 'https://download.test/course.mp4' },
+          error: null,
+        }),
+      }),
+    },
+  })),
+);
 
 vi.mock('@/lib/supabase/server', () => ({ getServiceSupabase }));
 
@@ -68,9 +73,9 @@ describe('course video export render bridge', () => {
   });
 
   it('submits the uploaded ZIP and records the renderer job', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ jobId: 'render-1' }), { status: 200 }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ jobId: 'render-1' }), { status: 200 }));
 
     const result = await startCourseVideoExportJob('job-1');
 
@@ -102,14 +107,15 @@ describe('course video export render bridge', () => {
 
   it('cancels the renderer before closing the local job', async () => {
     state.job = job('running');
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
 
     const result = await cancelCourseVideoExportJob('job-1');
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://render-preview.laixue.work/render/render-1',
-      { method: 'DELETE' },
-    );
+    expect(fetchMock).toHaveBeenCalledWith('https://render-preview.laixue.work/render/render-1', {
+      method: 'DELETE',
+    });
     expect(result?.status).toBe('cancelled');
   });
 });

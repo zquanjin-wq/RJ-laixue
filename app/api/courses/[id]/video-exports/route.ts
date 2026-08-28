@@ -16,13 +16,16 @@ export const runtime = 'nodejs';
 
 async function canManageCourseVideoExport(courseId: string, userId: string) {
   const service = getServiceSupabase();
-  const [{ data: course, error: courseError }, { data: profile, error: profileError }] = await Promise.all([
-    service.from('courses').select('id, created_by').eq('id', courseId).maybeSingle(),
-    service.from('profiles').select('role').eq('id', userId).maybeSingle(),
-  ]);
+  const [{ data: course, error: courseError }, { data: profile, error: profileError }] =
+    await Promise.all([
+      service.from('courses').select('id, created_by').eq('id', courseId).maybeSingle(),
+      service.from('profiles').select('role').eq('id', userId).maybeSingle(),
+    ]);
   if (courseError || profileError) throw courseError ?? profileError;
   if (!course) return 'not_found' as const;
-  return course.created_by === userId || profile?.role === 'admin' ? 'ok' as const : 'forbidden' as const;
+  return course.created_by === userId || profile?.role === 'admin'
+    ? ('ok' as const)
+    : ('forbidden' as const);
 }
 
 function present(job: CourseVideoExportJob, downloadUrl?: string | null) {

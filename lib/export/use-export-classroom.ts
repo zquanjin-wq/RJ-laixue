@@ -40,203 +40,234 @@ export async function inlineSceneContent(
 
 const log = createLogger('ExportClassroom');
 
+export interface ClassroomExportResult {
+  zipBlob: Blob;
+  manifest: ClassroomManifest;
+  audioByRef: Map<string, { blob: Blob; duration?: number }>;
+  filename: string;
+}
+
+export interface ClassroomExportOptions {
+  download?: boolean;
+  notify?: boolean;
+}
+
 export function useExportClassroom() {
   const [exporting, setExporting] = useState(false);
   const { t } = useI18n();
 
-  const exportClassroomZip = useCallback(async () => {
-    const { stage, scenes } = useStageStore.getState();
-    if (!stage?.id || scenes.length === 0) return;
+  const exportClassroomZip = useCallback(
+    async (options: ClassroomExportOptions = {}): Promise<ClassroomExportResult | undefined> => {
+      const { stage, scenes } = useStageStore.getState();
+      if (!stage?.id || scenes.length === 0) return;
 
-    setExporting(true);
-    const toastId = toast.loading(t('export.exporting'));
+      setExporting(true);
+      const notify = options.notify !== false;
+      const toastId = notify ? toast.loading(t('export.exporting')) : undefined;
 
-    try {
-      const JSZip = (await import('jszip')).default;
-      const zip = new JSZip();
+      try {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
 
-      // 1. Read latest stage name from IndexedDB (may have been renamed on home page)
-      const freshStage = await db.stages.get(stage.id);
-      const latestName = freshStage?.name || stage.name;
+        // 1. Read latest stage name from IndexedDB (may have been renamed on home page)
+        const freshStage = await db.stages.get(stage.id);
+        const latestName = freshStage?.name || stage.name;
 
-      // 2. Collect agents from DB
-      const agentRecords = await getGeneratedAgentsByStageId(stage.id);
+        // 2. Collect agents from DB
+        const agentRecords = await getGeneratedAgentsByStageId(stage.id);
 
-      // 3. Collect audio files
-      const audioFiles = await collectAudioFiles(scenes);
+        // 3. Collect audio files
+        const audioFiles = await collectAudioFiles(scenes);
 
-      // 4. Collect media files (generated images/videos)
-      const mediaFiles = await collectMediaFiles(stage.id);
+        // 4. Collect media files (generated images/videos)
+        const mediaFiles = await collectMediaFiles(stage.id);
 
-      // 5. Build audioId → zipPath mapping for manifest
-      const audioIdToPath = new Map<string, string>();
-      for (const af of audioFiles) {
-        audioIdToPath.set(af.record.id, af.zipPath);
-      }
-
-      // 6. Build manifest
-      const manifestStage: ManifestStage = {
-        name: latestName,
-        description: stage.description,
-        language: stage.languageDirective,
-        style: stage.style,
-        createdAt: stage.createdAt,
-        updatedAt: stage.updatedAt,
-      };
-
-      const manifestAgents: ManifestAgent[] = agentRecords.map((a) => ({
-        name: a.name,
-        role: a.role,
-        persona: a.persona,
-        avatar: a.avatar,
-        color: a.color,
-        priority: a.priority,
-      }));
-
-      // Also include generatedAgentConfigs from stage if agents not in DB
-      if (manifestAgents.length === 0 && stage.generatedAgentConfigs?.length) {
-        for (const a of stage.generatedAgentConfigs) {
-          manifestAgents.push({
-            name: a.name,
-            role: a.role,
-            persona: a.persona,
-            avatar: a.avatar,
-            color: a.color,
-            priority: a.priority,
-          });
+        // 5. Build audioId → zipPath mapping for manifest
+        const audioIdToPath = new Map<string, string>();
+        for (const af of audioFiles) {
+          audioIdToPath.set(af.record.id, af.zipPath);
         }
-      }
 
-      // Build agent ID → index mapping for multiAgent references
-      const agentIdToIndex = new Map<string, number>();
-      agentRecords.forEach((a, i) => agentIdToIndex.set(a.id, i));
-      if (stage.generatedAgentConfigs?.length && agentRecords.length === 0) {
-        stage.generatedAgentConfigs.forEach((a, i) => agentIdToIndex.set(a.id, i));
-      }
+        // 6. Build manifest
+        const manifestStage: ManifestStage = {
+          name: latestName,
+          description: stage.description,
+          language: stage.languageDirective,
+          style: stage.style,
+          createdAt: stage.createdAt,
+          updatedAt: stage.updatedAt,
+        };
 
-      const aggregateReport: InlineReport = { inlined: [], failed: [] };
-      const sharedFetcher = createAssetFetcher({ fetchImpl: createProxiedFetch() });
-      const manifestScenes: ManifestScene[] = await Promise.all(
-        scenes.map(async (scene) => {
-          const { content, report } = await inlineSceneContent(scene.content, {
-            fetcher: sharedFetcher,
-          });
-          for (const u of report.inlined)
-            if (!aggregateReport.inlined.includes(u)) aggregateReport.inlined.push(u);
-          for (const f of report.failed)
-            if (!aggregateReport.failed.some((g) => g.url === f.url))
-              aggregateReport.failed.push(f);
-          return {
-            type: scene.type,
-            title: scene.title,
-            order: scene.order,
-            content,
-            actions: scene.actions
-              ? actionsToManifest(scene.actions, audioIdToPath, agentIdToIndex)
-              : undefined,
-            whiteboards: scene.whiteboards,
-            ...(scene.multiAgent?.enabled
-              ? {
-                  multiAgent: {
-                    enabled: true,
-                    agentIndices: (scene.multiAgent.agentIds ?? [])
-                      .map((id) => agentIdToIndex.get(id))
-                      .filter((i): i is number => i !== undefined),
-                    directorPrompt: scene.multiAgent.directorPrompt,
-                  },
-                }
-              : {}),
+        const manifestAgents: ManifestAgent[] = agentRecords.map((a) => ({
+          name: a.name,
+          role: a.role,
+          persona: a.persona,
+          avatar: a.avatar,
+          color: a.color,
+          priority: a.priority,
+        }));
+
+        // Also include generatedAgentConfigs from stage if agents not in DB
+        if (manifestAgents.length === 0 && stage.generatedAgentConfigs?.length) {
+          for (const a of stage.generatedAgentConfigs) {
+            manifestAgents.push({
+              name: a.name,
+              role: a.role,
+              persona: a.persona,
+              avatar: a.avatar,
+              color: a.color,
+              priority: a.priority,
+            });
+          }
+        }
+
+        // Build agent ID → index mapping for multiAgent references
+        const agentIdToIndex = new Map<string, number>();
+        agentRecords.forEach((a, i) => agentIdToIndex.set(a.id, i));
+        if (stage.generatedAgentConfigs?.length && agentRecords.length === 0) {
+          stage.generatedAgentConfigs.forEach((a, i) => agentIdToIndex.set(a.id, i));
+        }
+
+        const aggregateReport: InlineReport = { inlined: [], failed: [] };
+        const sharedFetcher = createAssetFetcher({ fetchImpl: createProxiedFetch() });
+        const manifestScenes: ManifestScene[] = await Promise.all(
+          scenes.map(async (scene) => {
+            const { content, report } = await inlineSceneContent(scene.content, {
+              fetcher: sharedFetcher,
+            });
+            for (const u of report.inlined)
+              if (!aggregateReport.inlined.includes(u)) aggregateReport.inlined.push(u);
+            for (const f of report.failed)
+              if (!aggregateReport.failed.some((g) => g.url === f.url))
+                aggregateReport.failed.push(f);
+            return {
+              type: scene.type,
+              title: scene.title,
+              order: scene.order,
+              content,
+              actions: scene.actions
+                ? actionsToManifest(scene.actions, audioIdToPath, agentIdToIndex)
+                : undefined,
+              whiteboards: scene.whiteboards,
+              ...(scene.multiAgent?.enabled
+                ? {
+                    multiAgent: {
+                      enabled: true,
+                      agentIndices: (scene.multiAgent.agentIds ?? [])
+                        .map((id) => agentIdToIndex.get(id))
+                        .filter((i): i is number => i !== undefined),
+                      directorPrompt: scene.multiAgent.directorPrompt,
+                    },
+                  }
+                : {}),
+            };
+          }),
+        );
+
+        // 7. Build mediaIndex
+        const mediaIndex: Record<string, MediaIndexEntry> = {};
+
+        for (const af of audioFiles) {
+          mediaIndex[af.zipPath] = {
+            type: 'audio',
+            format: af.record.format,
+            duration: af.record.duration,
+            voice: af.record.voice,
           };
-        }),
-      );
+        }
+        for (const mf of mediaFiles) {
+          mediaIndex[mf.zipPath] = {
+            type: 'generated',
+            mimeType: mf.record.mimeType,
+            size: mf.record.size,
+            prompt: mf.record.prompt,
+          };
+        }
 
-      // 7. Build mediaIndex
-      const mediaIndex: Record<string, MediaIndexEntry> = {};
-
-      for (const af of audioFiles) {
-        mediaIndex[af.zipPath] = {
-          type: 'audio',
-          format: af.record.format,
-          duration: af.record.duration,
-          voice: af.record.voice,
-        };
-      }
-      for (const mf of mediaFiles) {
-        mediaIndex[mf.zipPath] = {
-          type: 'generated',
-          mimeType: mf.record.mimeType,
-          size: mf.record.size,
-          prompt: mf.record.prompt,
-        };
-      }
-
-      // Check for missing audio references
-      for (const scene of scenes) {
-        for (const action of scene.actions ?? []) {
-          if (action.type === 'speech') {
-            const audioId = (action as SpeechAction).audioId;
-            if (audioId && !audioIdToPath.has(audioId)) {
-              const missingPath = `audio/${audioId}.mp3`;
-              mediaIndex[missingPath] = { type: 'audio', missing: true };
+        // Check for missing audio references
+        for (const scene of scenes) {
+          for (const action of scene.actions ?? []) {
+            if (action.type === 'speech') {
+              const audioId = (action as SpeechAction).audioId;
+              if (audioId && !audioIdToPath.has(audioId)) {
+                const missingPath = `audio/${audioId}.mp3`;
+                mediaIndex[missingPath] = { type: 'audio', missing: true };
+              }
             }
           }
         }
-      }
 
-      // 8. Assemble manifest
-      const manifest: ClassroomManifest = {
-        formatVersion: CLASSROOM_ZIP_FORMAT_VERSION,
-        exportedAt: new Date().toISOString(),
-        appVersion: process.env.npm_package_version || '0.0.0',
-        stage: manifestStage,
-        agents: manifestAgents,
-        scenes: manifestScenes,
-        mediaIndex,
-      };
+        // 8. Assemble manifest
+        const manifest: ClassroomManifest = {
+          formatVersion: CLASSROOM_ZIP_FORMAT_VERSION,
+          exportedAt: new Date().toISOString(),
+          appVersion: process.env.npm_package_version || '0.0.0',
+          stage: manifestStage,
+          agents: manifestAgents,
+          scenes: manifestScenes,
+          mediaIndex,
+        };
 
-      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+        zip.file('manifest.json', JSON.stringify(manifest, null, 2));
 
-      // 9. Add media blobs to ZIP
-      for (const af of audioFiles) {
-        zip.file(af.zipPath, af.record.blob);
-      }
-      for (const mf of mediaFiles) {
-        zip.file(mf.zipPath, mf.record.blob);
-        if (mf.record.poster) {
-          zip.file(mf.zipPath.replace(/\.\w+$/, '.poster.jpg'), mf.record.poster);
+        // 9. Add media blobs to ZIP
+        for (const af of audioFiles) {
+          zip.file(af.zipPath, af.record.blob);
         }
-      }
+        for (const mf of mediaFiles) {
+          zip.file(mf.zipPath, mf.record.blob);
+          if (mf.record.poster) {
+            zip.file(mf.zipPath.replace(/\.\w+$/, '.poster.jpg'), mf.record.poster);
+          }
+        }
 
-      // 10. Generate and download
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const safeName = latestName.replace(/[\\/:*?"<>|]/g, '_') || 'classroom';
-      saveAs(zipBlob, `${safeName}${CLASSROOM_ZIP_EXTENSION}`);
+        // 10. Generate and download
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const safeName = latestName.replace(/[\\/:*?"<>|]/g, '_') || 'classroom';
+        const filename = `${safeName}${CLASSROOM_ZIP_EXTENSION}`;
+        if (options.download !== false) saveAs(zipBlob, filename);
 
-      if (aggregateReport.failed.length > 0) {
-        log.warn('Some interactive-scene assets could not be inlined:', aggregateReport.failed);
-        const hosts = [
-          ...new Set(
-            aggregateReport.failed.map((f) => {
-              try {
-                return new URL(f.url).host;
-              } catch {
-                return f.url;
-              }
-            }),
+        if (aggregateReport.failed.length > 0) {
+          log.warn('Some interactive-scene assets could not be inlined:', aggregateReport.failed);
+          const hosts = [
+            ...new Set(
+              aggregateReport.failed.map((f) => {
+                try {
+                  return new URL(f.url).host;
+                } catch {
+                  return f.url;
+                }
+              }),
+            ),
+          ];
+          if (notify) {
+            toast.warning(t('export.inlinePartial', { count: aggregateReport.failed.length }), {
+              description: hosts.join(', '),
+            });
+          }
+        }
+        if (notify) toast.success(t('export.exportSuccess'), { id: toastId });
+        return {
+          zipBlob,
+          manifest,
+          filename,
+          audioByRef: new Map(
+            audioFiles.map((audio) => [
+              audio.zipPath,
+              { blob: audio.record.blob, duration: audio.record.duration },
+            ]),
           ),
-        ];
-        toast.warning(t('export.inlinePartial', { count: aggregateReport.failed.length }), {
-          description: hosts.join(', '),
-        });
+        };
+      } catch (error) {
+        log.error('Classroom ZIP export failed:', error);
+        if (notify) toast.error(t('export.exportFailed'), { id: toastId });
+        else throw error;
+      } finally {
+        setExporting(false);
       }
-      toast.success(t('export.exportSuccess'), { id: toastId });
-    } catch (error) {
-      log.error('Classroom ZIP export failed:', error);
-      toast.error(t('export.exportFailed'), { id: toastId });
-    } finally {
-      setExporting(false);
-    }
-  }, [t]);
+    },
+    [t],
+  );
 
   return { exporting, exportClassroomZip };
 }
