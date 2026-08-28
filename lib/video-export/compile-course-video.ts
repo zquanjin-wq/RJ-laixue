@@ -1,11 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import JSZip from 'jszip';
 import type { CourseVideoSource, VideoSourcePage } from './course-video-source';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const GSAP_PATH = resolve(__dirname, '../../scripts/video-mini-compiler/vendor/gsap.min.js');
 const RENDER_WIDTH = 1280;
 const RENDER_HEIGHT = 720;
 const FALLBACK_PAGE_DURATION_MS = 5000;
@@ -44,7 +39,11 @@ function timestamp(ms: number, separator: ',' | '.'): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainderSeconds).padStart(2, '0')}${separator}${String(ms % 1000).padStart(3, '0')}`;
 }
 
-async function buildTimedPages(source: CourseVideoSource, resolveAudio: ResolveCourseAudio, zip: JSZip) {
+async function buildTimedPages(
+  source: CourseVideoSource,
+  resolveAudio: ResolveCourseAudio,
+  zip: JSZip,
+) {
   const timedPages: TimedPage[] = [];
   let cursorMs = 0;
   let audioIndex = 0;
@@ -82,13 +81,19 @@ function sceneImagePath(page: Extract<VideoSourcePage, { kind: 'slide' }>): stri
   return `assets/scenes/${page.id}.${page.image.type === 'image/svg+xml' ? 'svg' : 'png'}`;
 }
 
-function buildIndexHtml(source: CourseVideoSource, timedPages: TimedPage[], totalDurationMs: number): string {
+function buildIndexHtml(
+  source: CourseVideoSource,
+  timedPages: TimedPage[],
+  totalDurationMs: number,
+): string {
   const totalSeconds = (totalDurationMs / 1000).toFixed(3);
   const statements = ['var tl = gsap.timeline({ paused: true });'];
   for (const timed of timedPages) {
     const second = (timed.startMs / 1000).toFixed(3);
     statements.push(`tl.set("#${timed.page.id}", { autoAlpha: 1 }, ${second});`);
-    statements.push(`tl.set("#${timed.page.id}", { autoAlpha: 0 }, ${((timed.startMs + timed.durationMs) / 1000).toFixed(3)});`);
+    statements.push(
+      `tl.set("#${timed.page.id}", { autoAlpha: 0 }, ${((timed.startMs + timed.durationMs) / 1000).toFixed(3)});`,
+    );
   }
   statements.push(`tl.set({}, {}, ${totalSeconds});`);
 
@@ -114,28 +119,47 @@ window.__openmaicVideoManifest={runtimeDiagnostics:[],manifestPath:"openmaic-vid
 </script></body></html>`;
 }
 
-function buildManifest(source: CourseVideoSource, timedPages: TimedPage[], totalDurationMs: number): string {
-  return JSON.stringify({
-    schema: 'openmaic.videoTimeline',
-    version: 4,
-    compiler: 'rj-course-video-v0',
-    stage: { id: 'classroom-export', name: source.stageName },
-    canvas: { viewBox: { width: 100, height: 100 }, pixelBase: { width: 1000, height: 562.5 }, aspectRatio: '16:9' },
-    config: { playbackSpeed: 1, ttsEnabled: false, whiteboardInitiallyOpen: false },
-    totalDurationMs,
-    scenes: timedPages.map((timed, index) => ({
-      id: timed.page.id,
-      index,
-      title: timed.page.title,
-      type: timed.page.kind === 'slide' ? 'slide' : 'cover',
-      startMs: timed.startMs,
-      durationMs: timed.durationMs,
-      supported: true,
-      base: { kind: timed.page.kind, reason: '' },
-      visuals: [], narration: [], effects: [], videos: [], markers: [],
-    })),
-    assets: { entries: [] }, diagnostics: [],
-  }, null, 2) + '\n';
+function buildManifest(
+  source: CourseVideoSource,
+  timedPages: TimedPage[],
+  totalDurationMs: number,
+): string {
+  return (
+    JSON.stringify(
+      {
+        schema: 'openmaic.videoTimeline',
+        version: 4,
+        compiler: 'rj-course-video-v0',
+        stage: { id: 'classroom-export', name: source.stageName },
+        canvas: {
+          viewBox: { width: 100, height: 100 },
+          pixelBase: { width: 1000, height: 562.5 },
+          aspectRatio: '16:9',
+        },
+        config: { playbackSpeed: 1, ttsEnabled: false, whiteboardInitiallyOpen: false },
+        totalDurationMs,
+        scenes: timedPages.map((timed, index) => ({
+          id: timed.page.id,
+          index,
+          title: timed.page.title,
+          type: timed.page.kind === 'slide' ? 'slide' : 'cover',
+          startMs: timed.startMs,
+          durationMs: timed.durationMs,
+          supported: true,
+          base: { kind: timed.page.kind, reason: '' },
+          visuals: [],
+          narration: [],
+          effects: [],
+          videos: [],
+          markers: [],
+        })),
+        assets: { entries: [] },
+        diagnostics: [],
+      },
+      null,
+      2,
+    ) + '\n'
+  );
 }
 
 function buildSubtitles(timedPages: TimedPage[]): { srt: string; vtt: string } {
@@ -149,7 +173,13 @@ function buildSubtitles(timedPages: TimedPage[]): { srt: string; vtt: string } {
     }));
   });
   return {
-    srt: cues.map((cue, index) => `${index + 1}\n${timestamp(cue.startMs, ',')} --> ${timestamp(cue.endMs, ',')}\n${cue.text}`).join('\n\n') + (cues.length ? '\n' : ''),
+    srt:
+      cues
+        .map(
+          (cue, index) =>
+            `${index + 1}\n${timestamp(cue.startMs, ',')} --> ${timestamp(cue.endMs, ',')}\n${cue.text}`,
+        )
+        .join('\n\n') + (cues.length ? '\n' : ''),
     vtt: `WEBVTT\n\n${cues.map((cue) => `${timestamp(cue.startMs, '.')} --> ${timestamp(cue.endMs, '.')}\n${cue.text}`).join('\n\n')}\n`,
   };
 }
@@ -158,6 +188,7 @@ function buildSubtitles(timedPages: TimedPage[]): { srt: string; vtt: string } {
 export async function compileCourseVideo(
   source: CourseVideoSource,
   resolveAudio: ResolveCourseAudio,
+  gsapSource: Uint8Array,
 ): Promise<Uint8Array> {
   const zip = new JSZip();
   const date = new Date('1980-01-01T00:00:00Z');
@@ -171,8 +202,10 @@ export async function compileCourseVideo(
 
   const subtitles = buildSubtitles(timedPages);
   zip.file('index.html', buildIndexHtml(source, timedPages, totalDurationMs), { date });
-  zip.file('openmaic-video-manifest.json', buildManifest(source, timedPages, totalDurationMs), { date });
-  zip.file('assets/vendor/gsap.min.js', readFileSync(GSAP_PATH), { date });
+  zip.file('openmaic-video-manifest.json', buildManifest(source, timedPages, totalDurationMs), {
+    date,
+  });
+  zip.file('assets/vendor/gsap.min.js', gsapSource, { date });
   zip.file('subtitles.srt', subtitles.srt, { date });
   zip.file('subtitles.vtt', subtitles.vtt, { date });
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });

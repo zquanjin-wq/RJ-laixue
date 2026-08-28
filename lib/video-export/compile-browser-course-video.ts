@@ -12,6 +12,7 @@ export interface BrowserCourseAudio {
 
 export interface CompileBrowserCourseVideoOptions {
   captureSlide?: CaptureSlide;
+  gsapSource?: Uint8Array;
 }
 
 /**
@@ -24,13 +25,29 @@ export async function compileBrowserCourseVideo(
   audioByRef: ReadonlyMap<string, BrowserCourseAudio>,
   options: CompileBrowserCourseVideoOptions = {},
 ): Promise<Uint8Array> {
-  const captureSlide = options.captureSlide ?? (async (slide) => {
-    const image = await slideToPng(slide, { width: 1280, pixelRatio: 1, format: 'blob' });
-    return image as Blob;
-  });
+  let gsapSource = options.gsapSource;
+  if (!gsapSource) {
+    const gsapResponse = await fetch('/vendor/video-export/gsap.min.js');
+    if (!gsapResponse.ok) {
+      throw new Error(`视频导出运行库加载失败（HTTP ${gsapResponse.status}）`);
+    }
+    gsapSource = new Uint8Array(await gsapResponse.arrayBuffer());
+  }
+  const captureSlide =
+    options.captureSlide ??
+    (async (slide) => {
+      const image = await slideToPng(slide, { width: 1280, pixelRatio: 1, format: 'blob' });
+      return image as Blob;
+    });
   const source = await prepareCourseVideoSource(manifest, captureSlide);
-  return compileCourseVideo(source, async (audioRef) => {
-    const audio = audioByRef.get(audioRef);
-    return audio ? { blob: audio.blob, durationMs: Math.round((audio.duration ?? 0) * 1000) } : undefined;
-  });
+  return compileCourseVideo(
+    source,
+    async (audioRef) => {
+      const audio = audioByRef.get(audioRef);
+      return audio
+        ? { blob: audio.blob, durationMs: Math.round((audio.duration ?? 0) * 1000) }
+        : undefined;
+    },
+    gsapSource,
+  );
 }

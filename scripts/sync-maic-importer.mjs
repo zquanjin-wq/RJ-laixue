@@ -16,6 +16,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const srcDir = path.join(root, 'packages/@openmaic/importer/dist');
 const destDir = path.join(root, 'public/vendor/maic-importer');
+const gsapSrc = path.join(root, 'scripts/video-mini-compiler/vendor/gsap.min.js');
+const gsapDestDir = path.join(root, 'public/vendor/video-export');
+const gsapDest = path.join(gsapDestDir, 'gsap.min.js');
 
 try {
   await stat(srcDir);
@@ -28,7 +31,12 @@ try {
 await rm(destDir, { recursive: true, force: true });
 await mkdir(destDir, { recursive: true });
 await cp(srcDir, destDir, { recursive: true });
+await mkdir(gsapDestDir, { recursive: true });
+await cp(gsapSrc, gsapDest);
 
 console.log(
   `[sync-maic-importer] copied ${path.relative(root, srcDir)} → ${path.relative(root, destDir)}`,
+);
+console.log(
+  `[sync-maic-importer] copied ${path.relative(root, gsapSrc)} → ${path.relative(root, gsapDest)}`,
 );
