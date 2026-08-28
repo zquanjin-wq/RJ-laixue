@@ -13,6 +13,26 @@ export interface BrowserCourseAudio {
 export interface CompileBrowserCourseVideoOptions {
   captureSlide?: CaptureSlide;
   gsapSource?: Uint8Array;
+  measureAudioDuration?: (blob: Blob) => Promise<number>;
+}
+
+async function readAudioDuration(blob: Blob): Promise<number> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const audio = new Audio();
+    audio.preload = 'metadata';
+    const duration = await new Promise<number>((resolve, reject) => {
+      audio.onloadedmetadata = () => {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) resolve(audio.duration);
+        else reject(new Error('讲解音频时长无效'));
+      };
+      audio.onerror = () => reject(new Error('无法读取讲解音频时长'));
+      audio.src = url;
+    });
+    return duration;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /**
@@ -40,13 +60,23 @@ export async function compileBrowserCourseVideo(
       return image as Blob;
     });
   const source = await prepareCourseVideoSource(manifest, captureSlide);
+  const measureAudioDuration = options.measureAudioDuration ?? readAudioDuration;
+  const measuredDurations = new Map<string, Promise<number>>();
   return compileCourseVideo(
     source,
     async (audioRef) => {
       const audio = audioByRef.get(audioRef);
-      return audio
-        ? { blob: audio.blob, durationMs: Math.round((audio.duration ?? 0) * 1000) }
-        : undefined;
+      if (!audio) return undefined;
+      const duration =
+        typeof audio.duration === 'number' && audio.duration > 0
+          ? audio.duration
+          : await (measuredDurations.get(audioRef) ??
+              (() => {
+                const measured = measureAudioDuration(audio.blob);
+                measuredDurations.set(audioRef, measured);
+                return measured;
+              })());
+      return { blob: audio.blob, durationMs: Math.round(duration * 1000) };
     },
     gsapSource,
   );

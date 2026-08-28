@@ -53,8 +53,36 @@ describe('compileCourseVideo', () => {
     expect(html).toContain('assets/scenes/scene-1.png');
     expect(html).toContain('本节包含 2 道练习题，请在课堂中完成。');
     expect(html).toContain('assets/audio/0.media');
+    expect(html).toContain('data-track-index="10"');
     expect(manifest.totalDurationMs).toBe(8200);
     expect(manifest.scenes).toHaveLength(2);
     expect(await zip.file('subtitles.srt')!.async('string')).toContain('欢迎参加培训。');
+  });
+
+  it('places consecutive narration clips one after another on the audio track', async () => {
+    const zipBytes = await compileCourseVideo(
+      {
+        ...source,
+        pages: [
+          {
+            ...source.pages[0],
+            narration: [
+              { text: '第一句。', audioRef: 'audio/one.mp3' },
+              { text: '第二句。', audioRef: 'audio/two.mp3' },
+            ],
+          },
+        ],
+      },
+      async (audioRef) => ({
+        blob: new Blob([audioRef], { type: 'audio/mpeg' }),
+        durationMs: audioRef === 'audio/one.mp3' ? 1200 : 2300,
+      }),
+      new Uint8Array(),
+    );
+    const zip = await JSZip.loadAsync(zipBytes);
+    const html = await zip.file('index.html')!.async('string');
+
+    expect(html).toContain('data-start="0.000" data-duration="1.200" data-track-index="10"');
+    expect(html).toContain('data-start="1.200" data-duration="2.300" data-track-index="10"');
   });
 });

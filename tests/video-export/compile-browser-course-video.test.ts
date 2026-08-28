@@ -43,4 +43,22 @@ describe('compileBrowserCourseVideo', () => {
       expect.arrayContaining(['assets/scenes/scene-1.png', 'assets/audio/0.media']),
     );
   });
+
+  it('measures legacy audio without a stored duration before building the timeline', async () => {
+    const measureAudioDuration = vi.fn(async () => 2.5);
+    const zipBytes = await compileBrowserCourseVideo(
+      manifest,
+      new Map([['audio/current.wav', { blob: new Blob(['audio']) }]]),
+      {
+        captureSlide: async () => new Blob(['snapshot'], { type: 'image/png' }),
+        gsapSource: new TextEncoder().encode('window.gsap = {};'),
+        measureAudioDuration,
+      },
+    );
+    const zip = await JSZip.loadAsync(zipBytes);
+    const html = await zip.file('index.html')!.async('string');
+
+    expect(measureAudioDuration).toHaveBeenCalledTimes(1);
+    expect(html).toContain('data-duration="2.500" data-track-index="10"');
+  });
 });

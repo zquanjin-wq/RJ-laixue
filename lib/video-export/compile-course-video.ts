@@ -100,7 +100,7 @@ function buildIndexHtml(
   const audioTags = timedPages.flatMap((timed) =>
     timed.audio.map(
       (audio) =>
-        `<audio class="clip" data-start="${(audio.startMs / 1000).toFixed(3)}" data-duration="${(audio.durationMs / 1000).toFixed(3)}" src="${audio.path}" data-volume="1"></audio>`,
+        `<audio class="clip" data-start="${(audio.startMs / 1000).toFixed(3)}" data-duration="${(audio.durationMs / 1000).toFixed(3)}" data-track-index="10" src="${audio.path}" data-volume="1"></audio>`,
     ),
   );
 
