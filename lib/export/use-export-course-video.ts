@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase/client';
 import { COURSE_ASSET_BUCKET } from '@/lib/course-assets/shared';
@@ -114,8 +115,18 @@ export function useExportCourseVideo() {
     }
   }, [courseId, exportClassroomZip, job, preparing]);
 
-  const download = useCallback(() => {
-    if (job?.downloadUrl) window.location.assign(job.downloadUrl);
+  const download = useCallback(async () => {
+    if (!job?.downloadUrl) return;
+    try {
+      // A direct navigation lets the browser play an MP4 inline. Fetching the
+      // signed file first keeps the user in the classroom and triggers a real
+      // file download instead.
+      const response = await fetch(job.downloadUrl);
+      if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`);
+      saveAs(await response.blob(), 'course.mp4');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '视频下载失败，请重试');
+    }
   }, [job]);
 
   return {
