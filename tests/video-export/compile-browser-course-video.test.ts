@@ -59,6 +59,6 @@ describe('compileBrowserCourseVideo', () => {
     const html = await zip.file('index.html')!.async('string');
 
     expect(measureAudioDuration).toHaveBeenCalledTimes(1);
-    expect(html).toContain('data-duration="2.500" data-track-index="10"');
+    expect(html).toContain('data-duration="2.500" data-track-index="2"');
   });
 });

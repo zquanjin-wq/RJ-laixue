@@ -70,11 +70,15 @@ async function buildTimedPages(
 
 function pageHtml(timed: TimedPage): string {
   const { page } = timed;
-  const base = `<div id="${page.id}" class="scene" data-start="${(timed.startMs / 1000).toFixed(3)}" data-duration="${(timed.durationMs / 1000).toFixed(3)}" style="opacity:0;visibility:hidden">`;
+  // Hyperframes schedules only elements marked as clips.  The old wrapper was
+  // merely a regular div driven by our own GSAP visibility calls, which left
+  // the renderer free to capture all page layers together.  Emit the page
+  // itself as the visual clip, matching the renderer's native contract.
+  const clip = `id="${page.id}" class="clip" data-start="${(timed.startMs / 1000).toFixed(3)}" data-duration="${(timed.durationMs / 1000).toFixed(3)}" data-track-index="0"`;
   if (page.kind === 'slide') {
-    return `${base}<img class="slide-image" src="${sceneImagePath(page)}" alt="${escapeHtml(page.title)}" /></div>`;
+    return `<img ${clip} style="position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#fff" src="${sceneImagePath(page)}" alt="${escapeHtml(page.title)}" />`;
   }
-  return `${base}<div class="cover-title">${escapeHtml(page.title)}</div><div class="cover-body">${escapeHtml(page.body)}</div></div>`;
+  return `<div ${clip}><div class="cover-title">${escapeHtml(page.title)}</div><div class="cover-body">${escapeHtml(page.body)}</div></div>`;
 }
 
 function sceneImagePath(page: Extract<VideoSourcePage, { kind: 'slide' }>): string {
@@ -88,19 +92,12 @@ function buildIndexHtml(
 ): string {
   const totalSeconds = (totalDurationMs / 1000).toFixed(3);
   const statements = ['var tl = gsap.timeline({ paused: true });'];
-  for (const timed of timedPages) {
-    const second = (timed.startMs / 1000).toFixed(3);
-    statements.push(`tl.set("#${timed.page.id}", { autoAlpha: 1 }, ${second});`);
-    statements.push(
-      `tl.set("#${timed.page.id}", { autoAlpha: 0 }, ${((timed.startMs + timed.durationMs) / 1000).toFixed(3)});`,
-    );
-  }
   statements.push(`tl.set({}, {}, ${totalSeconds});`);
 
-  const audioTags = timedPages.flatMap((timed) =>
+  const audioTags = timedPages.flatMap((timed, pageIndex) =>
     timed.audio.map(
-      (audio) =>
-        `<audio class="clip" data-start="${(audio.startMs / 1000).toFixed(3)}" data-duration="${(audio.durationMs / 1000).toFixed(3)}" data-track-index="10" src="${audio.path}" data-volume="1"></audio>`,
+      (audio, audioIndex) =>
+        `<audio id="scene-${pageIndex + 1}-audio-${audioIndex + 1}" class="clip" data-start="${(audio.startMs / 1000).toFixed(3)}" data-duration="${(audio.durationMs / 1000).toFixed(3)}" data-track-index="2" src="${audio.path}" data-volume="1"></audio>`,
     ),
   );
 
@@ -108,7 +105,7 @@ function buildIndexHtml(
 <html lang="zh-CN"><head><meta charset="utf-8" />
 <title>${escapeHtml(source.stageName)} — 视频导出</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;background:#000}#openmaic{position:relative;width:${RENDER_WIDTH}px;height:${RENDER_HEIGHT}px;overflow:hidden;font-family:system-ui,sans-serif;color:#fff;background:#172033}.scene{position:absolute;inset:0}.slide-image{width:100%;height:100%;object-fit:contain;background:#fff}.cover-title{position:absolute;top:18%;left:10%;right:10%;font-size:48px;font-weight:700;text-align:center}.cover-body{position:absolute;top:38%;left:15%;right:15%;font-size:30px;line-height:1.6;text-align:center;white-space:pre-wrap}
+*{box-sizing:border-box}html,body{margin:0;background:#000}#openmaic{position:relative;width:${RENDER_WIDTH}px;height:${RENDER_HEIGHT}px;overflow:hidden;font-family:system-ui,sans-serif;color:#fff;background:#172033}.slide-image{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#fff}.cover-title{position:absolute;top:18%;left:10%;right:10%;font-size:48px;font-weight:700;text-align:center}.cover-body{position:absolute;top:38%;left:15%;right:15%;font-size:30px;line-height:1.6;text-align:center;white-space:pre-wrap}
 </style></head><body>
 <div id="openmaic" data-composition-id="openmaic" data-start="0" data-duration="${totalSeconds}" data-width="${RENDER_WIDTH}" data-height="${RENDER_HEIGHT}">
 ${timedPages.map(pageHtml).join('\n')}

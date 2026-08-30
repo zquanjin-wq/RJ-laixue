@@ -53,7 +53,12 @@ describe('compileCourseVideo', () => {
     expect(html).toContain('assets/scenes/scene-1.png');
     expect(html).toContain('本节包含 2 道练习题，请在课堂中完成。');
     expect(html).toContain('assets/audio/0.media');
-    expect(html).toContain('data-track-index="10"');
+    expect(html).toContain(
+      'id="scene-1" class="clip" data-start="0.000" data-duration="3.200" data-track-index="0"',
+    );
+    expect(html).toContain(
+      'id="scene-1-audio-1" class="clip" data-start="0.000" data-duration="3.200" data-track-index="2"',
+    );
     expect(manifest.totalDurationMs).toBe(8200);
     expect(manifest.scenes).toHaveLength(2);
     expect(await zip.file('subtitles.srt')!.async('string')).toContain('欢迎参加培训。');
@@ -82,7 +87,11 @@ describe('compileCourseVideo', () => {
     const zip = await JSZip.loadAsync(zipBytes);
     const html = await zip.file('index.html')!.async('string');
 
-    expect(html).toContain('data-start="0.000" data-duration="1.200" data-track-index="10"');
-    expect(html).toContain('data-start="1.200" data-duration="2.300" data-track-index="10"');
+    expect(html).toContain(
+      'id="scene-1-audio-1" class="clip" data-start="0.000" data-duration="1.200" data-track-index="2"',
+    );
+    expect(html).toContain(
+      'id="scene-1-audio-2" class="clip" data-start="1.200" data-duration="2.300" data-track-index="2"',
+    );
   });
 });
