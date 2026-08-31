@@ -4,4 +4,5 @@
 alter table public.course_video_export_jobs
   add column if not exists progress_current integer,
   add column if not exists progress_total integer,
-  add column if not exists source_label text;
+  add column if not exists source_label text,
+  add column if not exists export_plan jsonb;

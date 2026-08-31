@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { COURSE_ASSET_BUCKET } from '@/lib/course-assets/shared';
 import { getServiceSupabase } from '@/lib/supabase/server';
+import type { CourseVideoExportPlan } from '@/lib/video-export/course-video-source';
 
 export type CourseVideoExportStatus =
   | 'uploading'
@@ -23,6 +24,7 @@ export interface CourseVideoExportJob {
   progress_current?: number | null;
   progress_total?: number | null;
   source_label?: string | null;
+  export_plan?: CourseVideoExportPlan | null;
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
@@ -42,6 +44,7 @@ export function presentCourseVideoExportJob(
     progressCurrent: job.progress_current ?? undefined,
     progressTotal: job.progress_total ?? undefined,
     sourceLabel: job.source_label ?? undefined,
+    exportPlan: job.export_plan ?? undefined,
     done: ['succeeded', 'failed', 'cancelled'].includes(job.status),
     createdAt: job.created_at,
     updatedAt: job.updated_at,
@@ -77,7 +80,11 @@ function jobPaths(courseId: string, jobId: string) {
   return { inputPath: `${base}/source.zip`, outputPath: `${base}/course.mp4` };
 }
 
-export async function createCourseVideoExportJob(courseId: string, userId: string) {
+export async function createCourseVideoExportJob(
+  courseId: string,
+  userId: string,
+  exportPlan?: CourseVideoExportPlan,
+) {
   const id = nanoid(16);
   const { inputPath, outputPath } = jobPaths(courseId, id);
   const service = getServiceSupabase();
@@ -90,6 +97,7 @@ export async function createCourseVideoExportJob(courseId: string, userId: strin
     output_path: outputPath,
     message: '正在准备视频导出文件',
     source_label: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+    export_plan: exportPlan ?? null,
   };
   const { data: created, error } = await service
     .from('course_video_export_jobs')

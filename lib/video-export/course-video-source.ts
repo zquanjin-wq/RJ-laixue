@@ -1,5 +1,9 @@
-import type { QuizContent, Slide } from '@openmaic/dsl';
-import type { ClassroomManifest, ManifestAction, ManifestScene } from '@/lib/export/classroom-zip-types';
+import type { Slide } from '@openmaic/dsl';
+import type {
+  ClassroomManifest,
+  ManifestAction,
+  ManifestScene,
+} from '@/lib/export/classroom-zip-types';
 
 /** A narration cue preserved from an exported classroom scene. */
 export interface VideoNarrationCue {
@@ -29,6 +33,20 @@ export interface CourseVideoSource {
   pages: VideoSourcePage[];
 }
 
+export interface CourseVideoSkippedScene {
+  order: number;
+  title: string;
+  type: ManifestScene['type'];
+  reason: string;
+}
+
+export interface CourseVideoExportPlan {
+  totalScenes: number;
+  includedCount: number;
+  skippedCount: number;
+  skippedScenes: CourseVideoSkippedScene[];
+}
+
 /**
  * Browser-side bridge to the existing slide renderer. The production caller
  * will use `slideToPng`; keeping it injected makes this adapter independent of
@@ -50,26 +68,37 @@ function speechCues(actions: ManifestAction[] | undefined): VideoNarrationCue[] 
   });
 }
 
-function coverBody(scene: ManifestScene): string {
-  switch (scene.type) {
-    case 'quiz':
-      return `本节包含 ${(scene.content as QuizContent).questions.length} 道练习题，请在课堂中完成。`;
-    case 'interactive':
-      return '本节包含互动内容，请在课堂中完成。';
-    case 'pbl':
-      return '本节包含项目式学习活动，请在课堂中完成。';
-    default:
-      return '';
+function skipReason(scene: ManifestScene): string | null {
+  if (scene.type === 'quiz') return 'Quiz 需要学员作答';
+  if (scene.type === 'interactive') return '互动内容需要学员操作';
+  if (scene.type === 'pbl') return '项目任务需要学员参与';
+  if (scene.actions?.some((action) => action.type === 'discussion')) {
+    return '讨论环节需要学员参与';
   }
+  return null;
+}
+
+export function planCourseVideoExport(manifest: ClassroomManifest): CourseVideoExportPlan {
+  const scenes = [...manifest.scenes].sort((a, b) => a.order - b.order);
+  const skippedScenes = scenes.flatMap((scene) => {
+    const reason = skipReason(scene);
+    if (!reason) return [];
+    return [{ order: scene.order, title: scene.title, type: scene.type, reason }];
+  });
+  return {
+    totalScenes: scenes.length,
+    includedCount: scenes.length - skippedScenes.length,
+    skippedCount: skippedScenes.length,
+    skippedScenes,
+  };
 }
 
 /**
  * Convert an existing classroom export into video-ready pages.
  *
  * Slides retain their real visual layout by going through the app's existing
- * browser snapshot renderer. Quiz, interactive and PBL scenes deliberately
- * become clear static cover pages in V0 rather than pretending to record their
- * runtime interactions.
+ * browser snapshot renderer. Scenes that require learner participation are
+ * omitted from both the visual and audio timeline.
  */
 export async function prepareCourseVideoSource(
   manifest: ClassroomManifest,
@@ -79,6 +108,7 @@ export async function prepareCourseVideoSource(
   const scenes = [...manifest.scenes].sort((a, b) => a.order - b.order);
 
   for (const scene of scenes) {
+    if (skipReason(scene)) continue;
     const id = `scene-${scene.order}`;
     const narration = speechCues(scene.actions);
 
@@ -92,14 +122,6 @@ export async function prepareCourseVideoSource(
       });
       continue;
     }
-
-    pages.push({
-      id,
-      title: scene.title,
-      kind: 'cover',
-      body: coverBody(scene),
-      narration,
-    });
   }
 
   return { stageName: manifest.stage.name, pages };

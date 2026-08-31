@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ClassroomManifest } from '@/lib/export/classroom-zip-types';
-import { prepareCourseVideoSource } from '@/lib/video-export/course-video-source';
+import {
+  planCourseVideoExport,
+  prepareCourseVideoSource,
+} from '@/lib/video-export/course-video-source';
 
 const slide = { id: 'canvas-1', elements: [] };
 
@@ -24,7 +27,14 @@ function manifest(): ClassroomManifest {
         title: '欢迎',
         order: 1,
         content: { type: 'slide', canvas: slide as never },
-        actions: [{ id: 'speech-1', type: 'speech', text: '欢迎参加培训。', audioRef: 'audio/welcome.mp3' } as never],
+        actions: [
+          {
+            id: 'speech-1',
+            type: 'speech',
+            text: '欢迎参加培训。',
+            audioRef: 'audio/welcome.mp3',
+          } as never,
+        ],
       },
       {
         type: 'interactive',
@@ -44,7 +54,7 @@ describe('prepareCourseVideoSource', () => {
     const source = await prepareCourseVideoSource(manifest(), captureSlide);
 
     expect(source.stageName).toBe('真实课堂样例');
-    expect(source.pages.map((page) => page.id)).toEqual(['scene-1', 'scene-2', 'scene-3']);
+    expect(source.pages.map((page) => page.id)).toEqual(['scene-1']);
     expect(captureSlide).toHaveBeenCalledTimes(1);
     expect(source.pages[0]).toMatchObject({
       kind: 'slide',
@@ -54,18 +64,39 @@ describe('prepareCourseVideoSource', () => {
     });
   });
 
-  it('uses honest static covers for unsupported interactive course scenes', async () => {
+  it('skips learner-interaction scenes instead of putting them on the render timeline', async () => {
     const source = await prepareCourseVideoSource(manifest(), async () => new Blob());
 
-    expect(source.pages[1]).toMatchObject({
-      kind: 'cover',
-      title: '检查理解',
-      body: '本节包含 1 道练习题，请在课堂中完成。',
-    });
-    expect(source.pages[2]).toMatchObject({
-      kind: 'cover',
-      title: '动手练习',
-      body: '本节包含互动内容，请在课堂中完成。',
-    });
+    expect(source.pages).toHaveLength(1);
+    expect(source.pages[0].title).toBe('欢迎');
+  });
+
+  it('plans included and skipped pages before any snapshot or audio work starts', () => {
+    const plan = planCourseVideoExport(manifest());
+
+    expect(plan).toMatchObject({ totalScenes: 3, includedCount: 1, skippedCount: 2 });
+    expect(plan.skippedScenes).toEqual([
+      expect.objectContaining({ order: 2, title: '检查理解', reason: 'Quiz 需要学员作答' }),
+      expect.objectContaining({ order: 3, title: '动手练习', reason: '互动内容需要学员操作' }),
+    ]);
+  });
+
+  it('skips a slide whose timeline enters a learner discussion', () => {
+    const withDiscussion: ClassroomManifest = {
+      ...manifest(),
+      scenes: [
+        {
+          type: 'slide',
+          title: '小组讨论',
+          order: 1,
+          content: { type: 'slide', canvas: slide as never },
+          actions: [{ id: 'd1', type: 'discussion', topic: '请分享观点' } as never],
+        },
+      ],
+    };
+
+    expect(planCourseVideoExport(withDiscussion).skippedScenes[0].reason).toBe(
+      '讨论环节需要学员参与',
+    );
   });
 });

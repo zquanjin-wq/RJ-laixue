@@ -11,6 +11,7 @@ import {
   syncCourseVideoExportJob,
 } from '@/lib/server/course-video-export-jobs';
 import { getServiceSupabase } from '@/lib/supabase/server';
+import type { CourseVideoExportPlan } from '@/lib/video-export/course-video-source';
 
 export const runtime = 'nodejs';
 
@@ -28,7 +29,7 @@ async function canManageCourseVideoExport(courseId: string, userId: string) {
     : ('forbidden' as const);
 }
 
-export async function POST(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireAuthOrTeacher(['teacher', 'admin']);
   if (!auth.ok) return auth.response;
   const { id: courseId } = await context.params;
@@ -37,7 +38,12 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ i
   if (access === 'forbidden') return apiError('FORBIDDEN', 403, '只有课程创建者可以导出视频');
 
   try {
-    const { job, upload } = await createCourseVideoExportJob(courseId, auth.user.id);
+    const body = (await request.json().catch(() => ({}))) as { exportPlan?: CourseVideoExportPlan };
+    const { job, upload } = await createCourseVideoExportJob(
+      courseId,
+      auth.user.id,
+      body.exportPlan,
+    );
     return apiSuccess({ job: presentCourseVideoExportJob(job), upload }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

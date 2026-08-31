@@ -14,6 +14,7 @@ create table if not exists public.course_video_export_jobs (
   progress_current integer,
   progress_total integer,
   source_label text,
+  export_plan jsonb,
   created_at timestamptz not null default now(),
   started_at timestamptz,
   completed_at timestamptz,

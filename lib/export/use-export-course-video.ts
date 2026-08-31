@@ -7,6 +7,10 @@ import { supabase } from '@/lib/supabase/client';
 import { COURSE_ASSET_BUCKET } from '@/lib/course-assets/shared';
 import { useStageStore } from '@/lib/store/stage';
 import { compileBrowserCourseVideo } from '@/lib/video-export/compile-browser-course-video';
+import {
+  planCourseVideoExport,
+  type CourseVideoExportPlan,
+} from '@/lib/video-export/course-video-source';
 import { useExportClassroom } from './use-export-classroom';
 
 interface VideoExportJobView {
@@ -18,6 +22,7 @@ interface VideoExportJobView {
   progressTotal?: number;
   done: boolean;
   downloadUrl?: string;
+  exportPlan?: CourseVideoExportPlan;
 }
 
 interface SignedUpload {
@@ -84,13 +89,21 @@ export function useExportCourseVideo() {
     try {
       const classroom = await exportClassroomZip({ download: false, notify: false });
       if (!classroom) throw new Error('当前课件没有可导出的内容');
+      const exportPlan = planCourseVideoExport(classroom.manifest);
+      if (exportPlan.includedCount === 0) {
+        throw new Error('这门课程全部是互动内容，没有可合成的视频页面');
+      }
       const bytes = await compileBrowserCourseVideo(classroom.manifest, classroom.audioByRef);
       const source = new Blob([Uint8Array.from(bytes)], { type: 'application/zip' });
 
       const created = await requestJson<{
         job: VideoExportJobView;
         upload: SignedUpload;
-      }>(`/api/courses/${encodeURIComponent(courseId)}/video-exports`, { method: 'POST' });
+      }>(`/api/courses/${encodeURIComponent(courseId)}/video-exports`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ exportPlan }),
+      });
       const { error: uploadError } = await supabase.storage
         .from(COURSE_ASSET_BUCKET)
         .uploadToSignedUrl(created.upload.path, created.upload.token, source, {

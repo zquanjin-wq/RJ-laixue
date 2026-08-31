@@ -25,6 +25,17 @@ type VideoExportJob = {
   sourceLabel?: string;
   createdAt: string;
   downloadUrl?: string;
+  exportPlan?: {
+    totalScenes: number;
+    includedCount: number;
+    skippedCount: number;
+    skippedScenes: Array<{
+      order: number;
+      title: string;
+      type: string;
+      reason: string;
+    }>;
+  };
 };
 
 const isActiveVideoJob = (job: VideoExportJob) =>
@@ -38,6 +49,54 @@ function videoJobLabel(job: VideoExportJob) {
     return `视频生成中 ${Math.min(100, Math.round((job.progressCurrent / job.progressTotal) * 100))}%`;
   }
   return job.status === 'uploading' ? '正在准备视频素材' : '视频后台生成中';
+}
+
+function videoJobProgress(job: VideoExportJob) {
+  if (!job.progressTotal || job.progressCurrent === undefined) return null;
+  return Math.min(100, Math.round((job.progressCurrent / job.progressTotal) * 100));
+}
+
+function VideoExportPlan({ job }: { job: VideoExportJob }) {
+  const plan = job.exportPlan;
+  if (!plan) return null;
+  return (
+    <div className="mt-3 rounded-lg bg-white/80 p-3 dark:bg-slate-950/60">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">本次合成计划</h4>
+        <span className="text-xs text-slate-500">共检测 {plan.totalScenes} 页</span>
+      </div>
+      <div className="mt-3 flex gap-8">
+        <div>
+          <p className="text-xs text-slate-500">可合成</p>
+          <p className="mt-1 text-base font-semibold text-emerald-600">{plan.includedCount} 页</p>
+        </div>
+        <div>
+          <p className="text-xs text-slate-500">跳过互动</p>
+          <p className="mt-1 text-base font-semibold text-amber-600">{plan.skippedCount} 页</p>
+        </div>
+      </div>
+      {plan.skippedCount > 0 && (
+        <details className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+          <summary className="cursor-pointer text-xs font-medium text-slate-700 dark:text-slate-200">
+            查看跳过的互动页面
+          </summary>
+          <p className="mt-3 text-xs text-slate-500">
+            Quiz、讨论和需要学员操作的页面不会进入视频，原课件不受影响。
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {plan.skippedScenes.map((scene) => (
+              <span
+                key={`${scene.order}-${scene.title}`}
+                className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs text-amber-800 dark:bg-slate-950"
+              >
+                第 {scene.order + 1} 页 · {scene.title}（{scene.reason}）
+              </span>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -66,6 +125,7 @@ function CourseCard({
   onShare,
   onDelete,
 }: CourseCardProps) {
+  const videoProgress = videoJob ? videoJobProgress(videoJob) : null;
   // Per-section labels. The "open" verb used to be ambiguous between a
   // teacher's own course and a public library entry — make the verb match
   // the section's semantics.
@@ -97,17 +157,46 @@ function CourseCard({
         更新于 {new Date(course.updated_at).toLocaleDateString('zh-CN')}
       </p>
       {isOwner && videoJob && (
-        <p
-          className={`mt-2 text-xs ${
-            videoJob.status === 'failed'
-              ? 'text-red-600 dark:text-red-400'
-              : videoJob.status === 'succeeded'
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-violet-600 dark:text-violet-400'
-          }`}
-        >
-          {videoJobLabel(videoJob)}
-        </p>
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:bg-slate-900/50">
+          <div className="flex items-center justify-between gap-3">
+            <p
+              className={`text-xs font-medium ${
+                videoJob.status === 'failed'
+                  ? 'text-red-600 dark:text-red-400'
+                  : videoJob.status === 'succeeded'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-blue-600 dark:text-blue-400'
+              }`}
+            >
+              {videoJobLabel(videoJob)}
+            </p>
+            <span className="text-[11px] text-slate-500">
+              {new Date(videoJob.createdAt).toLocaleString('zh-CN')}
+            </span>
+          </div>
+          {isActiveVideoJob(videoJob) && (
+            <div className="mt-3">
+              <div className="mb-1.5 flex justify-between text-[11px] text-slate-500">
+                <span>
+                  {videoJob.status === 'uploading' ? '正在准备视频素材' : '正在合成画面与配音'}
+                </span>
+                <span>{videoProgress === null ? '等待进度' : `${videoProgress}%`}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all"
+                  style={{
+                    width: `${videoProgress ?? (videoJob.status === 'uploading' ? 12 : 24)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          {videoJob.status === 'failed' && videoJob.error && (
+            <p className="mt-2 text-xs text-red-600">{videoJob.error}</p>
+          )}
+          <VideoExportPlan job={videoJob} />
+        </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -292,69 +381,30 @@ export default function CloudCourses() {
   const discoverCourses = allCourses;
   return (
     <div className="mt-8 space-y-10">
+      {/* 我的创作 — courses I created (or have edit rights to). Edit + Delete only here. */}
       <section id="video-exports">
-        <div className="mb-4 flex items-end justify-between gap-4">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">🎬 视频导出</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              视频提交后可离开课堂，生成结果会保留在这里。
+            <h2 className="mb-1 text-lg font-semibold">我的课程</h2>
+            <p className="text-sm text-muted-foreground">
+              课程编辑、视频生成进度和下载结果都在同一处管理
             </p>
           </div>
-          {videoJobs.some(isActiveVideoJob) && (
-            <span className="text-xs text-violet-600 dark:text-violet-400">后台生成中</span>
+          {videoJobs.length > 0 && (
+            <div className="flex gap-2 text-xs">
+              {videoJobs.some(isActiveVideoJob) && (
+                <span className="rounded-full bg-blue-50 px-3 py-1.5 text-blue-700">
+                  生成中 {videoJobs.filter(isActiveVideoJob).length}
+                </span>
+              )}
+              {videoJobs.some((job) => job.status === 'succeeded') && (
+                <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700">
+                  可下载 {videoJobs.filter((job) => job.status === 'succeeded').length}
+                </span>
+              )}
+            </div>
           )}
         </div>
-        {videoJobs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">尚未导出过课程视频。</p>
-        ) : (
-          <div className="space-y-2">
-            {videoJobs.slice(0, 8).map((job) => {
-              const course = myCourses.find((item) => item.id === job.courseId);
-              return (
-                <div
-                  key={job.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {course?.title || course?.topic || '课程视频'}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {videoJobLabel(job)} · {new Date(job.createdAt).toLocaleString('zh-CN')}
-                    </p>
-                    {job.status === 'failed' && job.error && (
-                      <p className="mt-1 text-xs text-red-600 dark:text-red-400">{job.error}</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    {job.status === 'succeeded' && job.downloadUrl && (
-                      <button
-                        onClick={() => void downloadVideo(job)}
-                        className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground"
-                      >
-                        下载 MP4
-                      </button>
-                    )}
-                    {(job.status === 'failed' || job.status === 'cancelled') && course && (
-                      <button
-                        onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank')}
-                        className="rounded border px-3 py-1.5 text-xs"
-                      >
-                        重新导出
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* 我的创作 — courses I created (or have edit rights to). Edit + Delete only here. */}
-      <section>
-        <h2 className="mb-1 text-lg font-semibold">📚 我的创作</h2>
-        <p className="mb-4 text-sm text-muted-foreground">你创建或可以编辑的课程</p>
         {myCourses.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             你还没有创建过课程。生成课件后点击「保存到云端」即可在这里看到。
