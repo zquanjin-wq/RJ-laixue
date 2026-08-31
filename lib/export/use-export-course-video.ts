@@ -49,6 +49,7 @@ export function useExportCourseVideo() {
   const { exportClassroomZip } = useExportClassroom();
   const [job, setJob] = useState<VideoExportJobView | null>(null);
   const [preparing, setPreparing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const refresh = useCallback(
     async (id: string) => {
@@ -153,7 +154,8 @@ export function useExportCourseVideo() {
   }, [courseId, exportClassroomZip, job, preparing]);
 
   const download = useCallback(async () => {
-    if (!job?.downloadUrl) return;
+    if (!job?.downloadUrl || downloading) return;
+    setDownloading(true);
     try {
       // A direct navigation lets the browser play an MP4 inline. Fetching the
       // signed file first keeps the user in the classroom and triggers a real
@@ -163,12 +165,15 @@ export function useExportCourseVideo() {
       saveAs(await response.blob(), 'course.mp4');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '视频下载失败，请重试');
+    } finally {
+      setDownloading(false);
     }
-  }, [job]);
+  }, [downloading, job]);
 
   return {
     job,
     preparing,
+    downloading,
     active: preparing || Boolean(job && !job.done),
     start,
     download,

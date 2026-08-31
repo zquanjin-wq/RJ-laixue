@@ -5,6 +5,7 @@ import { saveAs } from 'file-saver';
 import {
   Download,
   Eye,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Search,
@@ -105,17 +106,6 @@ function VideoPlan({ job }: { job?: VideoExportJob }) {
   return <p className="text-sm text-slate-500">视频导出已取消。</p>;
 }
 
-async function downloadVideo(job: VideoExportJob) {
-  try {
-    if (!job.downloadUrl) return;
-    const response = await fetch(job.downloadUrl);
-    if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`);
-    saveAs(await response.blob(), 'course.mp4');
-  } catch (error) {
-    alert(getErrorMessage(error, '视频下载失败'));
-  }
-}
-
 export default function CloudCourses() {
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
@@ -128,6 +118,7 @@ export default function CloudCourses() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<CourseFilter>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
 
   const fetchCourses = useCallback(async () => {
     try {
@@ -175,6 +166,22 @@ export default function CloudCourses() {
 
   const openCourse = (courseId: string) => window.open(`/classroom/${courseId}?view=1`, '_blank');
   const editCourse = (courseId: string) => window.open(`/classroom/${courseId}?editor=1`, '_blank');
+
+  const downloadVideo = async (job: VideoExportJob) => {
+    if (!job.downloadUrl || downloadingVideoId) return;
+    setDownloadingVideoId(job.id);
+    try {
+      // Fetching the signed MP4 first makes the browser save a file instead of
+      // opening its built-in player. The button changes immediately while this runs.
+      const response = await fetch(job.downloadUrl);
+      if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`);
+      saveAs(await response.blob(), 'course.mp4');
+    } catch (error) {
+      alert(getErrorMessage(error, '视频下载失败'));
+    } finally {
+      setDownloadingVideoId(null);
+    }
+  };
 
   const shareCourse = async (courseId: string) => {
     setSharingId(courseId);
@@ -245,7 +252,7 @@ export default function CloudCourses() {
                 <button onClick={() => setExpandedId(expanded ? null : course.id)} className="text-left"><VideoStatus job={job} /></button>
                 <div className="text-xs text-slate-500">{formatActivity(job) ?? `更新于 ${formatDate(course.updated_at)}`}</div>
                 <div className="flex items-center gap-2 lg:justify-end">
-                  {job?.status === 'succeeded' && job.downloadUrl && <button onClick={() => void downloadVideo(job)} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"><Download className="size-3.5" />下载视频</button>}
+                  {job?.status === 'succeeded' && job.downloadUrl && <button onClick={() => void downloadVideo(job)} disabled={Boolean(downloadingVideoId)} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-70">{downloadingVideoId === job.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}{downloadingVideoId === job.id ? '正在准备下载…' : '下载视频'}</button>}
                   <button onClick={() => editCourse(course.id)} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"><Pencil className="size-3.5" />继续编辑</button>
                   <button onClick={() => openCourse(course.id)} className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"><Eye className="size-3.5" />预览</button>
                   <details className="relative"><summary className="flex size-8 cursor-pointer list-none items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><MoreHorizontal className="size-4" /></summary><div className="absolute right-0 z-10 mt-2 w-32 rounded-lg border bg-white p-1 shadow-lg"><button onClick={() => shareCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button onClick={() => removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div></details>

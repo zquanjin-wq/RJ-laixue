@@ -330,15 +330,15 @@ export function HeaderControls({
               <button
                 onClick={() => {
                   setExportMenuOpen(false);
-                  if (videoExport.job?.status === 'succeeded') videoExport.download();
+                  if (videoExport.job?.status === 'succeeded') void videoExport.download();
                   else if (videoExport.active && !videoExport.preparing)
                     window.open('/courses#video-exports', '_blank');
                   else void videoExport.start();
                 }}
-                disabled={videoExport.preparing}
+                disabled={videoExport.preparing || videoExport.downloading}
                 className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5 disabled:opacity-60 disabled:cursor-wait"
               >
-                {videoExport.active ? (
+                {videoExport.active || videoExport.downloading ? (
                   <Loader2 className="w-4 h-4 text-purple-500 shrink-0 animate-spin" />
                 ) : (
                   <Film className="w-4 h-4 text-purple-500 shrink-0" />
@@ -346,14 +346,14 @@ export function HeaderControls({
                 <div>
                   <div>
                     {videoExport.job?.status === 'succeeded'
-                      ? '下载课程视频'
+                      ? videoExport.downloading ? '正在准备下载…' : '下载课程视频'
                       : videoExport.active
                         ? videoExport.job?.message || '正在准备课程视频'
                         : '导出课程视频'}
                   </div>
                   <div className="text-[11px] text-gray-400 dark:text-gray-500">
                     {videoExport.job?.status === 'succeeded'
-                      ? 'MP4 已生成'
+                      ? videoExport.downloading ? '正在保存 MP4 文件' : 'MP4 已生成'
                       : videoExport.active && !videoExport.preparing
                         ? '可以离开，到课程管理查看'
                         : '生成带讲解与字幕的 MP4'}
