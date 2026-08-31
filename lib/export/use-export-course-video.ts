@@ -14,6 +14,8 @@ interface VideoExportJobView {
   status: 'uploading' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   message: string;
   error?: string;
+  progressCurrent?: number;
+  progressTotal?: number;
   done: boolean;
   downloadUrl?: string;
 }
@@ -107,7 +109,14 @@ export function useExportCourseVideo() {
       );
       localStorage.setItem(storageKey(courseId), started.job.id);
       setJob(started.job);
-      toast.success('视频已开始生成，可以继续编辑课件', { id: toastId });
+      toast.success('视频已转入后台生成，现在可以离开。可在“课程管理 → 视频导出”查看。', {
+        id: toastId,
+        duration: 8000,
+        action: {
+          label: '查看任务',
+          onClick: () => window.open('/courses#video-exports', '_blank'),
+        },
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '视频导出失败', { id: toastId });
     } finally {

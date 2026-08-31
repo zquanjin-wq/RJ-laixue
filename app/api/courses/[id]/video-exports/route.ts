@@ -6,9 +6,9 @@ import {
   createCourseVideoDownloadUrl,
   createCourseVideoExportJob,
   getCourseVideoExportJob,
+  presentCourseVideoExportJob,
   startCourseVideoExportJob,
   syncCourseVideoExportJob,
-  type CourseVideoExportJob,
 } from '@/lib/server/course-video-export-jobs';
 import { getServiceSupabase } from '@/lib/supabase/server';
 
@@ -28,19 +28,6 @@ async function canManageCourseVideoExport(courseId: string, userId: string) {
     : ('forbidden' as const);
 }
 
-function present(job: CourseVideoExportJob, downloadUrl?: string | null) {
-  return {
-    id: job.id,
-    status: job.status,
-    message: job.message,
-    error: job.error ?? undefined,
-    done: ['succeeded', 'failed', 'cancelled'].includes(job.status),
-    createdAt: job.created_at,
-    updatedAt: job.updated_at,
-    downloadUrl: downloadUrl ?? undefined,
-  };
-}
-
 export async function POST(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireAuthOrTeacher(['teacher', 'admin']);
   if (!auth.ok) return auth.response;
@@ -51,7 +38,7 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ i
 
   try {
     const { job, upload } = await createCourseVideoExportJob(courseId, auth.user.id);
-    return apiSuccess({ job: present(job), upload }, 201);
+    return apiSuccess({ job: presentCourseVideoExportJob(job), upload }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return apiError('INTERNAL_ERROR', 500, message);
@@ -72,7 +59,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     job = await syncCourseVideoExportJob(jobId);
     if (!job) return apiError('NOT_FOUND', 404, '任务不存在');
     const downloadUrl = await createCourseVideoDownloadUrl(job);
-    return apiSuccess({ job: present(job, downloadUrl), pollIntervalMs: 3000 });
+    return apiSuccess({ job: presentCourseVideoExportJob(job, downloadUrl), pollIntervalMs: 3000 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return apiError('INTERNAL_ERROR', 500, message);
@@ -92,7 +79,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   try {
     const started = await startCourseVideoExportJob(job.id);
     if (!started) return apiError('NOT_FOUND', 404, '任务不存在');
-    return apiSuccess({ job: present(started), pollIntervalMs: 3000 }, 202);
+    return apiSuccess({ job: presentCourseVideoExportJob(started), pollIntervalMs: 3000 }, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return apiError('INTERNAL_ERROR', 500, message);
@@ -110,5 +97,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   const job = await getCourseVideoExportJob(jobId);
   if (!job || job.course_id !== courseId) return apiError('NOT_FOUND', 404, '任务不存在');
   const cancelled = await cancelCourseVideoExportJob(jobId);
-  return apiSuccess({ job: cancelled ? present(cancelled) : present(job) });
+  return apiSuccess({
+    job: cancelled ? presentCourseVideoExportJob(cancelled) : presentCourseVideoExportJob(job),
+  });
 }

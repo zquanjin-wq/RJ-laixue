@@ -20,10 +20,33 @@ export interface CourseVideoExportJob {
   render_job_id?: string | null;
   message: string;
   error?: string | null;
+  progress_current?: number | null;
+  progress_total?: number | null;
+  source_label?: string | null;
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
   updated_at: string;
+}
+
+export function presentCourseVideoExportJob(
+  job: CourseVideoExportJob,
+  downloadUrl?: string | null,
+) {
+  return {
+    id: job.id,
+    courseId: job.course_id,
+    status: job.status,
+    message: job.message,
+    error: job.error ?? undefined,
+    progressCurrent: job.progress_current ?? undefined,
+    progressTotal: job.progress_total ?? undefined,
+    sourceLabel: job.source_label ?? undefined,
+    done: ['succeeded', 'failed', 'cancelled'].includes(job.status),
+    createdAt: job.created_at,
+    updatedAt: job.updated_at,
+    downloadUrl: downloadUrl ?? undefined,
+  };
 }
 
 type RenderStatus = {
@@ -32,6 +55,8 @@ type RenderStatus = {
   frame?: number;
   totalFrames?: number;
 };
+
+const ACTIVE_VIDEO_STATUSES: CourseVideoExportStatus[] = ['uploading', 'queued', 'running'];
 
 function renderServiceUrl() {
   const value = process.env.VIDEO_RENDER_SERVICE_URL?.trim().replace(/\/$/, '');
@@ -64,6 +89,7 @@ export async function createCourseVideoExportJob(courseId: string, userId: strin
     input_path: inputPath,
     output_path: outputPath,
     message: '正在准备视频导出文件',
+    source_label: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
   };
   const { data: created, error } = await service
     .from('course_video_export_jobs')
@@ -77,6 +103,17 @@ export async function createCourseVideoExportJob(courseId: string, userId: strin
   if (uploadError || !data)
     throw new Error(`创建视频导出上传地址失败：${uploadError?.message ?? 'unknown'}`);
   return { job: created as CourseVideoExportJob, upload: data };
+}
+
+export async function listCourseVideoExportJobs(userId: string, limit = 30) {
+  const { data, error } = await getServiceSupabase()
+    .from('course_video_export_jobs')
+    .select('*')
+    .eq('requested_by', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as CourseVideoExportJob[];
 }
 
 export async function getCourseVideoExportJob(jobId: string) {
@@ -147,7 +184,12 @@ export async function syncCourseVideoExportJob(jobId: string) {
         : '';
     const { data, error } = await service
       .from('course_video_export_jobs')
-      .update({ message: `正在生成课程视频${progress}`, updated_at: new Date().toISOString() })
+      .update({
+        message: `正在生成课程视频${progress}`,
+        progress_current: typeof render.frame === 'number' ? render.frame : null,
+        progress_total: render.totalFrames ?? null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', jobId)
       .select('*')
       .single();
@@ -171,6 +213,8 @@ export async function syncCourseVideoExportJob(jobId: string) {
       .update({
         status: 'succeeded',
         message: '课程视频已生成',
+        progress_current: render.totalFrames ?? job.progress_total ?? null,
+        progress_total: render.totalFrames ?? job.progress_total ?? null,
         completed_at: now,
         updated_at: now,
       })
@@ -197,6 +241,48 @@ export async function syncCourseVideoExportJob(jobId: string) {
     .single();
   if (error) throw error;
   return data as CourseVideoExportJob;
+}
+
+export async function reconcileCourseVideoExportJobs() {
+  const service = getServiceSupabase();
+  const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  await service
+    .from('course_video_export_jobs')
+    .update({
+      status: 'failed',
+      message: '视频素材准备未完成',
+      error: '页面在素材提交完成前关闭，请重新导出',
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('status', 'uploading')
+    .lt('updated_at', staleBefore);
+
+  const { data, error } = await service
+    .from('course_video_export_jobs')
+    .select('*')
+    .in('status', ACTIVE_VIDEO_STATUSES)
+    .order('created_at', { ascending: true })
+    .limit(20);
+  if (error) throw error;
+
+  const jobs = (data ?? []) as CourseVideoExportJob[];
+  let completed = 0;
+  let failed = 0;
+  for (const job of jobs) {
+    if (job.status !== 'running') continue;
+    try {
+      const updated = await syncCourseVideoExportJob(job.id);
+      if (updated && ['succeeded', 'failed', 'cancelled'].includes(updated.status)) completed += 1;
+    } catch (error) {
+      failed += 1;
+      console.error('[course-video-export] reconcile failed', {
+        jobId: job.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { checked: jobs.length, completed, failed };
 }
 
 export async function createCourseVideoDownloadUrl(job: CourseVideoExportJob) {

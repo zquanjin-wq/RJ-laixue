@@ -331,9 +331,11 @@ export function HeaderControls({
                 onClick={() => {
                   setExportMenuOpen(false);
                   if (videoExport.job?.status === 'succeeded') videoExport.download();
+                  else if (videoExport.active && !videoExport.preparing)
+                    window.open('/courses#video-exports', '_blank');
                   else void videoExport.start();
                 }}
-                disabled={videoExport.active}
+                disabled={videoExport.preparing}
                 className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5 disabled:opacity-60 disabled:cursor-wait"
               >
                 {videoExport.active ? (
@@ -352,7 +354,9 @@ export function HeaderControls({
                   <div className="text-[11px] text-gray-400 dark:text-gray-500">
                     {videoExport.job?.status === 'succeeded'
                       ? 'MP4 已生成'
-                      : '生成带讲解与字幕的 MP4'}
+                      : videoExport.active && !videoExport.preparing
+                        ? '可以离开，到课程管理查看'
+                        : '生成带讲解与字幕的 MP4'}
                   </div>
                 </div>
               </button>

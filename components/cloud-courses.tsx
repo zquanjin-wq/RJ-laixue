@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import { saveAs } from 'file-saver';
 import { listCloudCourses, listMyCourses, deleteCloudCourse } from '@/lib/utils/cloud-sync';
 import { useAuth } from '@/lib/auth/use-auth';
 
@@ -13,6 +14,32 @@ interface CloudCourse {
   updated_at: string;
 }
 
+type VideoExportJob = {
+  id: string;
+  courseId: string;
+  status: 'uploading' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  message: string;
+  error?: string;
+  progressCurrent?: number;
+  progressTotal?: number;
+  sourceLabel?: string;
+  createdAt: string;
+  downloadUrl?: string;
+};
+
+const isActiveVideoJob = (job: VideoExportJob) =>
+  ['uploading', 'queued', 'running'].includes(job.status);
+
+function videoJobLabel(job: VideoExportJob) {
+  if (job.status === 'succeeded') return '视频已生成';
+  if (job.status === 'failed') return '视频生成失败';
+  if (job.status === 'cancelled') return '视频导出已取消';
+  if (job.progressTotal && job.progressCurrent !== undefined) {
+    return `视频生成中 ${Math.min(100, Math.round((job.progressCurrent / job.progressTotal) * 100))}%`;
+  }
+  return job.status === 'uploading' ? '正在准备视频素材' : '视频后台生成中';
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -20,10 +47,10 @@ function getErrorMessage(error: unknown, fallback: string) {
 interface CourseCardProps {
   course: CloudCourse;
   isOwner: boolean;
-  currentUserId: string | null;
   sharingId: string | null;
   /** Which list this card belongs to — drives tag text and share button copy. */
   section: 'mine' | 'library';
+  videoJob?: VideoExportJob;
   onOpen: (id: string) => void;
   onShare: (id: string) => void;
   onDelete: (id: string) => void;
@@ -32,9 +59,9 @@ interface CourseCardProps {
 function CourseCard({
   course,
   isOwner,
-  currentUserId,
   sharingId,
   section, // 'mine' | 'library' — picks tag text + button labels per section
+  videoJob,
   onOpen,
   onShare,
   onDelete,
@@ -69,6 +96,19 @@ function CourseCard({
       <p className="mt-1 text-xs text-muted-foreground">
         更新于 {new Date(course.updated_at).toLocaleDateString('zh-CN')}
       </p>
+      {isOwner && videoJob && (
+        <p
+          className={`mt-2 text-xs ${
+            videoJob.status === 'failed'
+              ? 'text-red-600 dark:text-red-400'
+              : videoJob.status === 'succeeded'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : 'text-violet-600 dark:text-violet-400'
+          }`}
+        >
+          {videoJobLabel(videoJob)}
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           onClick={() => onOpen(course.id)}
@@ -82,6 +122,14 @@ function CourseCard({
             className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
           >
             查看数据
+          </button>
+        )}
+        {isOwner && videoJob?.status === 'succeeded' && videoJob.downloadUrl && (
+          <button
+            onClick={() => void downloadVideo(videoJob)}
+            className="rounded border border-emerald-300 px-3 py-1 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+          >
+            下载视频
           </button>
         )}
         {isOwner && (
@@ -112,13 +160,25 @@ function CourseCard({
   );
 }
 
+async function downloadVideo(job: VideoExportJob) {
+  try {
+    if (!job.downloadUrl) return;
+    const response = await fetch(job.downloadUrl);
+    if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`);
+    saveAs(await response.blob(), 'course.mp4');
+  } catch (error) {
+    alert(getErrorMessage(error, '视频下载失败'));
+  }
+}
+
 export default function CloudCourses() {
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
   const isGlobalManager = user?.email?.toLowerCase() === 'jinzengquan@ruijie.com.cn';
 
   const [myCourses, setMyCourses] = useState<CloudCourse[]>([]);
-  const [allCourses, setAllCourses] = useState<CloudCourse[]>([]);
+  const allCourses: CloudCourse[] = [];
+  const [videoJobs, setVideoJobs] = useState<VideoExportJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
@@ -132,16 +192,37 @@ export default function CloudCourses() {
       // full discover list.
       const mine = await listMyCourses();
       setMyCourses(isGlobalManager ? await listCloudCourses() : mine);
+      const videoResponse = await fetch('/api/video-exports');
+      const videoBody = (await videoResponse.json()) as {
+        success?: boolean;
+        jobs?: VideoExportJob[];
+        error?: string;
+      };
+      if (!videoResponse.ok || videoBody.success === false) {
+        throw new Error(videoBody.error || '获取视频任务失败');
+      }
+      setVideoJobs(videoBody.jobs ?? []);
     } catch (e: unknown) {
       setError(getErrorMessage(e, '获取云端课程失败'));
     } finally {
       setLoading(false);
     }
-  }, [user?.email]);
+  }, [isGlobalManager]);
 
   useEffect(() => {
     fetchCourses();
   }, [fetchCourses]);
+
+  useEffect(() => {
+    if (!videoJobs.some(isActiveVideoJob)) return;
+    const timer = window.setInterval(() => void fetchCourses(), 10000);
+    return () => window.clearInterval(timer);
+  }, [fetchCourses, videoJobs]);
+
+  const latestVideoByCourse = new Map<string, VideoExportJob>();
+  for (const job of videoJobs) {
+    if (!latestVideoByCourse.has(job.courseId)) latestVideoByCourse.set(job.courseId, job);
+  }
 
   const handleOpen = (courseId: string) => {
     // Pure viewer mode — no Pro Mode, no save button. Owner can edit
@@ -211,6 +292,65 @@ export default function CloudCourses() {
   const discoverCourses = allCourses;
   return (
     <div className="mt-8 space-y-10">
+      <section id="video-exports">
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">🎬 视频导出</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              视频提交后可离开课堂，生成结果会保留在这里。
+            </p>
+          </div>
+          {videoJobs.some(isActiveVideoJob) && (
+            <span className="text-xs text-violet-600 dark:text-violet-400">后台生成中</span>
+          )}
+        </div>
+        {videoJobs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">尚未导出过课程视频。</p>
+        ) : (
+          <div className="space-y-2">
+            {videoJobs.slice(0, 8).map((job) => {
+              const course = myCourses.find((item) => item.id === job.courseId);
+              return (
+                <div
+                  key={job.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {course?.title || course?.topic || '课程视频'}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {videoJobLabel(job)} · {new Date(job.createdAt).toLocaleString('zh-CN')}
+                    </p>
+                    {job.status === 'failed' && job.error && (
+                      <p className="mt-1 text-xs text-red-600 dark:text-red-400">{job.error}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {job.status === 'succeeded' && job.downloadUrl && (
+                      <button
+                        onClick={() => void downloadVideo(job)}
+                        className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground"
+                      >
+                        下载 MP4
+                      </button>
+                    )}
+                    {(job.status === 'failed' || job.status === 'cancelled') && course && (
+                      <button
+                        onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank')}
+                        className="rounded border px-3 py-1.5 text-xs"
+                      >
+                        重新导出
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* 我的创作 — courses I created (or have edit rights to). Edit + Delete only here. */}
       <section>
         <h2 className="mb-1 text-lg font-semibold">📚 我的创作</h2>
@@ -226,9 +366,9 @@ export default function CloudCourses() {
                 key={course.id}
                 course={course}
                 isOwner={course.created_by === currentUserId}
-                currentUserId={currentUserId}
                 sharingId={sharingId}
                 section="mine"
+                videoJob={latestVideoByCourse.get(course.id)}
                 onOpen={handleOpen}
                 onShare={handleShare}
                 onDelete={handleDelete}
@@ -251,9 +391,9 @@ export default function CloudCourses() {
                   key={course.id}
                   course={course}
                   isOwner={false}
-                  currentUserId={currentUserId}
                   sharingId={sharingId}
                   section="library"
+                  videoJob={latestVideoByCourse.get(course.id)}
                   onOpen={handleOpen}
                   onShare={handleShare}
                   onDelete={handleDelete}
