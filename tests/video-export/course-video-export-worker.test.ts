@@ -8,10 +8,16 @@ const getServiceSupabase = vi.hoisted(() =>
   vi.fn(() => ({
     from: () => ({
       select: () => ({
-        eq: (_field: string, value: string) => ({
+        eq: (field: string, value: string) => ({
           maybeSingle: async () => ({
             data: state.jobs.find((job) => job.id === value) ?? null,
             error: null,
+          }),
+          order: () => ({
+            limit: async () => ({
+              data: state.jobs.filter((job) => job[field] === value),
+              error: null,
+            }),
           }),
         }),
         in: (_field: string, statuses: string[]) => ({
@@ -41,7 +47,10 @@ const getServiceSupabase = vi.hoisted(() =>
 
 vi.mock('@/lib/supabase/server', () => ({ getServiceSupabase }));
 
-import { reconcileCourseVideoExportJobs } from '@/lib/server/course-video-export-jobs';
+import {
+  reconcileCourseVideoExportJobs,
+  refreshCourseVideoExportJobs,
+} from '@/lib/server/course-video-export-jobs';
 
 describe('course video export background worker', () => {
   beforeEach(() => {
@@ -77,6 +86,23 @@ describe('course video export background worker', () => {
       status: 'running',
       progress_current: 48,
       progress_total: 240,
+    });
+  });
+
+  it('advances active jobs when the course-management list refreshes', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ status: 'running', frame: 14067, totalFrames: 19623 }), {
+        status: 200,
+      }),
+    );
+
+    const jobs = await refreshCourseVideoExportJobs('teacher-1');
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      status: 'running',
+      progress_current: 14067,
+      progress_total: 19623,
     });
   });
 });

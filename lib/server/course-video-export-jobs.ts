@@ -124,6 +124,29 @@ export async function listCourseVideoExportJobs(userId: string, limit = 30) {
   return (data ?? []) as CourseVideoExportJob[];
 }
 
+/**
+ * Read the teacher's task list and advance active renderer jobs before the
+ * list is shown. This makes the course-management page a real recovery
+ * surface: leaving the classroom no longer stops progress/finalization.
+ */
+export async function refreshCourseVideoExportJobs(userId: string, limit = 30) {
+  const jobs = await listCourseVideoExportJobs(userId, limit);
+  return Promise.all(
+    jobs.map(async (job) => {
+      if (job.status !== 'running' || !job.render_job_id) return job;
+      try {
+        return (await syncCourseVideoExportJob(job.id)) ?? job;
+      } catch (error) {
+        console.error('[course-video-export] list refresh failed', {
+          jobId: job.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return job;
+      }
+    }),
+  );
+}
+
 export async function getCourseVideoExportJob(jobId: string) {
   const { data, error } = await getServiceSupabase()
     .from('course_video_export_jobs')
