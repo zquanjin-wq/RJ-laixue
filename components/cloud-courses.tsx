@@ -1,6 +1,16 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { saveAs } from 'file-saver';
+import {
+  Download,
+  Eye,
+  MoreHorizontal,
+  Pencil,
+  Search,
+  Share2,
+  Trash2,
+} from 'lucide-react';
 import { listCloudCourses, listMyCourses, deleteCloudCourse } from '@/lib/utils/cloud-sync';
 import { useAuth } from '@/lib/auth/use-auth';
 
@@ -13,7 +23,6 @@ interface CloudCourse {
   created_at: string;
   updated_at: string;
 }
-
 type VideoExportJob = {
   id: string;
   courseId: string;
@@ -29,238 +38,71 @@ type VideoExportJob = {
     totalScenes: number;
     includedCount: number;
     skippedCount: number;
-    skippedScenes: Array<{
-      order: number;
-      title: string;
-      type: string;
-      reason: string;
-    }>;
+    skippedScenes: Array<{ order: number; title: string; type: string; reason: string }>;
   };
 };
 
+type CourseFilter = 'all' | 'active' | 'downloadable' | 'failed';
+
 const isActiveVideoJob = (job: VideoExportJob) =>
   ['uploading', 'queued', 'running'].includes(job.status);
-
-function videoJobLabel(job: VideoExportJob) {
-  if (job.status === 'succeeded') return '视频已生成';
-  if (job.status === 'failed') return '视频生成失败';
-  if (job.status === 'cancelled') return '视频导出已取消';
-  if (job.progressTotal && job.progressCurrent !== undefined) {
-    return `视频生成中 ${Math.min(100, Math.round((job.progressCurrent / job.progressTotal) * 100))}%`;
-  }
-  return job.status === 'uploading' ? '正在准备视频素材' : '视频后台生成中';
-}
 
 function videoJobProgress(job: VideoExportJob) {
   if (!job.progressTotal || job.progressCurrent === undefined) return null;
   return Math.min(100, Math.round((job.progressCurrent / job.progressTotal) * 100));
 }
 
-function VideoExportPlan({ job }: { job: VideoExportJob }) {
-  const plan = job.exportPlan;
-  if (!plan) return null;
-  return (
-    <div className="mt-3 rounded-lg bg-white/80 p-3 dark:bg-slate-950/60">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">本次合成计划</h4>
-        <span className="text-xs text-slate-500">共检测 {plan.totalScenes} 页</span>
-      </div>
-      <div className="mt-3 flex gap-8">
-        <div>
-          <p className="text-xs text-slate-500">可合成</p>
-          <p className="mt-1 text-base font-semibold text-emerald-600">{plan.includedCount} 页</p>
-        </div>
-        <div>
-          <p className="text-xs text-slate-500">跳过互动</p>
-          <p className="mt-1 text-base font-semibold text-amber-600">{plan.skippedCount} 页</p>
-        </div>
-      </div>
-      {plan.skippedCount > 0 && (
-        <details className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
-          <summary className="cursor-pointer text-xs font-medium text-slate-700 dark:text-slate-200">
-            查看跳过的互动页面
-          </summary>
-          <p className="mt-3 text-xs text-slate-500">
-            Quiz、讨论和需要学员操作的页面不会进入视频，原课件不受影响。
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {plan.skippedScenes.map((scene) => (
-              <span
-                key={`${scene.order}-${scene.title}`}
-                className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs text-amber-800 dark:bg-slate-950"
-              >
-                第 {scene.order + 1} 页 · {scene.title}（{scene.reason}）
-              </span>
-            ))}
-          </div>
-        </details>
-      )}
-    </div>
-  );
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-interface CourseCardProps {
-  course: CloudCourse;
-  isOwner: boolean;
-  sharingId: string | null;
-  /** Which list this card belongs to — drives tag text and share button copy. */
-  section: 'mine' | 'library';
-  videoJob?: VideoExportJob;
-  featured?: boolean;
-  onOpen: (id: string) => void;
-  onShare: (id: string) => void;
-  onDelete: (id: string) => void;
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString('zh-CN');
 }
 
-function CourseCard({
-  course,
-  isOwner,
-  sharingId,
-  section, // 'mine' | 'library' — picks tag text + button labels per section
-  videoJob,
-  featured = false,
-  onOpen,
-  onShare,
-  onDelete,
-}: CourseCardProps) {
-  const videoProgress = videoJob ? videoJobProgress(videoJob) : null;
-  // Per-section labels. The "open" verb used to be ambiguous between a
-  // teacher's own course and a public library entry — make the verb match
-  // the section's semantics.
-  const openLabel = '预览';
-  const editLabel = '继续编辑';
-  const shareLabel = section === 'mine' ? '分享学员链接' : '分享课程';
-  const tagLabel =
-    section === 'library'
-      ? '资源库'
-      : isOwner
-        ? '我的创作'
-        : course.author_name
-          ? `作者：${course.author_name}`
-          : null;
-  const tagClass =
-    section === 'mine' && isOwner
-      ? 'shrink-0 inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-900/30 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300'
-      : 'shrink-0 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300';
+function formatActivity(job?: VideoExportJob) {
+  if (!job) return null;
+  const time = new Date(job.createdAt).toLocaleString('zh-CN');
+  if (job.status === 'succeeded') return `生成于 ${time}`;
+  if (job.status === 'failed') return `失败于 ${time}`;
+  if (job.status === 'cancelled') return `取消于 ${time}`;
+  return `任务创建于 ${time}`;
+}
 
+function VideoStatus({ job }: { job?: VideoExportJob }) {
+  if (!job) return <span className="text-sm text-slate-400">— 未生成</span>;
+
+  if (job.status === 'succeeded') {
+    return <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700"><i className="size-2 rounded-full bg-emerald-500" />已生成</span>;
+  }
+
+  if (job.status === 'failed' || job.status === 'cancelled') {
+    return <span className="inline-flex items-center gap-2 text-sm font-medium text-red-700"><i className="size-2 rounded-full bg-red-500" />{job.status === 'failed' ? '生成失败' : '已取消'} · 查看详情</span>;
+  }
+
+  const progress = videoJobProgress(job);
   return (
-    <article
-      className={`rounded-2xl border bg-background p-5 transition-shadow hover:shadow-md ${
-        featured ? 'border-emerald-300 ring-1 ring-emerald-100 lg:col-span-2' : 'border-slate-200'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="font-medium truncate flex-1 min-w-0">
-          {course.title || course.topic || '未命名课程'}
-        </h3>
-        {tagLabel && <span className={tagClass}>{tagLabel}</span>}
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
+        <i className="size-2 animate-pulse rounded-full bg-blue-500" />
+        <span>{job.status === 'uploading' ? '准备素材中' : '生成中'} {progress === null ? '' : `${progress}%`}</span>
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        更新于 {new Date(course.updated_at).toLocaleDateString('zh-CN')}
-      </p>
-      {isOwner && videoJob && (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:bg-slate-900/50">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-sm shadow-sm">
-                ▶
-              </span>
-              <div>
-                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">课程视频</p>
-                <p
-                  className={`mt-0.5 text-[11px] font-medium ${
-                    videoJob.status === 'failed'
-                      ? 'text-red-600 dark:text-red-400'
-                      : videoJob.status === 'succeeded'
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-blue-600 dark:text-blue-400'
-                  }`}
-                >
-                  {videoJobLabel(videoJob)}
-                </p>
-              </div>
-            </div>
-            <span className="text-[11px] text-slate-500">
-              {new Date(videoJob.createdAt).toLocaleString('zh-CN')}
-            </span>
-          </div>
-          {isActiveVideoJob(videoJob) && (
-            <div className="mt-3">
-              <div className="mb-1.5 flex justify-between text-[11px] text-slate-500">
-                <span>
-                  {videoJob.status === 'uploading' ? '正在准备视频素材' : '正在合成画面与配音'}
-                </span>
-                <span>{videoProgress === null ? '等待进度' : `${videoProgress}%`}</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all"
-                  style={{
-                    width: `${videoProgress ?? (videoJob.status === 'uploading' ? 12 : 24)}%`,
-                  }}
-                />
-              </div>
-            </div>
-          )}
-          {videoJob.status === 'failed' && videoJob.error && (
-            <p className="mt-2 text-xs text-red-600">{videoJob.error}</p>
-          )}
-          <VideoExportPlan job={videoJob} />
-        </div>
-      )}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button
-          onClick={() => onOpen(course.id)}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
-        >
-          {openLabel}
-        </button>
-        {isOwner && (
-          <button
-            onClick={() => window.open(`/courses/${course.id}`, '_blank')}
-            className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-          >
-            查看数据
-          </button>
-        )}
-        {isOwner && videoJob?.status === 'succeeded' && videoJob.downloadUrl && (
-          <button
-            onClick={() => void downloadVideo(videoJob)}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-          >
-            下载视频
-          </button>
-        )}
-        {isOwner && (
-          <button
-            onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank')}
-            className="rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:opacity-90"
-          >
-            {editLabel}
-          </button>
-        )}
-        <button
-          onClick={() => onShare(course.id)}
-          disabled={sharingId === course.id}
-          className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-        >
-          {sharingId === course.id ? '复制中…' : shareLabel}
-        </button>
-        {isOwner && (
-          <button
-            onClick={() => onDelete(course.id)}
-            className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-destructive"
-          >
-            删除
-          </button>
-        )}
+      <div className="mt-2 h-1.5 w-24 overflow-hidden rounded-full bg-blue-100">
+        <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress ?? (job.status === 'uploading' ? 12 : 24)}%` }} />
       </div>
-    </article>
+    </div>
   );
+}
+
+function VideoPlan({ job }: { job?: VideoExportJob }) {
+  if (!job) return <p className="text-sm text-slate-500">尚未创建视频任务</p>;
+  if (isActiveVideoJob(job)) {
+    const progress = videoJobProgress(job);
+    return <><p className="font-medium text-slate-800">{job.status === 'uploading' ? '正在准备视频素材' : '正在合成画面与配音'}{progress === null ? '' : ` ${progress}%`}</p><p className="mt-1 text-xs text-slate-500">视频完成后会在此课程行中提供下载。</p></>;
+  }
+  if (job.status === 'failed') return <><p className="font-medium text-red-700">视频生成失败</p>{job.error && <p className="mt-1 text-xs text-red-600">{job.error}</p>}</>;
+  if (job.status === 'succeeded') return <><p className="font-medium text-emerald-700">视频已生成</p>{job.exportPlan && <p className="mt-1 text-xs text-slate-500">本次合成检测 {job.exportPlan.totalScenes} 页，可合成 {job.exportPlan.includedCount} 页。</p>}</>;
+  return <p className="text-sm text-slate-500">视频导出已取消。</p>;
 }
 
 async function downloadVideo(job: VideoExportJob) {
@@ -278,203 +120,143 @@ export default function CloudCourses() {
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
   const isGlobalManager = user?.email?.toLowerCase() === 'jinzengquan@ruijie.com.cn';
-
   const [myCourses, setMyCourses] = useState<CloudCourse[]>([]);
-  const allCourses: CloudCourse[] = [];
   const [videoJobs, setVideoJobs] = useState<VideoExportJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [sharingId, setSharingId] = useState<string | null>(null);
-  const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<CourseFilter>('all');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const fetchCourses = useCallback(async () => {
     try {
       setError('');
-      // Fetch BOTH scopes in parallel. The 'mine' scope is filtered
-      // server-side by created_by=user.id. The 'all' scope is the
-      // full discover list.
       const mine = await listMyCourses();
       setMyCourses(isGlobalManager ? await listCloudCourses() : mine);
-      const videoResponse = await fetch('/api/video-exports');
-      const videoBody = (await videoResponse.json()) as {
-        success?: boolean;
-        jobs?: VideoExportJob[];
-        error?: string;
-      };
-      if (!videoResponse.ok || videoBody.success === false) {
-        throw new Error(videoBody.error || '获取视频任务失败');
-      }
-      setVideoJobs(videoBody.jobs ?? []);
-    } catch (e: unknown) {
-      setError(getErrorMessage(e, '获取云端课程失败'));
+      const response = await fetch('/api/video-exports');
+      const body = (await response.json()) as { success?: boolean; jobs?: VideoExportJob[]; error?: string };
+      if (!response.ok || body.success === false) throw new Error(body.error || '获取视频任务失败');
+      setVideoJobs(body.jobs ?? []);
+    } catch (fetchError) {
+      setError(getErrorMessage(fetchError, '获取云端课程失败'));
     } finally {
       setLoading(false);
     }
   }, [isGlobalManager]);
 
-  useEffect(() => {
-    fetchCourses();
-  }, [fetchCourses]);
-
+  useEffect(() => { fetchCourses(); }, [fetchCourses]);
   useEffect(() => {
     if (!videoJobs.some(isActiveVideoJob)) return;
     const timer = window.setInterval(() => void fetchCourses(), 10000);
     return () => window.clearInterval(timer);
   }, [fetchCourses, videoJobs]);
 
-  const latestVideoByCourse = new Map<string, VideoExportJob>();
-  for (const job of videoJobs) {
-    if (!latestVideoByCourse.has(job.courseId)) latestVideoByCourse.set(job.courseId, job);
-  }
+  const latestVideoByCourse = useMemo(() => {
+    const jobs = [...videoJobs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return new Map(jobs.map((job) => [job.courseId, job]));
+  }, [videoJobs]);
 
-  const handleOpen = (courseId: string) => {
-    // Pure viewer mode — no Pro Mode, no save button. Owner can edit
-    // via the dedicated '编辑' button next to '打开'.
-    window.open(`/classroom/${courseId}?view=1`, '_blank');
-  };
+  const counts = useMemo(() => ({
+    active: videoJobs.filter(isActiveVideoJob).length,
+    downloadable: videoJobs.filter((job) => job.status === 'succeeded' && job.downloadUrl).length,
+    failed: videoJobs.filter((job) => job.status === 'failed').length,
+  }), [videoJobs]);
 
-  const handleShare = async (courseId: string) => {
+  const courses = useMemo(() => myCourses.filter((course) => {
+    const job = latestVideoByCourse.get(course.id);
+    const searchable = `${course.title} ${course.topic} ${course.author_name ?? ''}`.toLowerCase();
+    if (query && !searchable.includes(query.toLowerCase())) return false;
+    if (filter === 'active') return Boolean(job && isActiveVideoJob(job));
+    if (filter === 'downloadable') return Boolean(job?.status === 'succeeded' && job.downloadUrl);
+    if (filter === 'failed') return job?.status === 'failed';
+    return true;
+  }), [filter, latestVideoByCourse, myCourses, query]);
+
+  const openCourse = (courseId: string) => window.open(`/classroom/${courseId}?view=1`, '_blank');
+  const editCourse = (courseId: string) => window.open(`/classroom/${courseId}?editor=1`, '_blank');
+
+  const shareCourse = async (courseId: string) => {
     setSharingId(courseId);
-    setShareMessage(null);
     try {
       const url = `${window.location.origin}/classroom/${courseId}?share=1`;
-      if (!navigator.clipboard?.writeText) {
-        window.prompt('复制课程链接', url);
-        setShareMessage('已显示链接，请手动复制');
-        return;
-      }
+      if (!navigator.clipboard?.writeText) return void window.prompt('复制课程链接', url);
       await navigator.clipboard.writeText(url);
-      // ALSO keep the URL on window.lastShareUrl as a recovery hook —
-      // some browsers report navigator.clipboard.writeText as successful
-      // while actually no-op'ing (permission not granted). Users can
-      // retrieve the URL from devtools even after the toast disappears.
-      (window as unknown as { lastShareUrl?: string }).lastShareUrl = url;
-      const msg = '✅ 课程链接已复制：' + url;
-      setShareMessage(msg);
-      // Also toast — keeps it visible while the user navigates.
-      // Skip if navigator.clipboard threw (handled in catch above).
-      const banner = document.createElement('div');
-      banner.textContent = msg;
-      banner.style.cssText =
-        'position:fixed;top:20px;left:50%;transform:translateX(-50%);' +
-        'background:#16a34a;color:white;padding:12px 20px;border-radius:8px;' +
-        'box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;max-width:90vw;' +
-        'font-size:14px;font-family:sans-serif;';
-      document.body.appendChild(banner);
-      setTimeout(() => banner.remove(), 4000);
-    } catch (e: unknown) {
-      setShareMessage('❌ 分享失败：' + getErrorMessage(e, '未知错误'));
+      alert('课程链接已复制');
+    } catch (shareError) {
+      alert('分享失败：' + getErrorMessage(shareError, '未知错误'));
     } finally {
       setSharingId(null);
     }
   };
 
-  const handleDelete = async (courseId: string) => {
+  const removeCourse = async (courseId: string) => {
     if (!confirm('确定要删除这门课程吗？此操作不可撤销。')) return;
     try {
       await deleteCloudCourse(courseId);
-      // Remove from both lists (a deleted course can't be in either).
-      setMyCourses((prev) => prev.filter((c) => c.id !== courseId));
-    } catch (e: unknown) {
-      alert('删除失败：' + getErrorMessage(e, '未知错误'));
+      setMyCourses((previous) => previous.filter((course) => course.id !== courseId));
+    } catch (deleteError) {
+      alert('删除失败：' + getErrorMessage(deleteError, '未知错误'));
     }
   };
 
-  if (loading) {
-    return <div className="mt-8 text-center text-sm text-muted-foreground">☁️ 正在加载课程...</div>;
-  }
-  if (error) {
-    return (
-      <div className="mt-8 text-center text-sm text-muted-foreground">
-        ☁️ 课程暂不可用（{error}）
-      </div>
-    );
-  }
+  if (loading) return <div className="mt-8 text-center text-sm text-muted-foreground">正在加载课程...</div>;
+  if (error) return <div className="mt-8 text-center text-sm text-muted-foreground">课程暂不可用（{error}）</div>;
 
-  // Discover section: courses NOT created by me (or all if user is null).
-  const discoverCourses = allCourses;
+  const filters: Array<{ key: CourseFilter; label: string; count: number }> = [
+    { key: 'all', label: '全部', count: myCourses.length },
+    { key: 'active', label: '生成中', count: counts.active },
+    { key: 'downloadable', label: '可下载', count: counts.downloadable },
+    { key: 'failed', label: '失败', count: counts.failed },
+  ];
+
   return (
-    <div className="mt-8 space-y-10">
-      {/* 我的创作 — courses I created (or have edit rights to). Edit + Delete only here. */}
-      <section id="video-exports">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="mb-1 text-lg font-semibold">我的课程</h2>
-            <p className="text-sm text-muted-foreground">
-              课程编辑、视频生成进度和下载结果都在同一处管理
-            </p>
+    <section className="mt-8">
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold tracking-tight">我的课程</h2>
+          <span className="text-sm text-muted-foreground">共 {myCourses.length} 门</span>
+          <div className="flex flex-wrap gap-2">
+            {filters.map((item) => <button key={item.key} onClick={() => setFilter(item.key)} className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${filter === item.key ? 'bg-slate-900 text-white' : item.key === 'active' ? 'bg-blue-50 text-blue-700' : item.key === 'downloadable' ? 'bg-emerald-50 text-emerald-700' : item.key === 'failed' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{item.label} {item.count}</button>)}
           </div>
-          {videoJobs.length > 0 && (
-            <div className="flex gap-2 text-xs">
-              {videoJobs.some(isActiveVideoJob) && (
-                <span className="rounded-full bg-blue-50 px-3 py-1.5 text-blue-700">
-                  生成中 {videoJobs.filter(isActiveVideoJob).length}
-                </span>
-              )}
-              {videoJobs.some((job) => job.status === 'succeeded') && (
-                <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700">
-                  可下载 {videoJobs.filter((job) => job.status === 'succeeded').length}
-                </span>
-              )}
-            </div>
-          )}
         </div>
-        {myCourses.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            你还没有创建过课程。生成课件后点击「保存到云端」即可在这里看到。
-          </p>
-        ) : (
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {myCourses.map((course) => (
-              <CourseCard
-                key={course.id}
-                course={course}
-                isOwner={course.created_by === currentUserId}
-                sharingId={sharingId}
-                section="mine"
-                videoJob={latestVideoByCourse.get(course.id)}
-                featured={Boolean(
-                  latestVideoByCourse.get(course.id) &&
-                  isActiveVideoJob(latestVideoByCourse.get(course.id)!),
-                )}
-                onOpen={handleOpen}
-                onShare={handleShare}
-                onDelete={handleDelete}
-              />
-            ))}
+        <div className="relative w-full lg:w-64">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索课程" className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
+        </div>
+      </div>
+
+      {courses.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">没有匹配的课程。</p> : (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="hidden grid-cols-[minmax(260px,2.5fr)_minmax(88px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(230px,1.7fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500 lg:grid">
+            <span>课程</span><span>内容</span><span>视频</span><span>最近活动</span><span className="text-right">操作</span>
           </div>
-        )}
-      </section>
-
-      {false && (
-        <section>
-          <h2 className="mb-1 text-lg font-semibold">🌐 课程资源库</h2>
-          <p className="mb-4 text-sm text-muted-foreground">发现可预览或复用的公开课程</p>
-          {discoverCourses.length === 0 ? (
-            <p className="text-sm text-muted-foreground">资源库暂无其他老师分享的课程。</p>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {discoverCourses.map((course) => (
-                <CourseCard
-                  key={course.id}
-                  course={course}
-                  isOwner={false}
-                  sharingId={sharingId}
-                  section="library"
-                  videoJob={latestVideoByCourse.get(course.id)}
-                  onOpen={handleOpen}
-                  onShare={handleShare}
-                  onDelete={handleDelete}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+          {courses.map((course) => {
+            const job = latestVideoByCourse.get(course.id);
+            const expanded = expandedId === course.id;
+            const owner = course.created_by === currentUserId;
+            return <div key={course.id} className="border-b border-slate-100 last:border-0">
+              <div className="grid gap-4 px-5 py-4 hover:bg-slate-50/70 lg:grid-cols-[minmax(260px,2.5fr)_minmax(88px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(230px,1.7fr)] lg:items-center">
+                <button onClick={() => setExpandedId(expanded ? null : course.id)} className="min-w-0 text-left">
+                  <p className="truncate font-medium text-slate-900">{course.title || course.topic || '未命名课程'}</p>
+                  <p className="mt-1 text-xs text-slate-400">{owner ? '我的创作' : course.author_name ? `作者：${course.author_name}` : '课程'} · 更新于 {formatDate(course.updated_at)}</p>
+                </button>
+                <div><span className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">可编辑</span></div>
+                <button onClick={() => setExpandedId(expanded ? null : course.id)} className="text-left"><VideoStatus job={job} /></button>
+                <div className="text-xs text-slate-500">{formatActivity(job) ?? `更新于 ${formatDate(course.updated_at)}`}</div>
+                <div className="flex items-center gap-2 lg:justify-end">
+                  {job?.status === 'succeeded' && job.downloadUrl && <button onClick={() => void downloadVideo(job)} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"><Download className="size-3.5" />下载视频</button>}
+                  <button onClick={() => editCourse(course.id)} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"><Pencil className="size-3.5" />继续编辑</button>
+                  <button onClick={() => openCourse(course.id)} className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"><Eye className="size-3.5" />预览</button>
+                  <details className="relative"><summary className="flex size-8 cursor-pointer list-none items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"><MoreHorizontal className="size-4" /></summary><div className="absolute right-0 z-10 mt-2 w-32 rounded-lg border bg-white p-1 shadow-lg"><button onClick={() => shareCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button onClick={() => removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div></details>
+                </div>
+              </div>
+              {expanded && <div className="grid gap-3 border-t bg-slate-50 px-5 py-4 md:grid-cols-3"><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">课程内容</p><p className="mt-2 text-sm font-medium">可继续编辑</p><p className="mt-1 text-xs text-slate-500">最近更新 {formatDate(course.updated_at)}</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">云端课程</p><p className="mt-2 text-sm font-medium">已保存到云端</p><p className="mt-1 text-xs text-slate-500">可分享给学员</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">视频任务</p><div className="mt-2"><VideoPlan job={job} /></div></div></div>}
+            </div>;
+          })}
+        </div>
       )}
-
-      {shareMessage && !sharingId && (
-        <p className="mt-4 text-sm text-muted-foreground text-center">{shareMessage}</p>
-      )}
-    </div>
+      <p className="mt-4 text-center text-xs text-slate-400">移动端会将列表行收拢为课程摘要，保留核心操作。</p>
+    </section>
   );
 }
