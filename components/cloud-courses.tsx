@@ -110,6 +110,7 @@ interface CourseCardProps {
   /** Which list this card belongs to — drives tag text and share button copy. */
   section: 'mine' | 'library';
   videoJob?: VideoExportJob;
+  featured?: boolean;
   onOpen: (id: string) => void;
   onShare: (id: string) => void;
   onDelete: (id: string) => void;
@@ -121,6 +122,7 @@ function CourseCard({
   sharingId,
   section, // 'mine' | 'library' — picks tag text + button labels per section
   videoJob,
+  featured = false,
   onOpen,
   onShare,
   onDelete,
@@ -146,7 +148,11 @@ function CourseCard({
       : 'shrink-0 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300';
 
   return (
-    <div className="rounded-lg border p-4 hover:shadow-md transition-shadow">
+    <article
+      className={`rounded-2xl border bg-background p-5 transition-shadow hover:shadow-md ${
+        featured ? 'border-emerald-300 ring-1 ring-emerald-100 lg:col-span-2' : 'border-slate-200'
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-medium truncate flex-1 min-w-0">
           {course.title || course.topic || '未命名课程'}
@@ -157,19 +163,27 @@ function CourseCard({
         更新于 {new Date(course.updated_at).toLocaleDateString('zh-CN')}
       </p>
       {isOwner && videoJob && (
-        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:bg-slate-900/50">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:bg-slate-900/50">
           <div className="flex items-center justify-between gap-3">
-            <p
-              className={`text-xs font-medium ${
-                videoJob.status === 'failed'
-                  ? 'text-red-600 dark:text-red-400'
-                  : videoJob.status === 'succeeded'
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-blue-600 dark:text-blue-400'
-              }`}
-            >
-              {videoJobLabel(videoJob)}
-            </p>
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-sm shadow-sm">
+                ▶
+              </span>
+              <div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">课程视频</p>
+                <p
+                  className={`mt-0.5 text-[11px] font-medium ${
+                    videoJob.status === 'failed'
+                      ? 'text-red-600 dark:text-red-400'
+                      : videoJob.status === 'succeeded'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-blue-600 dark:text-blue-400'
+                  }`}
+                >
+                  {videoJobLabel(videoJob)}
+                </p>
+              </div>
+            </div>
             <span className="text-[11px] text-slate-500">
               {new Date(videoJob.createdAt).toLocaleString('zh-CN')}
             </span>
@@ -198,17 +212,17 @@ function CourseCard({
           <VideoExportPlan job={videoJob} />
         </div>
       )}
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <button
           onClick={() => onOpen(course.id)}
-          className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
         >
           {openLabel}
         </button>
         {isOwner && (
           <button
             onClick={() => window.open(`/courses/${course.id}`, '_blank')}
-            className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+            className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
           >
             查看数据
           </button>
@@ -216,7 +230,7 @@ function CourseCard({
         {isOwner && videoJob?.status === 'succeeded' && videoJob.downloadUrl && (
           <button
             onClick={() => void downloadVideo(videoJob)}
-            className="rounded border border-emerald-300 px-3 py-1 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
           >
             下载视频
           </button>
@@ -224,28 +238,28 @@ function CourseCard({
         {isOwner && (
           <button
             onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank')}
-            className="rounded bg-secondary px-3 py-1 text-xs text-secondary-foreground hover:opacity-90"
+            className="rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:opacity-90"
           >
-            ✎ {editLabel}
+            {editLabel}
           </button>
         )}
         <button
           onClick={() => onShare(course.id)}
           disabled={sharingId === course.id}
-          className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
         >
           {sharingId === course.id ? '复制中…' : shareLabel}
         </button>
         {isOwner && (
           <button
             onClick={() => onDelete(course.id)}
-            className="rounded border px-3 py-1 text-xs text-muted-foreground hover:text-destructive"
+            className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-destructive"
           >
-            🗑 删除
+            删除
           </button>
         )}
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -410,7 +424,7 @@ export default function CloudCourses() {
             你还没有创建过课程。生成课件后点击「保存到云端」即可在这里看到。
           </p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {myCourses.map((course) => (
               <CourseCard
                 key={course.id}
@@ -419,6 +433,10 @@ export default function CloudCourses() {
                 sharingId={sharingId}
                 section="mine"
                 videoJob={latestVideoByCourse.get(course.id)}
+                featured={Boolean(
+                  latestVideoByCourse.get(course.id) &&
+                  isActiveVideoJob(latestVideoByCourse.get(course.id)!),
+                )}
                 onOpen={handleOpen}
                 onShare={handleShare}
                 onDelete={handleDelete}
