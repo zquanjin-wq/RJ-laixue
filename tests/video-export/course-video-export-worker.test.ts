@@ -74,9 +74,16 @@ describe('course video export background worker', () => {
 
   it('updates render progress without relying on an open classroom page', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ status: 'running', frame: 48, totalFrames: 240 }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({
+          status: 'running',
+          progress: 0.2,
+          currentStage: 'capturing',
+          framesRendered: 48,
+          totalFrames: 240,
+        }),
+        { status: 200 },
+      ),
     );
 
     const result = await reconcileCourseVideoExportJobs();
@@ -91,9 +98,16 @@ describe('course video export background worker', () => {
 
   it('advances active jobs when the course-management list refreshes', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ status: 'running', frame: 14067, totalFrames: 19623 }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({
+          status: 'running',
+          progress: 0.7168,
+          currentStage: 'capturing',
+          framesRendered: 14067,
+          totalFrames: 19623,
+        }),
+        { status: 200 },
+      ),
     );
 
     const jobs = await refreshCourseVideoExportJobs('teacher-1');

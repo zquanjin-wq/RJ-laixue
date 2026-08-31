@@ -55,7 +55,9 @@ export function presentCourseVideoExportJob(
 type RenderStatus = {
   status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   error?: string;
-  frame?: number;
+  progress?: number;
+  currentStage?: string;
+  framesRendered?: number;
   totalFrames?: number;
 };
 
@@ -210,14 +212,16 @@ export async function syncCourseVideoExportJob(jobId: string) {
   );
   if (render.status === 'queued' || render.status === 'running') {
     const progress =
-      render.totalFrames && typeof render.frame === 'number'
-        ? `（${render.frame}/${render.totalFrames} 帧）`
+      render.totalFrames && typeof render.framesRendered === 'number'
+        ? `（${render.framesRendered}/${render.totalFrames} 帧）`
         : '';
+    const stage = render.currentStage === 'capturing' ? '正在合成画面与配音' : '正在生成课程视频';
     const { data, error } = await service
       .from('course_video_export_jobs')
       .update({
-        message: `正在生成课程视频${progress}`,
-        progress_current: typeof render.frame === 'number' ? render.frame : null,
+        message: `${stage}${progress}`,
+        progress_current:
+          typeof render.framesRendered === 'number' ? render.framesRendered : null,
         progress_total: render.totalFrames ?? null,
         updated_at: new Date().toISOString(),
       })
