@@ -15,6 +15,7 @@ import { useExportClassroom } from './use-export-classroom';
 
 interface VideoExportJobView {
   id: string;
+  courseId: string;
   status: 'uploading' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   message: string;
   error?: string;
@@ -65,11 +66,25 @@ export function useExportCourseVideo() {
 
   useEffect(() => {
     if (!courseId) return;
-    const savedJobId = localStorage.getItem(storageKey(courseId));
-    if (savedJobId)
-      void refresh(savedJobId).catch(() => {
-        localStorage.removeItem(storageKey(courseId));
+    let disposed = false;
+
+    void requestJson<{ jobs: VideoExportJobView[] }>('/api/video-exports')
+      .then(({ jobs }) => {
+        if (disposed) return;
+        const latest = jobs.find((candidate) => candidate.courseId === courseId) ?? null;
+        setJob(latest);
+        if (latest) localStorage.setItem(storageKey(courseId), latest.id);
+        else localStorage.removeItem(storageKey(courseId));
+      })
+      .catch((error) => {
+        console.error('[video-export] restore latest job failed', error);
+        const savedJobId = localStorage.getItem(storageKey(courseId));
+        if (savedJobId) void refresh(savedJobId).catch(() => undefined);
       });
+
+    return () => {
+      disposed = true;
+    };
   }, [courseId, refresh]);
 
   useEffect(() => {
