@@ -23,6 +23,7 @@ interface CloudCourse {
   author_name: string | null;
   created_at: string;
   updated_at: string;
+  lifecycle: { creationStatus: 'creating' | 'completed'; saveStatus: 'saving' | 'saved' };
 }
 type VideoExportJob = {
   id: string;
@@ -43,7 +44,7 @@ type VideoExportJob = {
   };
 };
 
-type CourseFilter = 'all' | 'active' | 'downloadable' | 'failed';
+type CourseFilter = 'all' | 'creating' | 'saved' | 'active' | 'downloadable' | 'failed';
 
 const isActiveVideoJob = (job: VideoExportJob) =>
   ['uploading', 'queued', 'running'].includes(job.status);
@@ -93,6 +94,12 @@ function VideoStatus({ job }: { job?: VideoExportJob }) {
       </div>
     </div>
   );
+}
+
+function CourseStatus({ course }: { course: CloudCourse }) {
+  if (course.lifecycle.creationStatus === 'creating') return <span className="inline-flex items-center gap-2 text-sm font-medium text-violet-700"><i className="size-2 animate-pulse rounded-full bg-violet-500" />创建中</span>;
+  if (course.lifecycle.saveStatus === 'saving') return <span className="inline-flex items-center gap-2 text-sm font-medium text-amber-700"><i className="size-2 animate-pulse rounded-full bg-amber-500" />保存云端中</span>;
+  return <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-700"><i className="size-2 rounded-full bg-slate-400" />已保存</span>;
 }
 
 function VideoPlan({ job }: { job?: VideoExportJob }) {
@@ -149,6 +156,8 @@ export default function CloudCourses() {
   }, [videoJobs]);
 
   const counts = useMemo(() => ({
+    creating: myCourses.filter((course) => course.lifecycle.creationStatus === 'creating').length,
+    saved: myCourses.filter((course) => course.lifecycle.saveStatus === 'saved').length,
     active: videoJobs.filter(isActiveVideoJob).length,
     downloadable: videoJobs.filter((job) => job.status === 'succeeded' && job.downloadUrl).length,
     failed: videoJobs.filter((job) => job.status === 'failed').length,
@@ -158,6 +167,8 @@ export default function CloudCourses() {
     const job = latestVideoByCourse.get(course.id);
     const searchable = `${course.title} ${course.topic} ${course.author_name ?? ''}`.toLowerCase();
     if (query && !searchable.includes(query.toLowerCase())) return false;
+    if (filter === 'creating') return course.lifecycle.creationStatus === 'creating';
+    if (filter === 'saved') return course.lifecycle.saveStatus === 'saved';
     if (filter === 'active') return Boolean(job && isActiveVideoJob(job));
     if (filter === 'downloadable') return Boolean(job?.status === 'succeeded' && job.downloadUrl);
     if (filter === 'failed') return job?.status === 'failed';
@@ -212,47 +223,50 @@ export default function CloudCourses() {
 
   const filters: Array<{ key: CourseFilter; label: string; count: number }> = [
     { key: 'all', label: '全部', count: myCourses.length },
-    { key: 'active', label: '生成中', count: counts.active },
+    { key: 'creating', label: '创建中', count: counts.creating },
+    { key: 'saved', label: '已保存', count: counts.saved },
+    { key: 'active', label: '视频生成中', count: counts.active },
     { key: 'downloadable', label: '可下载', count: counts.downloadable },
     { key: 'failed', label: '失败', count: counts.failed },
   ];
 
   return (
     <section className="mt-8">
-      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
           <h2 className="text-xl font-semibold tracking-tight">我的课程</h2>
           <span className="text-sm text-muted-foreground">共 {myCourses.length} 门</span>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex gap-2">
             {filters.map((item) => <button key={item.key} onClick={() => setFilter(item.key)} className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${filter === item.key ? 'bg-slate-900 text-white' : item.key === 'active' ? 'bg-blue-50 text-blue-700' : item.key === 'downloadable' ? 'bg-emerald-50 text-emerald-700' : item.key === 'failed' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{item.label} {item.count}</button>)}
           </div>
         </div>
-        <div className="relative w-full lg:w-64">
+        <div className="relative w-64 shrink-0">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索课程" className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
         </div>
       </div>
 
       {courses.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">没有匹配的课程。</p> : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="hidden grid-cols-[minmax(260px,2.5fr)_minmax(88px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(260px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500 lg:grid">
-            <span>课程</span><span>内容</span><span>视频</span><span>最近活动</span><span className="text-right">操作</span>
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <div className="min-w-[1120px]">
+          <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500">
+            <span>课程</span><span>课程状态</span><span>视频状态</span><span>最近活动</span><span className="text-right">操作</span>
           </div>
           {courses.map((course) => {
             const job = latestVideoByCourse.get(course.id);
             const expanded = expandedId === course.id;
             const owner = course.created_by === currentUserId;
             return <div key={course.id} className="border-b border-slate-100 last:border-0">
-              <div className="grid gap-4 px-5 py-4 hover:bg-slate-50/70 lg:grid-cols-[minmax(260px,2.5fr)_minmax(88px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(260px,1.8fr)] lg:items-center">
+              <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] items-center gap-4 px-5 py-4 hover:bg-slate-50/70">
                 <button onClick={() => setExpandedId(expanded ? null : course.id)} className="min-w-0 text-left">
                   <p className="truncate font-medium text-slate-900">{course.title || course.topic || '未命名课程'}</p>
                   <p className="mt-1 text-xs text-slate-400">{owner ? '我的创作' : course.author_name ? `作者：${course.author_name}` : '课程'} · 更新于 {formatDate(course.updated_at)}</p>
                 </button>
-                <div><span className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">可编辑</span></div>
+                <CourseStatus course={course} />
                 <button onClick={() => setExpandedId(expanded ? null : course.id)} className="text-left"><VideoStatus job={job} /></button>
                 <div className="text-xs text-slate-500">{formatActivity(job) ?? `更新于 ${formatDate(course.updated_at)}`}</div>
                 <div className="flex min-w-0 flex-nowrap items-center gap-2 lg:justify-end">
-                  {job?.status === 'succeeded' && job.downloadUrl && <button type="button" onClick={() => void downloadVideo(job)} disabled={Boolean(downloadingVideoId)} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-70">{downloadingVideoId === job.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}{downloadingVideoId === job.id ? '正在准备下载…' : '下载'}</button>}
+                  {job?.status === 'succeeded' && job.downloadUrl && <button type="button" onClick={() => void downloadVideo(job)} disabled={Boolean(downloadingVideoId)} className="inline-flex h-8 w-[124px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-70">{downloadingVideoId === job.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}{downloadingVideoId === job.id ? '正在准备下载…' : '下载'}</button>}
                   <button type="button" onClick={() => editCourse(course.id)} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100"><Pencil className="size-3.5 text-slate-400" />继续编辑</button>
                   <button type="button" onClick={() => openCourse(course.id)} aria-label="预览课程" title="预览课程" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100"><Eye className="size-4" /></button>
                   <details className="relative shrink-0"><summary aria-label="更多操作" title="更多操作" className="flex size-8 cursor-pointer list-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></summary><div className="absolute right-0 z-10 mt-2 w-32 rounded-lg border bg-white p-1 shadow-lg"><button type="button" onClick={() => shareCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button type="button" onClick={() => removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div></details>
@@ -261,9 +275,8 @@ export default function CloudCourses() {
               {expanded && <div className="grid gap-3 border-t bg-slate-50 px-5 py-4 md:grid-cols-3"><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">课程内容</p><p className="mt-2 text-sm font-medium">可继续编辑</p><p className="mt-1 text-xs text-slate-500">最近更新 {formatDate(course.updated_at)}</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">云端课程</p><p className="mt-2 text-sm font-medium">已保存到云端</p><p className="mt-1 text-xs text-slate-500">可分享给学员</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">视频任务</p><div className="mt-2"><VideoPlan job={job} /></div></div></div>}
             </div>;
           })}
-        </div>
+          </div></div>
       )}
-      <p className="mt-4 text-center text-xs text-slate-400">移动端会将列表行收拢为课程摘要，保留核心操作。</p>
     </section>
   );
 }

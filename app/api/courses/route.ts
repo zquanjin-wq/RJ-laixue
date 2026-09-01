@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   try {
     const serviceSupabase = getServiceSupabase();
     const scope = request.nextUrl.searchParams.get('scope') ?? 'mine';
-    const selectFields = 'id, title, topic, created_by, created_at, updated_at';
+    const selectFields = 'id, title, topic, data, created_by, created_at, updated_at';
     const serverSupabase = await getServerSupabase();
     const {
       data: { user },
@@ -40,6 +40,11 @@ export async function GET(request: NextRequest) {
     );
     const courses = (data ?? []).map((course) => ({
       ...course,
+      lifecycle: {
+        creationStatus: course.data?.lifecycle?.creationStatus === 'creating' ? 'creating' : 'completed',
+        saveStatus: course.data?.lifecycle?.saveStatus === 'saving' ? 'saving' : 'saved',
+      },
+      data: undefined,
       author_name: course.created_by ? (creatorNameById.get(course.created_by) ?? null) : null,
     }));
 
@@ -70,7 +75,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, title, topic, data, saveState = 'ready' } = body;
+    const { id, title, topic, data, saveState = 'ready', lifecycle } = body;
 
     if (!id) {
       return NextResponse.json({ success: false, error: '缺少课程 ID' }, { status: 400 });
@@ -95,6 +100,10 @@ export async function POST(request: NextRequest) {
         skipped: true,
         reason: 'save_only_no_tts_generation',
         updatedAt: new Date().toISOString(),
+      },
+      lifecycle: {
+        creationStatus: lifecycle?.creationStatus === 'creating' ? 'creating' : 'completed',
+        saveStatus: lifecycle?.saveStatus === 'saving' ? 'saving' : 'saved',
       },
     };
 

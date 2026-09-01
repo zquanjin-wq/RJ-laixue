@@ -35,6 +35,7 @@ vi.mock('@/lib/utils/database', () => {
     db: {
       stages: {
         get: vi.fn(async () => stageRow),
+        update: vi.fn(async () => undefined),
         put: vi.fn(async () => undefined),
       },
       // Mimic the dexie fluent builder: where(field).equals(value).toArray().
@@ -235,7 +236,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     const postsToCourses = fetchCalls.filter(
       (c) => c.method === 'POST' && c.url === '/api/courses',
     );
-    expect(postsToCourses).toHaveLength(2);
+    expect(postsToCourses).toHaveLength(3);
 
     // sign-upload still fires (Phase 1 is unchanged).
     const signUploadIdx = findCall(
@@ -253,7 +254,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     const coursePosts = fetchCalls.filter(
       (call) => call.method === 'POST' && call.url === '/api/courses',
     );
-    expect(coursePosts).toHaveLength(1);
+    expect(coursePosts).toHaveLength(2);
     expect(JSON.parse(coursePosts[0].body ?? '{}').saveState).toBe('draft');
   });
   it('audio publisher exception: marks the saved draft as recoverable', async () => {
@@ -261,7 +262,7 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     shouldThrowAudioPublish = true;
 
     await expect(saveStageToCloud('stage-new-1')).rejects.toMatchObject({ draftSaved: true });
-    expect(fetchCalls.filter((call) => call.url === '/api/courses')).toHaveLength(1);
+    expect(fetchCalls.filter((call) => call.url === '/api/courses')).toHaveLength(2);
   });
   it('probe failure (500): aborts before any asset upload', async () => {
     enqueueResponse(500, { success: false, error: 'internal_error' });
