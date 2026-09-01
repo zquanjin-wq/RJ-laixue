@@ -354,6 +354,10 @@ export async function listCloudCourses() {
     author_name: string | null;
     created_at: string;
     updated_at: string;
+    lifecycle: {
+      creationStatus: 'creating' | 'completed';
+      saveStatus: 'saving' | 'saved';
+    };
   }>;
 }
 
@@ -371,6 +375,10 @@ export async function listMyCourses() {
     author_name: string | null;
     created_at: string;
     updated_at: string;
+    lifecycle: {
+      creationStatus: 'creating' | 'completed';
+      saveStatus: 'saving' | 'saved';
+    };
   }>;
 }
 // ============================================================
