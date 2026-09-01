@@ -126,6 +126,20 @@ export default function CloudCourses() {
   const [filter, setFilter] = useState<CourseFilter>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const closeMenu = () => setOpenMenuId(null);
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('pointerdown', closeMenu);
+    document.addEventListener('keydown', closeWithEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenu);
+      document.removeEventListener('keydown', closeWithEscape);
+    };
+  }, []);
 
   const fetchCourses = useCallback(async () => {
     try {
@@ -247,7 +261,7 @@ export default function CloudCourses() {
       </div>
 
       {courses.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">没有匹配的课程。</p> : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-visible">
           <div className="min-w-[1120px]">
           <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500">
             <span>课程</span><span>课程状态</span><span>视频状态</span><span>最近活动</span><span className="text-right">操作</span>
@@ -269,7 +283,7 @@ export default function CloudCourses() {
                   {job?.status === 'succeeded' && job.downloadUrl && <button type="button" onClick={() => void downloadVideo(job)} disabled={Boolean(downloadingVideoId)} className="inline-flex h-8 w-[124px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-70">{downloadingVideoId === job.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}{downloadingVideoId === job.id ? '正在准备下载…' : '下载'}</button>}
                   <button type="button" onClick={() => editCourse(course.id)} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100"><Pencil className="size-3.5 text-slate-400" />继续编辑</button>
                   <button type="button" onClick={() => openCourse(course.id)} aria-label="预览课程" title="预览课程" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100"><Eye className="size-4" /></button>
-                  <details className="relative shrink-0"><summary aria-label="更多操作" title="更多操作" className="flex size-8 cursor-pointer list-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></summary><div className="absolute right-0 z-10 mt-2 w-32 rounded-lg border bg-white p-1 shadow-lg"><button type="button" onClick={() => shareCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button type="button" onClick={() => removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div></details>
+                  <div className="relative shrink-0"><button type="button" aria-label="更多操作" title="更多操作" onClick={(event) => { event.stopPropagation(); setOpenMenuId(openMenuId === course.id ? null : course.id); }} className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{openMenuId === course.id && <div onPointerDown={(event) => event.stopPropagation()} className="absolute right-0 z-20 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => { void shareCourse(course.id); setOpenMenuId(null); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button type="button" onClick={() => { setOpenMenuId(null); void removeCourse(course.id); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
                 </div>
               </div>
               {expanded && <div className="grid gap-3 border-t bg-slate-50 px-5 py-4 md:grid-cols-3"><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">课程内容</p><p className="mt-2 text-sm font-medium">可继续编辑</p><p className="mt-1 text-xs text-slate-500">最近更新 {formatDate(course.updated_at)}</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">云端课程</p><p className="mt-2 text-sm font-medium">已保存到云端</p><p className="mt-1 text-xs text-slate-500">可分享给学员</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">视频任务</p><div className="mt-2"><VideoPlan job={job} /></div></div></div>}
