@@ -53,6 +53,8 @@ export async function middleware(request: NextRequest) {
   if (
     pathname.startsWith('/api/access-code/') ||
     pathname.startsWith('/api/courses') ||
+    pathname.startsWith('/api/video-exports') ||
+    pathname === '/api/cron/course-video-exports' ||
     pathname.startsWith('/api/students') ||
     pathname.startsWith('/api/learning') ||
     pathname === '/api/health'

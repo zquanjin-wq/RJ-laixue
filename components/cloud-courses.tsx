@@ -146,14 +146,27 @@ export default function CloudCourses() {
       setError('');
       const mine = await listMyCourses();
       setMyCourses(isGlobalManager ? await listCloudCourses() : mine);
-      const response = await fetch('/api/video-exports');
-      const body = (await response.json()) as { success?: boolean; jobs?: VideoExportJob[]; error?: string };
-      if (!response.ok || body.success === false) throw new Error(body.error || '获取视频任务失败');
-      setVideoJobs(body.jobs ?? []);
     } catch (fetchError) {
       setError(getErrorMessage(fetchError, '获取云端课程失败'));
     } finally {
       setLoading(false);
+    }
+
+    try {
+      const response = await fetch('/api/video-exports');
+      const rawBody = await response.text();
+      let body: { success?: boolean; jobs?: VideoExportJob[]; error?: string };
+      try {
+        body = JSON.parse(rawBody) as { success?: boolean; jobs?: VideoExportJob[]; error?: string };
+      } catch {
+        throw new Error('视频任务服务暂时不可用');
+      }
+      if (!response.ok || body.success === false) throw new Error(body.error || '获取视频任务失败');
+      setVideoJobs(body.jobs ?? []);
+    } catch (videoError) {
+      // 视频任务是课程列表的附加信息。即使它暂时不可用，老师仍然应能
+      // 看到、编辑和管理自己的课程。
+      console.warn('[course-management] failed to load video exports', videoError);
     }
   }, [isGlobalManager]);
 
