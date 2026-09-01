@@ -12,6 +12,40 @@ import { prepareCourseForAssetUploads } from '@/lib/course-assets/prepare-course
 import { stripRuntimeOnly } from '@/lib/dsl-extensions/serialize';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 
+type CourseLifecycle = {
+  creationStatus: 'creating' | 'completed';
+  saveStatus: 'saving' | 'saved';
+};
+
+async function writeCourseSnapshot(input: {
+  id: string;
+  title: string;
+  topic: string;
+  stage: unknown;
+  scenes: unknown[];
+  outlines: unknown[];
+  lifecycle: CourseLifecycle;
+}) {
+  const response = await fetch('/api/courses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...input, saveState: input.lifecycle.saveStatus === 'saving' ? 'draft' : 'ready', data: { stage: input.stage, scenes: input.scenes, outlines: input.outlines } }),
+  });
+  await readApiJson(response);
+}
+
+export async function registerCourseCreation(stage: { id: string; name?: string; description?: string; style?: string }) {
+  await writeCourseSnapshot({
+    id: stage.id,
+    title: stage.name || '未命名课程',
+    topic: stage.name || '',
+    stage,
+    scenes: [],
+    outlines: [],
+    lifecycle: { creationStatus: 'creating', saveStatus: 'saving' },
+  });
+}
+
 const log = createLogger('CloudSync');
 
 async function readApiJson<T>(response: Response): Promise<T> {
@@ -150,6 +184,16 @@ export async function saveStageToCloud(stageId: string) {
   stage = prepared.stage as unknown as typeof stage;
   scenes = prepared.scenes as unknown as typeof scenes;
 
+  await writeCourseSnapshot({
+    id,
+    title,
+    topic,
+    stage,
+    scenes,
+    outlines,
+    lifecycle: { creationStatus: 'completed', saveStatus: 'saving' },
+  });
+
   // ── Phase 1: Publish audio assets (3-tier: skip / upload / regenerate) ──
   // Extract teacherVoiceConfig from stage so Tier 3 TTS regeneration uses the
   // course's authoritative voice (not the current settings store value).
@@ -253,23 +297,15 @@ export async function saveStageToCloud(stageId: string) {
   const stageToSave = stripRuntimeOnly(externalized.stage);
   const scenesToSave = externalized.scenes;
 
-  const response = await fetch('/api/courses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id,
-      title,
-      topic,
-      saveState: 'ready',
-      data: {
-        stage: stageToSave,
-        scenes: scenesToSave,
-        outlines,
-      },
-    }),
+  await writeCourseSnapshot({
+    id,
+    title,
+    topic,
+    stage: stageToSave,
+    scenes: scenesToSave,
+    outlines,
+    lifecycle: { creationStatus: 'completed', saveStatus: 'saved' },
   });
-
-  await readApiJson(response);
 
   // 保存成功后，把补齐 audioUrl 的 scenes 回写本地，避免下次重复上传
   if (scenesToSave.length > 0) {

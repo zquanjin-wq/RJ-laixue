@@ -47,6 +47,7 @@ import {
 } from './types';
 import { StepVisualizer } from './components/visualizers';
 import { resolveTaskEngineModeFromOutlineDoneEvent } from './vocational-mode';
+import { registerCourseCreation } from '@/lib/utils/cloud-sync';
 
 const log = createLogger('GenerationPreview');
 const OUTLINE_REVIEW_AUTO_CONTINUE_MS = 2500;
@@ -724,6 +725,8 @@ function GenerationPreviewContent() {
             `source=settings.ttsProviderId/settings.ttsVoice/modelId=settings.ttsProvidersConfig[...].modelId|provider.defaultModelId`,
         );
       }
+
+      await registerCourseCreation(stage);
 
       // ── Generate outlines first (infers languageDirective) ──
       let outlines = currentSession.sceneOutlines;
