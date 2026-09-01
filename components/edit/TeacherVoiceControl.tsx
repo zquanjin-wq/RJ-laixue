@@ -89,6 +89,7 @@ export function TeacherVoiceControl({
           if (data?.stage && Array.isArray(data.scenes) && !stopped) {
             setScenes(data.scenes);
             updateStage(data.stage);
+            useStageStore.getState().markCloudSaved();
           }
           if (priorStatus && priorStatus !== 'succeeded') {
             toast.success('AI 老师音色已更新，配音已保存到云端');

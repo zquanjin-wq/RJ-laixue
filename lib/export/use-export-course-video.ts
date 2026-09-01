@@ -47,6 +47,9 @@ function storageKey(courseId: string) {
 export function useExportCourseVideo() {
   const courseId = useStageStore((state) => state.stage?.id);
   const { exportClassroomZip } = useExportClassroom();
+  const hasUnsavedChanges = useStageStore(
+    (state) => state.contentRevision !== state.cloudSavedRevision,
+  );
   const [job, setJob] = useState<VideoExportJobView | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -100,6 +103,10 @@ export function useExportCourseVideo() {
 
   const start = useCallback(async () => {
     if (!courseId || preparing || (job && !job.done)) return;
+    if (hasUnsavedChanges) {
+      toast.warning('课程有未保存的修改，请先点击“保存到云端”，保存成功后再导出视频。');
+      return;
+    }
     setPreparing(true);
     const toastId = toast.loading('正在准备课程视频');
     try {
@@ -151,10 +158,14 @@ export function useExportCourseVideo() {
     } finally {
       setPreparing(false);
     }
-  }, [courseId, exportClassroomZip, job, preparing]);
+  }, [courseId, exportClassroomZip, hasUnsavedChanges, job, preparing]);
 
   const download = useCallback(async () => {
     if (!job?.downloadUrl || downloading) return;
+    if (hasUnsavedChanges) {
+      toast.warning('课程有未保存的修改，请先点击“保存到云端”，再下载对应版本的视频。');
+      return;
+    }
     setDownloading(true);
     try {
       // A direct navigation lets the browser play an MP4 inline. Fetching the
@@ -168,12 +179,13 @@ export function useExportCourseVideo() {
     } finally {
       setDownloading(false);
     }
-  }, [downloading, job]);
+  }, [downloading, hasUnsavedChanges, job]);
 
   return {
     job,
     preparing,
     downloading,
+    hasUnsavedChanges,
     active: preparing || Boolean(job && !job.done),
     start,
     download,

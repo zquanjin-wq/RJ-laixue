@@ -112,6 +112,7 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
             setSavingToCloud(true);
             try {
               await saveStageToCloud(stage.id);
+              useStageStore.getState().markCloudSaved();
               toast.success('课程已保存到云端');
             } catch (error) {
               const message = error instanceof Error ? error.message : '未知错误';
@@ -150,7 +151,7 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
       onCourseTitleChange={async (title) => {
         if (!stage) return;
         await renameStage(stage.id, title);
-        useStageStore.setState({ stage: { ...stage, name: title, updatedAt: Date.now() } });
+        useStageStore.getState().updateStage({ name: title, updatedAt: Date.now() });
       }}
       leftRail={<SlideNavRail />}
       rightRail={

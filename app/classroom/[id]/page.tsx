@@ -156,6 +156,7 @@ export default function ClassroomDetailPage() {
 
     try {
       await saveStageToCloud(classroomId);
+      useStageStore.getState().markCloudSaved();
       toast.success('课程已保存到云端', { id: toastId });
     } catch (e: unknown) {
       const saveError = e as { draftSaved?: boolean; message?: string };

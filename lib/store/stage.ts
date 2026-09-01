@@ -98,6 +98,11 @@ interface StageState {
   /** Background TTS failure audioIds collected during async generation */
   ttsBackgroundFailures: string[];
 
+  /** Monotonic local-edit revision used to avoid exporting an unsaved course. */
+  contentRevision: number;
+  /** The revision that was last confirmed by a successful cloud save. */
+  cloudSavedRevision: number;
+
   // Actions
   setStage: (stage: Stage) => void;
   updateStage: (updates: Partial<Stage>) => void;
@@ -122,6 +127,7 @@ interface StageState {
   addFailedOutline: (outline: SceneOutline) => void;
   clearFailedOutlines: () => void;
   retryFailedOutline: (outlineId: string) => void;
+  markCloudSaved: () => void;
 
   // Getters
   getCurrentScene: () => Scene | null;
@@ -150,6 +156,8 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
   currentGeneratingOrder: -1,
   failedOutlines: [],
   ttsBackgroundFailures: [],
+  contentRevision: 0,
+  cloudSavedRevision: 0,
 
   // Actions
   setStage: (stage) => {
@@ -160,6 +168,8 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       chats: [],
       generationComplete: false,
       generationEpoch: s.generationEpoch + 1,
+      contentRevision: 0,
+      cloudSavedRevision: 0,
     }));
     debouncedSave();
   },
@@ -167,7 +177,10 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
   updateStage: (updates) => {
     const stage = get().stage;
     if (!stage) return;
-    set({ stage: { ...stage, ...updates } });
+    set((state) => ({
+      stage: { ...stage, ...updates },
+      contentRevision: state.contentRevision + 1,
+    }));
     debouncedSave();
   },
 
@@ -178,7 +191,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     const migrated = scenes.map(migrateScene);
     // IMPORTANT: store scenes in original array order — never reorder here.
     // Reordering would pollute IndexedDB and break left-nav / playback order.
-    set({ scenes: migrated });
+    set((state) => ({ scenes: migrated, contentRevision: state.contentRevision + 1 }));
     // Mark this stage's scene order as trusted (manual editor / program
     // loading path). The user has explicitly chosen an array order at this
     // point, so we treat the upcoming seq=index write as authoritative.
@@ -261,6 +274,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       scenes,
       generatingOutlines,
       failedOutlines,
+      contentRevision: get().contentRevision + 1,
       ...(shouldSwitch ? { currentSceneId: scene.id } : {}),
     });
     debouncedSave();
@@ -284,7 +298,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
     const migrated = migrateScene(scene);
     const next = [...current.slice(0, insertIndex), migrated, ...current.slice(insertIndex)];
     const rebalanced = next.map((s, i) => (s.order === i + 1 ? s : { ...s, order: i + 1 }));
-    set({ scenes: rebalanced });
+    set((state) => ({ scenes: rebalanced, contentRevision: state.contentRevision + 1 }));
     debouncedSave();
   },
 
@@ -296,7 +310,7 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       // longer desync the discriminant from the content).
       return makeScene({ ...scene, ...updates }, content);
     });
-    set({ scenes });
+    set((state) => ({ scenes, contentRevision: state.contentRevision + 1 }));
     debouncedSave();
   },
 
@@ -324,9 +338,10 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       set({
         scenes,
         currentSceneId: scenes[newIndex]?.id || null,
+        contentRevision: get().contentRevision + 1,
       });
     } else {
-      set({ scenes });
+      set((state) => ({ scenes, contentRevision: state.contentRevision + 1 }));
     }
 
     if (wasComplete) get().setGenerationComplete(true);
@@ -442,6 +457,8 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       failedOutlines: get().failedOutlines.filter((o) => o.id !== outlineId),
     });
   },
+
+  markCloudSaved: () => set((state) => ({ cloudSavedRevision: state.contentRevision })),
 
   // Getters
   getCurrentScene: () => {
@@ -571,6 +588,8 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
           // mode='edit'. Refresh already reset via initial store value;
           // this normalises the SPA path to match.
           mode: 'playback',
+          contentRevision: 0,
+          cloudSavedRevision: 0,
         });
         log.info('Loaded from storage:', stageId);
       } else {
@@ -595,6 +614,8 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       currentGeneratingOrder: -1,
       failedOutlines: [],
       generatingOutlines: [],
+      contentRevision: 0,
+      cloudSavedRevision: 0,
     }));
     log.info('Store cleared');
   },

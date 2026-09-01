@@ -73,6 +73,7 @@ const TOTAL_TIMEOUT_MS = 15 * 60 * 1000;
 function fireAndForgetAutoSave(stageId: string): void {
   saveStageToCloud(stageId)
     .then(() => {
+      useStageStore.getState().markCloudSaved();
       toast.success('课程已自动保存到云端');
     })
     .catch((err: unknown) => {

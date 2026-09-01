@@ -345,14 +345,18 @@ export function HeaderControls({
                 )}
                 <div>
                   <div>
-                    {videoExport.job?.status === 'succeeded'
+                    {videoExport.hasUnsavedChanges
+                      ? '请先保存到云端'
+                      : videoExport.job?.status === 'succeeded'
                       ? videoExport.downloading ? '正在准备下载…' : '下载课程视频'
                       : videoExport.active
                         ? videoExport.job?.message || '正在准备课程视频'
                         : '导出课程视频'}
                   </div>
                   <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                    {videoExport.job?.status === 'succeeded'
+                    {videoExport.hasUnsavedChanges
+                      ? '保存后导出最新版本的视频'
+                      : videoExport.job?.status === 'succeeded'
                       ? videoExport.downloading ? '正在保存 MP4 文件' : 'MP4 已生成'
                       : videoExport.active && !videoExport.preparing
                         ? '可以离开，到课程管理查看'
