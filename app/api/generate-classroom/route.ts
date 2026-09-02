@@ -1,0 +1,81 @@
+import { after, type NextRequest } from 'next/server';
+import { nanoid } from 'nanoid';
+import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { type GenerateClassroomInput } from '@/lib/server/classroom-generation';
+import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
+import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
+import { buildRequestOrigin } from '@/lib/server/classroom-storage';
+import { requireAuthOrTeacher, rateLimitByUser } from '@/lib/server/api-guard';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('GenerateClassroom API');
+
+export const maxDuration = 30;
+
+export async function POST(req: NextRequest) {
+  let requirementSnippet: string | undefined;
+  try {
+    // ── Auth: only signed-in teacher/admin can generate classrooms ──
+    const auth = await requireAuthOrTeacher(['teacher', 'admin']);
+    if (!auth.ok) return auth.response;
+
+    // ── Rate limit: 5 jobs / 60s per user (cost guardrail) ──
+    const rl = rateLimitByUser(auth.user.id, 'generate-classroom', 5, 60_000);
+    if (!rl.ok) return rl.response;
+
+    const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;
+    requirementSnippet = rawBody.requirement?.substring(0, 60);
+    const body: GenerateClassroomInput = {
+      requirement: rawBody.requirement || '',
+      ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
+
+      ...(rawBody.enableWebSearch != null ? { enableWebSearch: rawBody.enableWebSearch } : {}),
+      ...(rawBody.webSearchProviderId ? { webSearchProviderId: rawBody.webSearchProviderId } : {}),
+      ...(rawBody.webSearchApiKey ? { webSearchApiKey: rawBody.webSearchApiKey } : {}),
+      ...(rawBody.baiduSubSources ? { baiduSubSources: rawBody.baiduSubSources } : {}),
+      ...(rawBody.enableImageGeneration != null
+        ? { enableImageGeneration: rawBody.enableImageGeneration }
+        : {}),
+      ...(rawBody.enableVideoGeneration != null
+        ? { enableVideoGeneration: rawBody.enableVideoGeneration }
+        : {}),
+      ...(rawBody.enableTTS != null ? { enableTTS: rawBody.enableTTS } : {}),
+      ...(rawBody.agentMode ? { agentMode: rawBody.agentMode } : {}),
+    };
+    const { requirement } = body;
+
+    if (!requirement) {
+      return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: requirement');
+    }
+
+    const baseUrl = buildRequestOrigin(req);
+    const jobId = nanoid(10);
+    const job = await createClassroomGenerationJob(jobId, body);
+    const pollUrl = `${baseUrl}/api/generate-classroom/${jobId}`;
+
+    after(() => runClassroomGenerationJob(jobId, body, baseUrl));
+
+    return apiSuccess(
+      {
+        jobId,
+        status: job.status,
+        step: job.step,
+        message: job.message,
+        pollUrl,
+        pollIntervalMs: 5000,
+      },
+      202,
+    );
+  } catch (error) {
+    log.error(
+      `Classroom generation job creation failed [requirement="${requirementSnippet ?? 'unknown'}..."]:`,
+      error,
+    );
+    return apiError(
+      'INTERNAL_ERROR',
+      500,
+      'Failed to create classroom generation job',
+      error instanceof Error ? error.message : 'Unknown error',
+    );
+  }
+}

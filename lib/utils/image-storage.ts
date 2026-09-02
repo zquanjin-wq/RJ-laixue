@@ -1,0 +1,289 @@
+/**
+ * Image Storage Utilities
+ *
+ * Store PDF images in IndexedDB to avoid sessionStorage 5MB limit.
+ * Images are stored as Blobs for efficient storage.
+ */
+
+import { db, type ImageFileRecord } from './database';
+import { nanoid } from 'nanoid';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('ImageStorage');
+
+/**
+ * Convert base64 data URL to Blob
+ */
+function base64ToBlob(base64DataUrl: string): Blob {
+  const parts = base64DataUrl.split(',');
+  const mimeMatch = parts[0].match(/:(.*?);/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const base64Data = parts[1];
+  const byteString = atob(base64Data);
+  const arrayBuffer = new ArrayBuffer(byteString.length);
+  const uint8Array = new Uint8Array(arrayBuffer);
+
+  for (let i = 0; i < byteString.length; i++) {
+    uint8Array[i] = byteString.charCodeAt(i);
+  }
+
+  return new Blob([uint8Array], { type: mimeType });
+}
+
+/**
+ * Convert Blob to base64 data URL
+ */
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Store images in IndexedDB
+ * Returns array of stored image IDs
+ */
+export async function storeImages(
+  images: Array<{ id: string; src: string; pageNumber?: number }>,
+): Promise<string[]> {
+  const sessionId = nanoid(10);
+  const storedIds: string[] = [];
+
+  for (const img of images) {
+    try {
+      const blob = base64ToBlob(img.src);
+      const mimeMatch = img.src.match(/data:(.*?);/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+      // Use session-prefixed ID to allow cleanup
+      const storageId = `session_${sessionId}_${img.id}`;
+
+      const record: ImageFileRecord = {
+        id: storageId,
+        blob,
+        filename: `${img.id}.png`,
+        mimeType,
+        size: blob.size,
+        createdAt: Date.now(),
+      };
+
+      await db.imageFiles.put(record);
+      storedIds.push(storageId);
+    } catch (error) {
+      log.error(`Failed to store image ${img.id}:`, error);
+    }
+  }
+
+  return storedIds;
+}
+
+/**
+ * Store images from remote URLs (externalized images, post-extract-document fix).
+ * Downloads images in a concurrency pool and stores them in IndexedDB.
+ *
+ * This replaces the old base64-based storeImages path when the server has
+ * already uploaded images to Supabase Storage and only returns references.
+ *
+ * Returns storageIds in the same slot positions as the input array.
+ */
+export async function storeImagesFromUrls(
+  images: Array<{ id: string; url: string; pageNumber?: number }>,
+  concurrency: number = 6,
+): Promise<string[]> {
+  const sessionId = nanoid(10);
+  const results: string[] = new Array(images.length);
+  let cursor = 0;
+
+  async function downloadOne(): Promise<void> {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= images.length) return;
+
+      const img = images[idx];
+      try {
+        const response = await fetch(img.url);
+        if (!response.ok) {
+          log.error(`Failed to download image ${img.id}: HTTP ${response.status} ${response.statusText}`);
+          results[idx] = ''; // explicit empty — no hole in array
+          continue;
+        }
+        const blob = await response.blob();
+        const mimeType = blob.type || 'image/png';
+        const storageId = `session_${sessionId}_${img.id}`;
+
+        await db.imageFiles.put({
+          id: storageId,
+          blob,
+          filename: `${img.id}.png`,
+          mimeType,
+          size: blob.size,
+          createdAt: Date.now(),
+        });
+        results[idx] = storageId;
+        log.info(`Downloaded and stored ${img.id} → ${storageId} (${(blob.size / 1024).toFixed(1)} KB)`);
+      } catch (error) {
+        log.error(`Failed to store image ${img.id} from URL:`, error);
+        results[idx] = ''; // explicit empty — no hole in array
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, images.length);
+  await Promise.all(Array.from({ length: workerCount }, () => downloadOne()));
+
+  return results;
+}
+
+/**
+ * Load images from IndexedDB and return as imageMapping
+ * @param imageIds - Array of storage IDs (session_xxx_img_1 format)
+ * @returns ImageMapping { img_1: "data:image/png;base64,..." }
+ */
+export async function loadImageMapping(imageIds: string[]): Promise<Record<string, string>> {
+  const mapping: Record<string, string> = {};
+
+  for (const storageId of imageIds) {
+    try {
+      const record = await db.imageFiles.get(storageId);
+      if (record) {
+        const base64 = await blobToBase64(record.blob);
+        // Extract original ID (img_1) from storage ID (session_xxx_img_1)
+        const originalId = storageId.replace(/^session_[^_]+_/, '');
+        mapping[originalId] = base64;
+      }
+    } catch (error) {
+      log.error(`Failed to load image ${storageId}:`, error);
+    }
+  }
+
+  return mapping;
+}
+
+/**
+ * Clean up images by session prefix
+ */
+export async function cleanupSessionImages(sessionId: string): Promise<void> {
+  try {
+    const prefix = `session_${sessionId}_`;
+    const allImages = await db.imageFiles.toArray();
+    const toDelete = allImages.filter((img) => img.id.startsWith(prefix));
+
+    for (const img of toDelete) {
+      await db.imageFiles.delete(img.id);
+    }
+
+    log.info(`Cleaned up ${toDelete.length} images for session ${sessionId}`);
+  } catch (error) {
+    log.error('Failed to cleanup session images:', error);
+  }
+}
+
+/**
+ * Clean up old images (older than specified hours)
+ */
+export async function cleanupOldImages(hoursOld: number = 24): Promise<void> {
+  try {
+    const cutoff = Date.now() - hoursOld * 60 * 60 * 1000;
+    await db.imageFiles.where('createdAt').below(cutoff).delete();
+    log.info(`Cleaned up images older than ${hoursOld} hours`);
+  } catch (error) {
+    log.error('Failed to cleanup old images:', error);
+  }
+}
+
+/**
+ * Get total size of stored images
+ */
+export async function getImageStorageSize(): Promise<number> {
+  const images = await db.imageFiles.toArray();
+  return images.reduce((total, img) => total + img.size, 0);
+}
+
+/**
+ * Store a PDF file as a Blob in IndexedDB.
+ * Returns a storage key that can be used to retrieve the blob later.
+ */
+export async function storePdfBlob(file: File): Promise<string> {
+  const storageKey = `pdf_${nanoid(10)}`;
+  const blob = new Blob([await file.arrayBuffer()], {
+    type: file.type || 'application/pdf',
+  });
+
+  const record: ImageFileRecord = {
+    id: storageKey,
+    blob,
+    filename: file.name,
+    mimeType: file.type || 'application/pdf',
+    size: blob.size,
+    createdAt: Date.now(),
+  };
+
+  await db.imageFiles.put(record);
+  return storageKey;
+}
+
+/**
+ * Load a PDF Blob from IndexedDB by its storage key.
+ */
+export async function loadPdfBlob(key: string): Promise<Blob | null> {
+  const record = await db.imageFiles.get(key);
+  return record?.blob ?? null;
+}
+
+/**
+ * Compress a base64 image using Canvas API
+ */
+async function compressImage(
+  base64: string,
+  maxWidth = 1024,
+  quality = 0.6,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width);
+        width = maxWidth;
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('No canvas context')); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('Image load failed'));
+    img.src = base64;
+  });
+}
+/**
+ * Load images from IndexedDB, compress, and return as imageMapping.
+ * Use this instead of loadImageMapping when sending to API to avoid 413.
+ */
+export async function loadImageMappingCompressed(
+  imageIds: string[],
+  maxWidth = 1024,
+  quality = 0.6,
+): Promise<Record<string, string>> {
+  const mapping: Record<string, string> = {};
+  for (const storageId of imageIds) {
+    try {
+      const record = await db.imageFiles.get(storageId);
+      if (record) {
+        const base64 = await blobToBase64(record.blob);
+        const compressed = await compressImage(base64, maxWidth, quality);
+        const originalId = storageId.replace(/^session_[^_]+_/, '');
+        mapping[originalId] = compressed;
+      }
+    } catch (error) {
+      log.error(`Failed to load image ${storageId}:`, error);
+    }
+  }
+  return mapping;
+}

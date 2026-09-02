@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"],
+      "@openmaic/dsl": ["./packages/@openmaic/dsl/src/index.ts"],
+      // Source mapping (like dsl) so tsc type-checks the workspace source and
+      // webpack dev resolves real runtime code. NEVER point a paths entry at a
+      // .d.ts: bundlers follow it too and get an export-less module at runtime
+      // (B2.2 Preview TypeError: `(void 0) is not a constructor` on
+      // `new BrowserDocumentStore()`). Turbopack production builds consume the
+      // built entry via turbopack.resolveAlias in next.config.ts instead.
+      "@openmaic/storage": ["./packages/@openmaic/storage/src/index.ts"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules", "dist", "packages/*/src", "packages/docs", "openclaw", "e2e"]
+}

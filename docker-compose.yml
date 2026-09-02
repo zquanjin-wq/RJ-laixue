@@ -1,0 +1,73 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: laixue
+      POSTGRES_USER: laixue
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env.production}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U laixue -d laixue']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - .env.production
+    ports:
+      - '80:80'
+      - '443:443'
+    depends_on:
+      - app
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    profiles: ['tools']
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['node', 'scripts/migrate-database.mjs']
+
+  bootstrap-admin:
+    build: .
+    profiles: ['tools']
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ['node', 'scripts/bootstrap-admin.mjs']
+
+volumes:
+  postgres-data:
+  app-data:
+  caddy-data:
+  caddy-config:

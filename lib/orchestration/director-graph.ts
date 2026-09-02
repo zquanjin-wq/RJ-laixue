@@ -1,0 +1,1030 @@
+/**
+ * Director Graph — LangGraph StateGraph for Multi-Agent Orchestration
+ *
+ * Unified single-round graph topology:
+ *
+ *   START → director ──(end)──→ END
+ *              │
+ *              └─(next)→ agent_generate ──→ END
+ *
+ * Each request runs at most one director→agent cycle. The client serializes
+ * multiple requests to drive multi-agent discussions. There is no maxTurns
+ * cap — the topology is the bound.
+ *
+ * The director node adapts its strategy based on agent count:
+ *   - Single agent: pure code logic (no LLM). Dispatches the agent on
+ *     turn 0, then cues the user on subsequent turns.
+ *   - Multi agent: LLM-based decision (with code fast-path for turn 0
+ *     trigger agent).
+ *
+ * Uses LangGraph's custom stream mode: each node pushes StatelessEvent
+ * chunks via config.writer() for real-time SSE delivery.
+ */
+
+import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
+import { SystemMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
+import type { LangGraphRunnableConfig } from '@langchain/langgraph';
+import type { LanguageModel } from 'ai';
+
+import { AISdkLangGraphAdapter } from './ai-sdk-adapter';
+import type { StatelessEvent } from '@/lib/types/chat';
+import type { StatelessChatRequest } from '@/lib/types/chat';
+import type { ThinkingConfig } from '@/lib/types/provider';
+import type { AgentConfig } from '@/lib/orchestration/registry/types';
+import { useAgentRegistry } from '@/lib/orchestration/registry/store';
+import { buildStructuredPrompt } from './prompt-builder';
+import { summarizeConversation } from './summarizers/conversation-summary';
+import { convertMessagesToOpenAI } from './summarizers/message-converter';
+import { buildDirectorPrompt, parseDirectorDecision } from './director-prompt';
+import { getEffectiveActions } from './tool-schemas';
+import type { AgentTurnSummary, WhiteboardActionRecord } from './types';
+import { parseStructuredChunk, createParserState, finalizeParser } from './stateless-generate';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('DirectorGraph');
+
+// ==================== State Definition ====================
+
+/**
+ * LangGraph state annotation for the orchestration graph
+ */
+const OrchestratorState = Annotation.Root({
+  // Input (set once at graph entry).
+  // explicit (prev, update) => update ?? prev reducer so values from
+  // initialState are not dropped between nodes.
+  messages: Annotation<StatelessChatRequest['messages']>({
+    reducer: (prev, update) => (update === undefined || update === null ? prev : update),
+    default: () => [],
+  }),
+  storeState: Annotation<StatelessChatRequest['storeState']>,
+  availableAgentIds: Annotation<string[]>,
+  languageModel: Annotation<LanguageModel>,
+  thinkingConfig: Annotation<ThinkingConfig | null>,
+  discussionContext: Annotation<{ topic: string; prompt?: string } | null>,
+  triggerAgentId: Annotation<string | null>,
+  userProfile: Annotation<{ nickname?: string; bio?: string } | null>,
+  /** Client-supplied session type ('qa' | 'discussion'). */
+  sessionType: Annotation<'qa' | 'discussion' | null>,
+  /** Request-scoped agent configs for generated agents. */
+  agentConfigOverrides: Annotation<Record<string, AgentConfig>>,
+  /** Student's current Q&A question. Persisted via directorState across
+   *  teacher/peer/closing turns. */
+  currentQAQuestion: Annotation<string | null | undefined>({
+    reducer: (prev, update) => (update === undefined || update === null ? prev : update),
+    default: () => undefined,
+  }),
+
+  // Mutable (updated by nodes)
+  currentAgentId: Annotation<string | null>,
+  turnCount: Annotation<number>,
+  agentResponses: Annotation<AgentTurnSummary[]>({
+    reducer: (prev, update) => [...prev, ...update],
+    default: () => [],
+  }),
+  whiteboardLedger: Annotation<WhiteboardActionRecord[]>({
+    reducer: (prev, update) => [...prev, ...update],
+    default: () => [],
+  }),
+  shouldEnd: Annotation<boolean>,
+  totalActions: Annotation<number>,
+});
+
+type OrchestratorStateType = typeof OrchestratorState.State;
+
+/**
+ * Look up an agent config: request-scoped overrides first, then global registry.
+ * This keeps the server stateless — generated agent configs travel with the request.
+ */
+function resolveAgent(state: OrchestratorStateType, agentId: string): AgentConfig | undefined {
+  return state.agentConfigOverrides[agentId] ?? useAgentRegistry.getState().getAgent(agentId);
+}
+
+/**
+ * Extract plain text from a JSON-array agent response (e.g.
+ * `[{"type":"text","content":"Hello"},{"type":"action",...}]`).
+ *
+ * Returns null if the content is not a parseable JSON array with text
+ * entries — falls back to the original content untouched.
+ */
+function _extractTextFromJsonResponse(content: string): string | null {
+  if (!content || !content.trim().startsWith('[')) return null;
+  try {
+    const arr = JSON.parse(content);
+    if (!Array.isArray(arr)) return null;
+    const texts = arr
+      .filter((item: { type: string; content?: string }) => item.type === 'text' && item.content)
+      .map((item: { content: string }) => item.content);
+    if (texts.length === 0) return null;
+    return texts.join('\n');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the student's latest Q&A question from state.
+ *
+ * Priority (when skipStored=false, the default):
+ *   1. state.currentQAQuestion (set by director on first Q&A turn, persisted
+ *      across teacher/peer/closing turns via DirectorState)
+ *   2. Fallback: scan state.messages in reverse for the last user-role message
+ *
+ * When skipStored=true: bypass priority 1 and always scan messages.
+ * Used by the director on the FIRST Q&A turn (spokenCount===0) so a new
+ * round's question is extracted fresh, not inherited from a previous round.
+ *
+ * Returns null if no question can be found.
+ */
+function extractLatestStudentQuestion(
+  state: OrchestratorStateType,
+  skipStored = false,
+): string | null {
+  // Priority 1: dedicated field (set by director, persisted via DirectorState)
+  if (!skipStored && state.currentQAQuestion && state.currentQAQuestion.trim()) {
+    return state.currentQAQuestion.trim();
+  }
+
+  // Priority 2: fallback — scan history in reverse for user-role messages
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const msg = state.messages[i];
+    if (msg.role !== 'user') continue;
+    const content = Array.isArray((msg as unknown as { parts?: Array<{ text?: string }> }).parts)
+      ? ((msg as unknown as { parts: Array<{ text?: string }> }).parts
+          .map((p) => p.text || '')
+          .join('\n'))
+      : '';
+    const cleaned = content
+      .replace(/^\[学生\]\s*[:：]\s*/g, '')
+      .replace(/^学生\s*[:：]\s*/g, '')
+      .trim();
+    if (cleaned) return cleaned;
+  }
+
+  return null;
+}
+
+// ==================== Director Node ====================
+
+/**
+ * Unified director: decides which agent speaks next.
+ *
+ * Strategy varies by agent count:
+ *   Single agent — pure code logic, zero LLM calls:
+ *     turn 0: dispatch the sole agent
+ *     turn 1+: cue user to speak (keeps session active for follow-ups)
+ *
+ *   Multi agent — LLM-based with code fast-paths:
+ *     turn 0 + triggerAgentId: dispatch trigger agent (skip LLM)
+ *     otherwise: LLM decides next agent / USER / END
+ */
+async function directorNode(
+  state: OrchestratorStateType,
+  config: LangGraphRunnableConfig,
+): Promise<Partial<OrchestratorStateType>> {
+  const rawWrite = config.writer as (chunk: StatelessEvent) => void;
+  const write = (chunk: StatelessEvent) => {
+    try {
+      rawWrite(chunk);
+    } catch {
+      /* controller closed after abort */
+    }
+  };
+const isSingleAgent = state.availableAgentIds.length <= 1;
+  // Authoritative: state.sessionType === 'qa'. Fallback to message-based
+  // detection for legacy clients that don't set sessionType.
+  const hasUserMessage =
+    state.sessionType === 'qa' ||
+    state.messages.some((m) => m.role === 'user');
+
+  // ── Single agent: code-only director ──
+  if (isSingleAgent) {
+    const agentId = state.availableAgentIds[0] || 'default-1';
+
+    if (state.turnCount === 0 && !hasUserMessage) {
+      // First turn with no user message yet: dispatch the agent
+      // (lecture narration kicks in).
+      log.info(`[Director] Single agent: dispatching "${agentId}"`);
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
+      return { currentAgentId: agentId, shouldEnd: false };
+    }
+
+    // Either: user asked a question (hasUserMessage), OR agent already
+    // responded (turnCount > 0). In both cases dispatch the agent ONCE
+    // and end the session — agent node will use the Q&A directive.
+    log.info(
+      `[Director] Single agent: dispatching "${agentId}" (turnCount=${state.turnCount}, hasUserMessage=${hasUserMessage})`,
+    );
+    write({ type: 'thinking', data: { stage: 'agent_loading', agentId } });
+    return { currentAgentId: agentId, shouldEnd: false };
+  }
+
+  // ── Multi agent: fast-path for first turn with trigger ──
+  if (state.turnCount === 0 && state.triggerAgentId) {
+    const triggerId = state.triggerAgentId;
+    if (state.availableAgentIds.includes(triggerId)) {
+      log.info(`[Director] First turn: dispatching trigger agent "${triggerId}"`);
+      write({
+        type: 'thinking',
+        data: { stage: 'agent_loading', agentId: triggerId },
+      });
+      return { currentAgentId: triggerId, shouldEnd: false };
+    }
+    log.warn(
+      `[Director] Trigger agent "${triggerId}" not in available agents, falling through to LLM`,
+    );
+  }
+
+  // ── Multi agent: LLM-based decision ──
+  const agents: AgentConfig[] = state.availableAgentIds
+    .map((id) => resolveAgent(state, id))
+    .filter((a): a is AgentConfig => a != null);
+
+  if (agents.length === 0) {
+    return { shouldEnd: true };
+  }
+
+  // Q&A mode short-circuit: the user asked a direct question. Skip the
+  // director LLM call entirely — "who answers" is already known, and
+  // that call was pure overhead on the Q&A path (plus any failure of it
+  // ended the session silently, see the catch below).
+  //
+  // Team-learning flow: every round, the TEACHER answers the student's
+  // question, then every PEER (role 'student') shares their perspective.
+  // All agents speak TO THE STUDENT, never to each other. After the last
+  // peer, agentGenerateNode emits `cue_user` so the session waits for
+  // the student's next move — ask another question, or click "End
+  // Discussion" to resume the lecture. No artificial round limit; the
+  // student controls when to stop.
+  //
+  // The teacher is found by role==='teacher' (falling back to an id
+  // containing 'teacher', then the first agent). Peers are found by
+  // role==='student'.
+  //
+  // History: f74faec returned shouldEnd=true from this branch, intending
+  // "dispatch once, then end". But directorCondition evaluates shouldEnd
+  // BEFORE routing to agent_generate, so the graph went director→END and
+  // the agent never ran — total silence, and the client marked the
+  // session "已结束" (completed, totalAgents=0).
+  if (hasUserMessage) {
+    const findByRole = (role: string) =>
+      state.availableAgentIds.find((id) => resolveAgent(state, id)?.role === role);
+
+    const teacherId =
+      findByRole('teacher') ||
+      state.availableAgentIds.find((id) => id.includes('teacher')) ||
+      state.availableAgentIds[0] ||
+      'default-1';
+
+    const peerIds = state.availableAgentIds.filter(
+      (id) => resolveAgent(state, id)?.role === 'student',
+    );
+
+    const spokenCount = state.agentResponses.length;
+    const teacherSpeechCount = state.agentResponses.filter((r) => r.agentId === teacherId).length;
+
+    // Stage 1: teacher answers the student's question.
+    if (spokenCount === 0) {
+      // NEW Q&A round — extract the latest student question from messages.
+      // skipStored=true: bypass state.currentQAQuestion which may hold a
+      // previous Q&A round's question inherited from directorState.
+      const question = extractLatestStudentQuestion(state, true);
+      if (!question) {
+        log.error('[Director] Q&A: cannot extract student question from messages');
+        // Dump state.messages for debugging
+        state.messages.forEach((m, i) => {
+          const partText = Array.isArray((m as unknown as { parts?: Array<{ text?: string }> }).parts)
+            ? ((m as unknown as { parts: Array<{ text?: string }> }).parts
+                .map((p) => p.text || '')
+                .join(' '))
+                .slice(0, 100)
+            : '[complex]';
+          log.error(`  [${i}] role=${m.role} content=${partText}`);
+        });
+      }
+      log.info(
+        `[Director] Q&A mode: dispatching teacher "${teacherId}" (question="${question?.slice(0, 60)}")`,
+      );
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId: teacherId } });
+      // Override currentQAQuestion with this round's question (even if
+      // null — downstream will still try the messages fallback).
+      return {
+        currentAgentId: teacherId,
+        shouldEnd: false,
+        currentQAQuestion: question || null,
+      };
+    }
+
+    // Stage 2: teacher has spoken — dispatch each peer who hasn't yet.
+    // All peers speak in a single round, one after another.
+    const nextPeer = peerIds.find(
+      (id) => !state.agentResponses.some((r) => r.agentId === id),
+    );
+    if (nextPeer) {
+      log.info(`[Director] Q&A mode: dispatching peer "${nextPeer}"`);
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId: nextPeer } });
+      return { currentAgentId: nextPeer, shouldEnd: false };
+    }
+
+    // Stage 3: all peers have spoken. If there are peers, give the
+    // teacher one final "closing" turn to address any peer follow-up
+    // questions or comments. Without this the teacher goes silent after
+    // a peer asks a question, breaking the Q&A flow.
+    if (peerIds.length > 0 && teacherSpeechCount === 1) {
+      log.info(`[Director] Q&A mode: teacher closing (addressing peer comments)`);
+      write({ type: 'thinking', data: { stage: 'agent_loading', agentId: teacherId } });
+      return { currentAgentId: teacherId, shouldEnd: false };
+    }
+
+    // All speakers done (teacher answer + all peers + teacher closing).
+    // agentGenerateNode emitted cue_user after the last speaker — this
+    // shouldEnd is just a safety net for edge cases.
+    log.info('[Director] Q&A mode: round complete, waiting for student');
+    return { shouldEnd: true };
+  }
+
+  write({ type: 'thinking', data: { stage: 'director' } });
+
+  const openaiMessages = convertMessagesToOpenAI(state.messages);
+  const conversationSummary = summarizeConversation(openaiMessages);
+
+  const prompt = buildDirectorPrompt(
+    agents,
+    conversationSummary,
+    state.agentResponses,
+    state.turnCount,
+    state.discussionContext,
+    state.triggerAgentId,
+    state.whiteboardLedger,
+    state.userProfile || undefined,
+    state.storeState.whiteboardOpen,
+  );
+
+  const adapter = new AISdkLangGraphAdapter(state.languageModel, state.thinkingConfig ?? undefined);
+
+  try {
+    const result = await adapter._generate(
+      [new SystemMessage(prompt), new HumanMessage('Decide which agent should speak next.')],
+      { signal: config.signal } as Record<string, unknown>,
+    );
+
+    const content = result.generations[0]?.text || '';
+    log.info(`[Director] Raw decision: ${content}`);
+
+    const decision = parseDirectorDecision(content);
+
+    if (decision.shouldEnd || !decision.nextAgentId) {
+      log.info('[Director] Decision: END');
+      return { shouldEnd: true };
+    }
+
+    if (decision.nextAgentId === 'USER') {
+      log.info('[Director] Decision: cue USER to speak');
+      write({
+        type: 'cue_user',
+        data: { fromAgentId: state.currentAgentId || undefined },
+      });
+      return { shouldEnd: true };
+    }
+
+    const agentExists = agents.some((a) => a.id === decision.nextAgentId);
+    if (!agentExists) {
+      log.warn(`[Director] Unknown agent "${decision.nextAgentId}", ending`);
+      return { shouldEnd: true };
+    }
+
+    write({
+      type: 'thinking',
+      data: { stage: 'agent_loading', agentId: decision.nextAgentId },
+    });
+
+    log.info(`[Director] Decision: dispatch agent "${decision.nextAgentId}"`);
+    return {
+      currentAgentId: decision.nextAgentId,
+      shouldEnd: false,
+    };
+  } catch (error) {
+    log.error('[Director] Error:', error);
+    return { shouldEnd: true };
+  }
+}
+
+function directorCondition(state: OrchestratorStateType): 'agent_generate' | typeof END {
+  return state.shouldEnd ? END : 'agent_generate';
+}
+
+// ==================== Agent Generate Node ====================
+
+/**
+ * Run generation for one agent. Streams agent_start, text_delta,
+ * action, and agent_end events via config.writer().
+ */
+async function runAgentGeneration(
+  state: OrchestratorStateType,
+  agentId: string,
+  config: LangGraphRunnableConfig,
+): Promise<{
+  contentPreview: string;
+  actionCount: number;
+  whiteboardActions: WhiteboardActionRecord[];
+}> {
+  const agentConfig = resolveAgent(state, agentId);
+  if (!agentConfig) {
+    throw new Error(`Agent not found: ${agentId}`);
+  }
+
+  const rawWrite = config.writer as (chunk: StatelessEvent) => void;
+  const write = (chunk: StatelessEvent) => {
+    try {
+      rawWrite(chunk);
+    } catch (e) {
+      log.warn(`[AgentGenerate] write failed for ${agentId}:`, e);
+    }
+  };
+  const messageId = `assistant-${agentId}-${Date.now()}`;
+
+  write({
+    type: 'agent_start',
+    data: {
+      messageId,
+      agentId,
+      agentName: agentConfig.name,
+      agentAvatar: agentConfig.avatar,
+      agentColor: agentConfig.color,
+    },
+  });
+
+  // Compute effective actions: filter by scene type for defense-in-depth
+  // e.g. spotlight/laser stripped for non-slide scenes even if in static allowedActions
+  const currentScene = state.storeState.currentSceneId
+    ? state.storeState.scenes.find((s) => s.id === state.storeState.currentSceneId)
+    : undefined;
+  const sceneType = currentScene?.type;
+  const effectiveActions = getEffectiveActions(agentConfig.allowedActions, sceneType);
+
+  const discussionContext = state.discussionContext || undefined;
+  // Detect if this is a user-initiated Q&A (vs agent-initiated discussion
+  // or lecture narration). When true: the prompt builder skips slide
+  // element details AND appends a "answer directly" directive. We also
+  // strip all previous AIMessage narration from the conversation history —
+  // otherwise the teacher continues narrating slides it sees in history.
+  //
+  // Authoritative signal: state.sessionType === 'qa' (now wired from the
+  // client via buildInitialState). Fallback: any user-role message in
+  // state.messages. The fallback alone is unreliable — lecture narration
+  // can also leave user-role messages in history, which silently disables
+  // buildQASystemPrompt and the teacher resumes narrating the slide.
+  const isUserQA =
+    state.sessionType === 'qa' ||
+    state.messages.some((m) => m.role === 'user');
+  const systemPrompt = buildStructuredPrompt(
+    agentConfig,
+    state.storeState,
+    discussionContext,
+    state.whiteboardLedger,
+    state.userProfile || undefined,
+    state.agentResponses,
+    isUserQA,
+  );
+  // History: keep the full message list in Q&A mode too. The Q&A
+  // preamble in prompt-builder.ts is the anti-lecture enforcement; the
+  // model still needs the prior conversation to understand follow-ups
+  // and to give concrete answers. Stripping history left the model
+  // unable to anchor its answer to anything the student had said before.
+  //
+  // Q&A multi-round contamination: after round 1, the history contains
+  // the teacher's own responses as AIMessage entries with JSON-array
+  // format (e.g. [{"type":"text","content":"..."}]). On round 2 the model
+  // sees these as in-context few-shot examples and reproduces the JSON
+  // format AND the lecture-narration pattern embedded in those examples,
+  // even though the Q&A system prompt says "output plain text" and
+  // "answer directly". In-context examples beat system instructions.
+  //
+  // Fix: strip the JSON wrapper from previous AIMessage entries in Q&A
+  // mode, keeping only the plain text. User-role messages (student
+  // questions, peer comments attributed as [name]: content) are left
+  // intact — they provide the follow-up anchoring the model needs.
+  const historyMessages = state.messages;
+  const openaiMessages = convertMessagesToOpenAI(historyMessages, agentId);
+  const adapter = new AISdkLangGraphAdapter(state.languageModel, state.thinkingConfig ?? undefined);
+
+  const lcMessages = [
+    new SystemMessage(systemPrompt),
+    ...openaiMessages.map((m) =>
+      m.role === 'user' ? new HumanMessage(m.content) : new AIMessage(m.content),
+    ),
+  ];
+
+  // Post-process AIMessage entries in Q&A mode: strip JSON-array
+  // formatting so they don't override the Q&A prompt's plain-text
+  // instruction through in-context few-shot. Only applies to non-student
+  // agents (students get a separate buildPeerQASystemPrompt).
+  if (isUserQA && agentConfig.role !== 'student') {
+    for (let i = 0; i < lcMessages.length; i++) {
+      const msg = lcMessages[i];
+      if (msg instanceof AIMessage) {
+        const raw = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        const cleaned = _extractTextFromJsonResponse(raw);
+        if (cleaned !== null) {
+          lcMessages[i] = new AIMessage(cleaned);
+        }
+      }
+    }
+  }
+
+  // Q&A PEER turn: inject the teacher's just-delivered answer so the peer
+  // can actually react to it. The teacher's answer lives in
+  // state.agentResponses (appended by the previous request's
+  // agentGenerateNode), NOT in state.messages — so without this the peer
+  // would "react" to an answer it never saw and produce generic filler.
+  // contentPreview is capped at 300 chars, which is enough for the peer to
+  // grasp the gist and respond in 1-2 sentences.
+  if (isUserQA && agentConfig.role === 'student') {
+    const teacherAnswer = [...state.agentResponses]
+      .reverse()
+      .find((r) => resolveAgent(state, r.agentId)?.role === 'teacher');
+    if (teacherAnswer?.contentPreview) {
+      lcMessages.push(
+        new HumanMessage(
+          `The teacher ("${teacherAnswer.agentName}") just answered the classmate's question with:\n\n"${teacherAnswer.contentPreview}"\n\nNow react briefly as a fellow student, per your instructions.`,
+        ),
+      );
+    }
+  }
+
+  // ─── Ensure last message is HumanMessage ───
+  //
+  // Q&A teacher path (isUserQA && role !== 'student'):
+  //   The last HumanMessage MUST contain the student's actual question.
+  //   Generic cues like "It's your turn to speak" or "请直接回答" without
+  //   the question text cause the model to fall back to lecture narration.
+  //   We ALWAYS append a new HumanMessage with the question — even if a
+  //   HumanMessage already exists — because existing ones may be generic
+  //   cues, peer injections, or contaminated history.
+  //
+  // Non-Q&A / student path:
+  //   Use the generic fallback (lecture narration / discussion cue).
+  if (isUserQA && agentConfig.role !== 'student') {
+    // ─── Q&A teacher: inject student question as last HumanMessage ───
+
+    const latestStudentQuestion = extractLatestStudentQuestion(state);
+
+    if (!latestStudentQuestion) {
+      console.error(
+        `[Q&A] FATAL: cannot extract latest student question ` +
+        `agent="${agentConfig.name}" messages.length=${state.messages.length} ` +
+        `currentQAQuestion=${state.currentQAQuestion ? '"' + state.currentQAQuestion.slice(0, 60) + '"' : 'null'} ` +
+        `state.keys=${Object.keys(state).join(',')}`,
+      );
+      throw new Error(
+        `[Q&A] Cannot answer — latest student question is missing ` +
+        `(agent="${agentConfig.name}", messages=${state.messages.length}).`,
+      );
+    }
+
+    // Remove any trailing generic HumanMessage cue left by previous
+    // processing (peer injection, "It's your turn", etc.) so the
+    // model's last instruction is ALWAYS the student question.
+    const genericCues = [
+      "It's your turn to speak",
+      'Please begin',
+      '请直接回答学生的最新问题',
+      'Please continue',
+    ];
+    while (lcMessages.length > 0) {
+      const last = lcMessages[lcMessages.length - 1];
+      if (!(last instanceof HumanMessage)) break;
+      const content = typeof last.content === 'string' ? last.content : '';
+      if (genericCues.some((cue) => content.includes(cue))) {
+        lcMessages.pop();
+      } else {
+        break;
+      }
+    }
+
+    // Detect teacher closing: the teacher has already spoken AND at least
+    // one peer has responded. In this case the message must include peer
+    // summaries so the teacher can address their follow-up points.
+    const teacherId = resolveAgent(state, agentId)?.role === 'teacher' ? agentId : null;
+    const isTeacherClosing =
+      teacherId !== null &&
+      state.agentResponses.some((r) => r.agentId === teacherId) &&
+      state.agentResponses.some(
+        (r) => r.agentId !== teacherId && resolveAgent(state, r.agentId)?.role === 'student',
+      );
+
+    if (isTeacherClosing) {
+      // ─── Teacher closing: include peer responses ───
+      const peerResponses = state.agentResponses.filter(
+        (r) => r.agentId !== teacherId && resolveAgent(state, r.agentId)?.role === 'student',
+      );
+      const peerText =
+        peerResponses.length > 0
+          ? peerResponses
+              .map((r) => `[${r.agentName}]: ${r.contentPreview || '(no content)'}`)
+              .join('\n')
+          : '无';
+
+      lcMessages.push(
+        new HumanMessage(
+          [
+            '你正在 Q&A 模式下做老师的最后补充。',
+            '',
+            '学生原始问题：',
+            latestStudentQuestion,
+            '',
+            '刚才同学/其他角色的补充：',
+            peerText,
+            '',
+            '请你围绕学生原始问题做一个简短补充。',
+            '第一句话必须继续回答问题，不要重新开课，不要讲 PPT，不要说"好的"。',
+          ].join('\n'),
+        ),
+      );
+    } else {
+      // ─── Teacher first answer: question only ───
+      lcMessages.push(
+        new HumanMessage(
+          [
+            '学生刚刚提出了一个具体问题。你现在必须回答这个问题。',
+            '',
+            '学生问题：',
+            latestStudentQuestion,
+            '',
+            '回答要求：',
+            '1. 第一句话必须直接给出答案、判断、方法或结论。',
+            '2. 不要寒暄，不要说"好的"。',
+            '3. 不要说"我们直接开始"。',
+            '4. 不要说"今天我们进入"。',
+            '5. 不要复述或讲解 PPT 页面。',
+            '6. 可以结合当前幻灯片作为背景，但只能用来回答问题。',
+          ].join('\n'),
+        ),
+      );
+    }
+
+    // ─── Q&A Guard: validate last message ───
+    const guardLast = lcMessages[lcMessages.length - 1];
+    if (!(guardLast instanceof HumanMessage)) {
+      throw new Error('[Q&A GUARD] Last message is not HumanMessage after injection');
+    }
+    const guardContent = typeof guardLast.content === 'string' ? guardLast.content : '';
+    const questionSubstring = latestStudentQuestion.slice(
+      0,
+      Math.min(30, latestStudentQuestion.length),
+    );
+    if (!guardContent.includes(questionSubstring)) {
+      console.error(
+        `[Q&A GUARD] Last HumanMessage does NOT contain student question!\n` +
+        `  expected substring: "${questionSubstring}"\n` +
+        `  actual content (first 500 chars): "${guardContent.slice(0, 500)}"`,
+      );
+      throw new Error('[Q&A GUARD] Last HumanMessage does not contain latest student question');
+    }
+  } else {
+    // ─── Non-Q&A / Student: generic fallback ───
+    const lastMsg = lcMessages[lcMessages.length - 1];
+    if (!lcMessages.some((m) => m instanceof HumanMessage)) {
+      lcMessages.push(new HumanMessage('Please begin.'));
+    } else if (lastMsg instanceof AIMessage) {
+      lcMessages.push(
+        new HumanMessage("It's your turn to speak. Respond from your perspective."),
+      );
+    }
+  }
+
+  const parserState = createParserState();
+  let fullText = '';
+  let actionCount = 0;
+  const whiteboardActions: WhiteboardActionRecord[] = [];
+
+  try {
+    for await (const chunk of adapter.streamGenerate(lcMessages, {
+      signal: config.signal,
+    })) {
+      if (chunk.type === 'delta') {
+        const parseResult = parseStructuredChunk(chunk.content, parserState);
+
+        // Emit events in original interleaved order via the `ordered` array.
+        // The ordered array tracks complete items from Step 5 of the parser;
+        // trailing partial text deltas (Step 6) are in textChunks but not in ordered.
+        let emittedTextCount = 0;
+        if (parseResult.ordered.length > 0 || parseResult.textChunks.length > 0) {
+          log.debug(
+            `[AgentGenerate] Parse: ordered=${parseResult.ordered.length} (${parseResult.ordered.map((e) => e.type).join(',')}), textChunks=${parseResult.textChunks.length}, actions=${parseResult.actions.length}, done=${parseResult.isDone}`,
+          );
+        }
+        for (const entry of parseResult.ordered) {
+          if (entry.type === 'text') {
+            const rawText = parseResult.textChunks[entry.index];
+            if (!rawText) {
+              log.warn(
+                `[AgentGenerate] Ordered text entry index=${entry.index} but textChunks[${entry.index}] is empty`,
+              );
+              continue;
+            }
+            const text = rawText.replace(/^>+\s?/gm, '');
+            if (!text) continue;
+            fullText += text;
+            write({
+              type: 'text_delta',
+              data: { content: text, messageId },
+            });
+            emittedTextCount++;
+          } else if (entry.type === 'action') {
+            const ac = parseResult.actions[entry.index];
+            if (!ac) continue;
+            if (!effectiveActions.includes(ac.actionName)) {
+              log.warn(
+                `[AgentGenerate] Agent ${agentConfig.name} attempted disallowed action: ${ac.actionName}, skipping`,
+              );
+              continue;
+            }
+            actionCount++;
+            // Record whiteboard actions to the ledger
+            if (ac.actionName.startsWith('wb_')) {
+              whiteboardActions.push({
+                actionName: ac.actionName as WhiteboardActionRecord['actionName'],
+                agentId,
+                agentName: agentConfig.name,
+                params: ac.params,
+              });
+            }
+            write({
+              type: 'action',
+              data: {
+                actionId: ac.actionId,
+                actionName: ac.actionName,
+                params: ac.params,
+                agentId,
+                messageId,
+              },
+            });
+          }
+        }
+
+        // Emit trailing partial text deltas not covered by ordered
+        for (let i = emittedTextCount; i < parseResult.textChunks.length; i++) {
+          const rawText = parseResult.textChunks[i];
+          if (!rawText) continue;
+          const text = rawText.replace(/^>+\s?/gm, '');
+          if (!text) continue;
+          fullText += text;
+          write({
+            type: 'text_delta',
+            data: { content: text, messageId },
+          });
+        }
+      }
+    }
+
+    // Finalize: emit any remaining content if the model didn't produce valid JSON
+    const finalResult = finalizeParser(parserState);
+    for (const entry of finalResult.ordered) {
+      if (entry.type === 'text') {
+        const rawText = finalResult.textChunks[entry.index];
+        if (!rawText) continue;
+        const text = rawText.replace(/^>+\s?/gm, '');
+        if (!text) continue;
+        fullText += text;
+        write({
+          type: 'text_delta',
+          data: { content: text, messageId },
+        });
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw error;
+    }
+    log.error(`[AgentGenerate] Error for ${agentConfig.name}:`, error);
+    write({
+      type: 'error',
+      data: { message: error instanceof Error ? error.message : String(error) },
+    });
+  }
+
+  write({
+    type: 'agent_end',
+    data: { messageId, agentId },
+  });
+
+  return {
+    contentPreview: fullText.slice(0, 300),
+    actionCount,
+    whiteboardActions,
+  };
+}
+
+/**
+ * Agent generate node — runs one agent, then loops back to director.
+ */
+async function agentGenerateNode(
+  state: OrchestratorStateType,
+  config: LangGraphRunnableConfig,
+): Promise<Partial<OrchestratorStateType>> {
+  const agentId = state.currentAgentId;
+  if (!agentId) {
+    return { shouldEnd: true };
+  }
+
+  const agentConfig = resolveAgent(state, agentId);
+  const result = await runAgentGeneration(state, agentId, config);
+
+  if (!result.contentPreview && result.actionCount === 0) {
+    log.warn(
+      `[AgentGenerate] Agent "${agentConfig?.name || agentId}" produced empty response (no text, no actions)`,
+    );
+  }
+
+  // Q&A mode: emit `cue_user` after the FINAL speaker of the round
+  // (teacher + all peers), so the client loop exits and the session
+  // waits for the student's next move. No auto-resume — the student
+  // decides when to end the discussion.
+  //
+  // This node runs AFTER agentId's turn, but state.agentResponses does
+  // NOT yet include the just-finished turn (it's appended in the return
+  // value below, and reducers apply after the node completes). So compute
+  // "who has spoken" as agentResponses + agentId.
+  const hasUserMessage =
+    state.sessionType === 'qa' ||
+    state.messages.some((m) => m.role === 'user');
+  if (hasUserMessage) {
+    const spokenIds = new Set(state.agentResponses.map((r) => r.agentId));
+    spokenIds.add(agentId); // the turn that just finished
+
+    const teacherId =
+      state.availableAgentIds.find((id) => resolveAgent(state, id)?.role === 'teacher') ||
+      state.availableAgentIds.find((id) => id.includes('teacher')) ||
+      state.availableAgentIds[0] ||
+      'default-1';
+    const peerIds = state.availableAgentIds.filter(
+      (id) => resolveAgent(state, id)?.role === 'student',
+    );
+
+    const teacherSpoken = spokenIds.has(teacherId);
+    const peerPending = peerIds.some((id) => !spokenIds.has(id));
+
+    // Count how many times the teacher has spoken (including the
+    // just-finished turn, which hasn't been appended to agentResponses
+    // yet). With peers: teacher must speak twice (initial answer +
+    // closing). Without peers: once is enough.
+    const teacherSpeechCount =
+      state.agentResponses.filter((r) => r.agentId === teacherId).length +
+      (agentId === teacherId ? 1 : 0);
+    const hasPeers = peerIds.length > 0;
+    const teacherDoneSpeaking = hasPeers ? teacherSpeechCount >= 2 : teacherSpeechCount >= 1;
+    const roundFinished = teacherSpoken && !peerPending && teacherDoneSpeaking;
+
+    if (roundFinished) {
+      const rawWrite = config.writer as (chunk: StatelessEvent) => void;
+      rawWrite({
+        type: 'cue_user',
+        data: { fromAgentId: agentId },
+      });
+    } else {
+      log.info(
+        `[AgentGenerate] Q&A round not finished (peer pending); withholding cue_user so the client loop dispatches the next speaker`,
+      );
+    }
+  }
+
+  return {
+    turnCount: state.turnCount + 1,
+    totalActions: state.totalActions + result.actionCount,
+    agentResponses: [
+      {
+        agentId,
+        agentName: agentConfig?.name || agentId,
+        contentPreview: result.contentPreview,
+        actionCount: result.actionCount,
+        whiteboardActions: result.whiteboardActions,
+      },
+    ],
+    whiteboardLedger: result.whiteboardActions,
+    currentAgentId: null,
+  };
+}
+
+// ==================== Graph Construction ====================
+
+/**
+ * Create the orchestration LangGraph StateGraph.
+ *
+ * Topology:
+ *   START → director ──(end)──→ END
+ *              │
+ *              └─(next)→ agent_generate ──→ END
+ *
+ * Single-round contract: each request runs at most one director→agent cycle.
+ * Multi-agent discussions arise from the client serializing requests; the
+ * server graph does not loop. There is no `maxTurns` — the topology itself
+ * is the bound.
+ */
+export function createOrchestrationGraph() {
+  const graph = new StateGraph(OrchestratorState)
+    .addNode('director', directorNode)
+    .addNode('agent_generate', agentGenerateNode)
+    .addEdge(START, 'director')
+    .addConditionalEdges('director', directorCondition, {
+      agent_generate: 'agent_generate',
+      [END]: END,
+    })
+    .addEdge('agent_generate', END);
+
+  return graph.compile();
+}
+
+/**
+ * Build initial state for the orchestration graph from a StatelessChatRequest
+ * and a pre-created LanguageModel instance.
+ */
+export function buildInitialState(
+  request: StatelessChatRequest,
+  languageModel: LanguageModel,
+  thinkingConfig?: ThinkingConfig,
+): typeof OrchestratorState.State {
+  // Build request-scoped agent config overrides for generated agents.
+  // These travel with each request — no server-side persistence needed.
+  const agentConfigOverrides: Record<string, AgentConfig> = {};
+  if (request.config.agentConfigs?.length) {
+    for (const cfg of request.config.agentConfigs) {
+      agentConfigOverrides[cfg.id] = {
+        ...cfg,
+        isDefault: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    }
+  }
+
+  const discussionContext = request.config.discussionTopic
+    ? {
+        topic: request.config.discussionTopic,
+        prompt: request.config.discussionPrompt,
+      }
+    : null;
+
+  const incoming = request.directorState;
+  const turnCount = incoming?.turnCount ?? 0;
+
+  // Q&A mode: extract the student's current question from the request.
+  // First turn: directorState hasn't been populated yet; scan messages.
+  // Subsequent turns: directorState carries it from the previous DONE event.
+  //
+  // NOTE: UIMessage from Vercel AI SDK uses `parts`, NOT `content`. The
+  // scan must handle both shapes because the same flow is reused in
+  // extractLatestStudentQuestion, stateless-generate DONE event, and here.
+  let currentQAQuestion: string | null = incoming?.currentQAQuestion ?? null;
+  if (!currentQAQuestion) {
+    for (let i = request.messages.length - 1; i >= 0; i--) {
+      const msg = request.messages[i] as unknown as Record<string, unknown>;
+      if (msg.role !== 'user') continue;
+
+      // UIMessage: parts[{type:'text', text:'...'}]
+      // Legacy format: content string
+      let raw: string;
+      if (Array.isArray(msg.parts)) {
+        raw = (msg.parts as Array<{ type?: string; text?: string }>)
+          .filter((p) => p.type === 'text' && p.text)
+          .map((p) => p.text!)
+          .join('\n');
+      } else if (typeof msg.content === 'string') {
+        raw = msg.content;
+      } else {
+        continue;
+      }
+
+      const cleaned = raw
+        .replace(/^\[学生\]\s*[:：]\s*/g, '')
+        .replace(/^学生\s*[:：]\s*/g, '')
+        .trim();
+      if (cleaned) {
+        currentQAQuestion = cleaned;
+        break;
+      }
+    }
+  }
+
+  return {
+    messages: request.messages,
+    storeState: request.storeState,
+    availableAgentIds: request.config.agentIds,
+    languageModel,
+    thinkingConfig: thinkingConfig ?? null,
+    discussionContext,
+    triggerAgentId: request.config.triggerAgentId || null,
+    userProfile: request.userProfile || null,
+    sessionType:
+      request.config.sessionType === 'qa' || request.config.sessionType === 'discussion'
+        ? request.config.sessionType
+        : null,
+    agentConfigOverrides,
+    currentAgentId: null,
+    turnCount,
+    agentResponses: incoming?.agentResponses ?? [],
+    whiteboardLedger: incoming?.whiteboardLedger ?? [],
+    currentQAQuestion,
+    shouldEnd: false,
+    totalActions: 0,
+  };
+}
