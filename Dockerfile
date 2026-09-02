@@ -23,7 +23,7 @@ COPY --from=deps /app/packages ./packages
 COPY . .
 COPY --from=deps /app/public/vendor ./public/vendor
 
-RUN pnpm build
+RUN SUPABASE_URL=https://example.invalid SUPABASE_ANON_KEY=placeholder SUPABASE_SERVICE_ROLE_KEY=placeholder pnpm build
 
 # ---- Stage 4: Runner ----
 FROM node:22-alpine AS runner
