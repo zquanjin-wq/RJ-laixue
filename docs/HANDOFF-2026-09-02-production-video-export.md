@@ -27,13 +27,20 @@
 
 在 Dokploy 的正式应用 **Environment** 中重建完整配置；不要在密文后追加。
 
+### 项目对应关系（必须遵守）
+
+- `rj-laixue-preview`（AWS `ap-southeast-1`，ref `ufwkylcsrppaamzqsvgx`）是 2026-07 建立的隔离 Preview/Scratch 项目，用于 Preview 验证与 SQL 演练。
+- `zquanjin-wq's Project`（AWS `ap-northeast-1`）是正式环境应使用的 Supabase 项目。
+
+两个项目不是重复创建：Preview 隔离是此前 RuntimeStore 验证的明确前提。正式应用严禁使用 Preview 的 URL、Publishable/anon key、service role key 或渲染地址。
+
 最小登录所需：
 
 ```text
-NEXT_PUBLIC_SUPABASE_URL=<Production Supabase URL>
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<Production Supabase Publishable/anon key>
-SUPABASE_URL=<同一 Production Supabase URL>
-SUPABASE_ANON_KEY=<同一 Production Supabase Publishable/anon key>
+NEXT_PUBLIC_SUPABASE_URL=<zquanjin-wq's Project 的 Project URL>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<该正式项目的 Publishable key 或 legacy anon key>
+SUPABASE_URL=<同一正式 Project URL>
+SUPABASE_ANON_KEY=<同一正式项目的 Publishable key 或 legacy anon key>
 ```
 
 完整运行还需要：
@@ -46,6 +53,8 @@ VIDEO_RENDER_SERVICE_URL=<正式渲染服务 URL>
 COURSE_VIDEO_EXPORT_URL=<正式应用的导出执行 URL>
 CRON_SECRET=<与 Dokploy Schedule 一致的值>
 ```
+
+`NEXT_PUBLIC_SUPABASE_URL` 的获取位置：进入 **zquanjin-wq's Project** 后点击 **Connect**，选择 Next.js 可复制 URL 与 Publishable key；也可在 **Settings → API Keys** 查看。不要使用 `rj-laixue-preview` 页面中的值。
 
 Build-time Arguments 中的旧密文可清空。`59ab7098` 已让浏览器 Supabase 值从容器运行时注入，构建不再依赖这两个公开变量。
 
