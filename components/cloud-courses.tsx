@@ -124,7 +124,6 @@ export default function CloudCourses() {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<CourseFilter>('all');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
@@ -259,12 +258,12 @@ export default function CloudCourses() {
 
   return (
     <section className="mt-8">
-      <div className="mb-5 flex items-center justify-between gap-4">
+      <div className="mb-7 flex items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-semibold tracking-tight">我的课程</h2>
           <span className="text-sm text-muted-foreground">共 {myCourses.length} 门</span>
-          <div className="flex gap-2">
-            {filters.map((item) => <button key={item.key} onClick={() => setFilter(item.key)} className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${filter === item.key ? 'bg-slate-900 text-white' : item.key === 'active' ? 'bg-blue-50 text-blue-700' : item.key === 'downloadable' ? 'bg-emerald-50 text-emerald-700' : item.key === 'failed' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{item.label} {item.count}</button>)}
+          <div className="flex items-center gap-5">
+            {filters.map((item) => <button key={item.key} onClick={() => setFilter(item.key)} className={`border-b-2 pb-2 text-sm transition-colors ${filter === item.key ? 'border-slate-900 font-semibold text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{item.label} <span className="text-xs">{item.count}</span></button>)}
           </div>
         </div>
         <div className="relative w-64 shrink-0">
@@ -281,16 +280,15 @@ export default function CloudCourses() {
           </div>
           {courses.map((course) => {
             const job = latestVideoByCourse.get(course.id);
-            const expanded = expandedId === course.id;
             const owner = course.created_by === currentUserId;
             return <div key={course.id} className="border-b border-slate-100 last:border-0">
               <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] items-center gap-4 px-5 py-4 hover:bg-slate-50/70">
-                <button onClick={() => setExpandedId(expanded ? null : course.id)} className="min-w-0 text-left">
+                <div className="min-w-0">
                   <p className="truncate font-medium text-slate-900">{course.title || course.topic || '未命名课程'}</p>
                   <p className="mt-1 text-xs text-slate-400">{owner ? '我的创作' : course.author_name ? `作者：${course.author_name}` : '课程'} · 更新于 {formatDate(course.updated_at)}</p>
-                </button>
+                </div>
                 <CourseStatus course={course} />
-                <button onClick={() => setExpandedId(expanded ? null : course.id)} className="text-left"><VideoStatus job={job} /></button>
+                <div><VideoStatus job={job} /></div>
                 <div className="text-xs text-slate-500">{formatActivity(job) ?? `更新于 ${formatDate(course.updated_at)}`}</div>
                 <div className="flex min-w-0 flex-nowrap items-center gap-2 lg:justify-end">
                   {job?.status === 'succeeded' && job.downloadUrl && <button type="button" onClick={() => void downloadVideo(job)} disabled={Boolean(downloadingVideoId)} className="inline-flex h-8 w-[124px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-70">{downloadingVideoId === job.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}{downloadingVideoId === job.id ? '正在准备下载…' : '下载'}</button>}
@@ -299,7 +297,6 @@ export default function CloudCourses() {
                   <div className="relative shrink-0"><button type="button" aria-label="更多操作" title="更多操作" onClick={(event) => { event.stopPropagation(); setOpenMenuId(openMenuId === course.id ? null : course.id); }} className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{openMenuId === course.id && <div onPointerDown={(event) => event.stopPropagation()} className="absolute right-0 z-20 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => { void shareCourse(course.id); setOpenMenuId(null); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button type="button" onClick={() => { setOpenMenuId(null); void removeCourse(course.id); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
                 </div>
               </div>
-              {expanded && <div className="grid gap-3 border-t bg-slate-50 px-5 py-4 md:grid-cols-3"><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">课程内容</p><p className="mt-2 text-sm font-medium">可继续编辑</p><p className="mt-1 text-xs text-slate-500">最近更新 {formatDate(course.updated_at)}</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">云端课程</p><p className="mt-2 text-sm font-medium">已保存到云端</p><p className="mt-1 text-xs text-slate-500">可分享给学员</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">视频任务</p><div className="mt-2"><VideoPlan job={job} /></div></div></div>}
             </div>;
           })}
           </div></div>
