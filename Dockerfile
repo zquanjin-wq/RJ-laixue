@@ -9,9 +9,6 @@ WORKDIR /app
 # ---- Stage 2: Dependencies ----
 FROM base AS deps
 
-# Native build tools for sharp, @napi-rs/canvas
-RUN apk add --no-cache python3 build-base g++ cairo-dev pango-dev jpeg-dev giflib-dev librsvg-dev
-
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/ ./packages/
 COPY scripts/ ./scripts/
@@ -37,7 +34,7 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
-RUN apk add --no-cache libc6-compat cairo pango jpeg giflib librsvg
+RUN apk add --no-cache libc6-compat
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
