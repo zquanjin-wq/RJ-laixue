@@ -21,9 +21,8 @@ RUN pnpm install --frozen-lockfile
 # ---- Stage 3: Builder ----
 FROM base AS builder
 
-# Next.js embeds these public values into the browser bundle during `pnpm build`.
-# Hosting platforms must provide them as Docker build arguments; server-side
-# credentials remain runtime-only environment variables.
+# Browser Supabase configuration is injected by the root layout at request time.
+# Docker build arguments remain optional compatibility fallbacks only.
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
