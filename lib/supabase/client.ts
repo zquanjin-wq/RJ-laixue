@@ -30,8 +30,8 @@ const runtimeConfig =
 // these public values at request time so a normal runtime environment works
 // without duplicating variables as Docker build arguments.
 const supabaseUrl =
-  runtimeConfig?.supabaseUrl ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://invalid.local';
+  runtimeConfig?.supabaseUrl || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://invalid.local';
 const supabaseAnonKey =
-  runtimeConfig?.supabaseAnonKey ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'build-placeholder';
+  runtimeConfig?.supabaseAnonKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'build-placeholder';
 
 export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
