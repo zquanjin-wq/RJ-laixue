@@ -28,17 +28,31 @@ export const metadata: Metadata = {
   },
 };
 
+// Public browser configuration is injected at request time. This keeps Docker
+// builds independent from runtime environment variables in Dokploy.
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const runtimeConfig = JSON.stringify({
+    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+    supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
+  }).replace(/</g, '\\u003c');
+
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body
         className={`${GeistSans.variable} ${GeistMono.variable} antialiased`}
         suppressHydrationWarning
       >
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__LAIXUE_RUNTIME_CONFIG__=${runtimeConfig};`,
+          }}
+        />
         <ThemeProvider>
           <I18nProvider>
             <ServerProvidersInit />

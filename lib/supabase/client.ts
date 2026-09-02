@@ -13,16 +13,25 @@
  */
 import { createBrowserClient } from '@supabase/ssr';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  // This branch is hit at build time if env is missing. Throw early
-  // so the error is loud rather than producing a broken client.
-  throw new Error(
-    'Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY. ' +
-      'Check .env.local or Vercel env.',
-  );
+declare global {
+  interface Window {
+    __LAIXUE_RUNTIME_CONFIG__?: {
+      supabaseUrl?: string;
+      supabaseAnonKey?: string;
+    };
+  }
 }
+
+const runtimeConfig =
+  typeof window === 'undefined' ? undefined : window.__LAIXUE_RUNTIME_CONFIG__;
+
+// Dokploy supplies application environment variables when the container
+// starts, while Next compiles browser bundles earlier. The layout provides
+// these public values at request time so a normal runtime environment works
+// without duplicating variables as Docker build arguments.
+const supabaseUrl =
+  runtimeConfig?.supabaseUrl ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://invalid.local';
+const supabaseAnonKey =
+  runtimeConfig?.supabaseAnonKey ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'build-placeholder';
 
 export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
