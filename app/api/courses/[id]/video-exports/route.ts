@@ -13,6 +13,7 @@ import { CourseRepository } from '@/lib/server/db/course-repository';
 import { getDatabasePool } from '@/lib/server/db/pool';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const access = await requireVideoExportManager();
