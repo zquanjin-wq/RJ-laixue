@@ -34,6 +34,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         { status: 404 },
       );
     }
+    if (actor.role === 'teacher' && course.ownerUserId !== actor.userId) {
+      return NextResponse.json(
+        { success: false, errorCode: 'NOT_FOUND', error: '课程不存在' },
+        { status: 404 },
+      );
+    }
     const shared = new URL(_request.url).searchParams.get('share') === '1';
     if (actor.role === 'learner' && !shared) {
       return NextResponse.json(

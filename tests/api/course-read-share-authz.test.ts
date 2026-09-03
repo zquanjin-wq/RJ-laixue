@@ -49,4 +49,11 @@ describe('GET /api/courses/[id]', () => {
 
     expect((await read('http://localhost/api/courses/course-1')).status).toBe(403);
   });
+
+  it('does not expose one teacher’s course to another teacher', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'teacher-2', role: 'teacher' });
+    getCourse.mockResolvedValue({ id: 'course-1', ownerUserId: 'teacher-1' });
+
+    expect((await read('http://localhost/api/courses/course-1')).status).toBe(404);
+  });
 });
