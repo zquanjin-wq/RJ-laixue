@@ -45,6 +45,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --chown=nextjs:nodejs db ./db
 COPY --chown=nextjs:nodejs scripts/migrate-database.mjs ./scripts/migrate-database.mjs
 COPY --chown=nextjs:nodejs scripts/bootstrap-admin.mjs ./scripts/bootstrap-admin.mjs
+COPY --chown=nextjs:nodejs scripts/run-course-revoice-worker.mjs ./scripts/run-course-revoice-worker.mjs
 
 USER nextjs
 

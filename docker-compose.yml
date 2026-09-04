@@ -27,6 +27,18 @@ services:
       - app-data:/app/data
     restart: unless-stopped
 
+  revoice-worker:
+    build: .
+    env_file:
+      - .env.production
+    environment:
+      COURSE_REVOICE_URL: http://app:3000/api/cron/course-revoice
+      COURSE_REVOICE_INTERVAL_MS: '60000'
+    depends_on:
+      - app
+    command: ['node', 'scripts/run-course-revoice-worker.mjs']
+    restart: unless-stopped
+
   caddy:
     image: caddy:2-alpine
     env_file:
