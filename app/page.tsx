@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { TeachingDashboard } from '@/components/teaching-dashboard';
 import { AdminGate } from '@/components/auth-gate';
@@ -1470,9 +1470,11 @@ function ClassroomCard({
 }
 
 export default function Page() {
+  const pathname = usePathname();
+
   return (
     <AdminGate>
-      <TeachingDashboard />
+      {pathname === '/studio' ? <HomePage /> : <TeachingDashboard />}
     </AdminGate>
   );
 }

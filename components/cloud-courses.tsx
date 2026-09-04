@@ -106,6 +106,20 @@ export default function CloudCourses() {
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  useEffect(() => {
+    const closeMenu = () => setActionMenuId(null);
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+
+    document.addEventListener('pointerdown', closeMenu);
+    document.addEventListener('keydown', closeWithEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenu);
+      document.removeEventListener('keydown', closeWithEscape);
+    };
+  }, []);
+
   const fetchCourses = useCallback(async () => {
     if (!profile) return;
     setLoading(true);
@@ -197,12 +211,12 @@ export default function CloudCourses() {
 
   return (
     <section className="mt-8">
-      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="mb-7 flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h2 className="text-xl font-semibold tracking-tight">{sectionTitle}</h2>
           <span className="text-sm text-muted-foreground">共 {courses.length} 门</span>
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="课程保存状态筛选">
-            {filters.map((item) => <button key={item.value} type="button" role="tab" aria-selected={filter === item.value} onClick={() => setFilter(item.value)} className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${filter === item.value ? 'bg-slate-900 text-white' : item.value === 'ready' ? 'bg-emerald-50 text-emerald-700' : item.value === 'draft' ? 'bg-amber-50 text-amber-700' : item.value === 'failed' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{item.label} {counts[item.value]}</button>)}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2" role="tablist" aria-label="课程保存状态筛选">
+            {filters.map((item) => <button key={item.value} type="button" role="tab" aria-selected={filter === item.value} onClick={() => setFilter(item.value)} className={`border-b-2 pb-2 text-sm transition-colors ${filter === item.value ? 'border-slate-900 font-semibold text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{item.label} <span className="text-xs">{counts[item.value]}</span></button>)}
           </div>
         </div>
         <label className="relative w-full lg:w-64">
@@ -212,16 +226,17 @@ export default function CloudCourses() {
       </div>
 
       {visibleCourses.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-12 text-center"><p className="text-sm font-medium text-slate-700">{courses.length === 0 ? '还没有保存到云端的课程' : '没有匹配的课程'}</p><p className="mt-2 text-sm text-slate-500">{courses.length === 0 ? '创建课程后保存到云端，即可在这里集中管理。' : '请调整搜索关键词或筛选条件后重试。'}</p>{courses.length === 0 && <Link href="/studio" className="mt-4 inline-flex h-9 items-center rounded-lg bg-emerald-600 px-3 text-sm font-medium text-white transition-colors hover:bg-emerald-700">AI 创建课程</Link>}</div> : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="hidden grid-cols-[minmax(230px,2.2fr)_minmax(88px,0.8fr)_minmax(130px,1fr)_minmax(160px,1.2fr)_minmax(220px,1.6fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500 lg:grid"><span>课程</span><span>课程状态</span><span>视频状态</span><span>最近活动</span><span className="text-right">操作</span></div>
-          {visibleCourses.map((course) => {
+        <div className="overflow-visible">
+          <div className="min-w-[1120px]">
+            <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500"><span>课程</span><span>课程状态</span><span>视频状态</span><span>最近活动</span><span className="text-right">操作</span></div>
+            {visibleCourses.map((course) => {
             const job = latestVideoExport(videoExports[course.id]);
             const expanded = expandedId === course.id;
             const isOwner = course.created_by === user?.id;
             const canManage = isOwner || isAdmin;
             const activity = videoActivity(job, videoCapability);
             return <div key={course.id} className="border-b border-slate-100 last:border-0">
-              <div className="grid gap-4 px-5 py-4 hover:bg-slate-50/70 lg:grid-cols-[minmax(230px,2.2fr)_minmax(88px,0.8fr)_minmax(130px,1fr)_minmax(160px,1.2fr)_minmax(220px,1.6fr)] lg:items-center">
+              <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] items-center gap-4 px-5 py-4 hover:bg-slate-50/70">
                 <button type="button" onClick={() => setExpandedId(expanded ? null : course.id)} className="min-w-0 text-left"><p className="truncate font-medium text-slate-900">{course.title || course.topic || '未命名课程'}</p><p className="mt-1 truncate text-xs text-slate-400">{isAdmin && course.author_name ? `作者：${course.author_name} · ` : ''}更新于 {formatDate(course.updated_at)}</p></button>
                 <div><CourseStatus state={course.save_state} /></div>
                 <button type="button" onClick={() => setExpandedId(expanded ? null : course.id)} className="text-left"><VideoStatus job={job} capability={videoCapability} /></button>
@@ -230,12 +245,13 @@ export default function CloudCourses() {
                   {job?.status === 'completed' && job.downloadUrl && <a href={job.downloadUrl} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100"><Download className="size-3.5" />下载</a>}
                   <button type="button" onClick={() => window.open(`/classroom/${course.id}?view=1`, '_blank', 'noopener,noreferrer')} aria-label="预览课程" title="预览课程" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"><Eye className="size-4" /></button>
                   {canManage && <button type="button" onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank', 'noopener,noreferrer')} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"><Pencil className="size-3.5 text-slate-400" />继续编辑</button>}
-                  <div className="relative shrink-0"><button type="button" onClick={() => setActionMenuId((current) => current === course.id ? null : course.id)} aria-label="更多操作" title="更多操作" className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{actionMenuId === course.id && <div className="absolute right-0 z-10 mt-2 w-32 rounded-lg border bg-white p-1 shadow-lg"><button type="button" onClick={() => void shareCourse(course.id)} disabled={sharingId === course.id} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50 disabled:opacity-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{canManage && <button type="button" onClick={() => void removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
+                  <div className="relative shrink-0"><button type="button" onClick={(event) => { event.stopPropagation(); setActionMenuId((current) => current === course.id ? null : course.id); }} aria-label="更多操作" title="更多操作" className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{actionMenuId === course.id && <div onPointerDown={(event) => event.stopPropagation()} className="absolute right-0 z-30 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => void shareCourse(course.id)} disabled={sharingId === course.id} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50 disabled:opacity-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{canManage && <button type="button" onClick={() => void removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
                 </div>
               </div>
               {expanded && <div className="grid gap-3 border-t bg-slate-50 px-5 py-4 md:grid-cols-3"><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">课程主题</p><p className="mt-2 text-sm font-medium text-slate-800">{course.topic || '未填写课程主题'}</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">云端保存</p><p className="mt-2 text-sm font-medium text-slate-800">{course.save_state === 'ready' ? '已保存到云端' : course.save_state === 'draft' ? '草稿待保存' : '保存需要重试'}</p><p className="mt-1 text-xs text-slate-500">课程资产由云端资产库统一管理</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">视频任务</p><div className="mt-2"><VideoStatus job={job} capability={videoCapability} /></div><p className="mt-1 text-xs text-slate-500">{activity}</p></div></div>}
             </div>;
-          })}
+            })}
+          </div>
         </div>
       )}
       <p className="mt-4 text-center text-xs text-slate-400">移动端会将课程行收拢为摘要，桌面端保留完整管理操作。</p>
