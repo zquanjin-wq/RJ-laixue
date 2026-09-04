@@ -3,7 +3,7 @@
 import { BrowserDocumentStore, type MaicDocument } from '@openmaic/storage';
 import { validateSceneExtended, validateStageExtended } from '@/lib/dsl-extensions/validate';
 import { createLogger } from '@/lib/logger';
-import { supabase } from '@/lib/supabase/client';
+import { authClient } from '@/lib/auth/client';
 import type { Scene as AppScene } from '@/lib/types/stage';
 import { accountNamespace, sha256Hex } from './identity';
 import { getBridgeEntry, putBridgeEntry } from './ledger';
@@ -174,9 +174,8 @@ export async function compareLegacyDocument(
   const courseId = snapshot.stage.id;
   let phase: DocumentParityFailurePhase = 'identity';
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const sessionResult = await authClient.getSession();
+    const user = sessionResult.data?.user;
     if (!user) {
       reportDocumentParityDiagnostic({
         outcome: 'identity',
@@ -262,9 +261,8 @@ export async function bridgeLegacyDocument(
   let hash = '';
 
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const sessionResult = await authClient.getSession();
+    const user = sessionResult.data?.user;
     if (!user) return 'skipped';
 
     namespace = await accountNamespace(user.id);

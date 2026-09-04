@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { supabase } from '@/lib/supabase/client';
 import { db } from '@/lib/utils/database';
 import {
   publishSceneAudioAssets,
