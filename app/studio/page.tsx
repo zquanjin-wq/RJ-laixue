@@ -1,11 +1,12 @@
-import StudioContent from '../page';
+import { AdminGate } from '@/components/auth-gate';
+import HomePage from '../page';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export default function StudioPage() {
   return (
-    <>
+    <AdminGate>
       <div className="absolute left-4 top-4 z-50 md:left-8 md:top-8">
         <Button asChild variant="outline" size="sm" className="bg-background/90">
           <Link href="/">
@@ -14,7 +15,7 @@ export default function StudioPage() {
           </Link>
         </Button>
       </div>
-      <StudioContent />
-    </>
+      <HomePage />
+    </AdminGate>
   );
 }

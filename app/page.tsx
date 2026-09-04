@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { TeachingDashboard } from '@/components/teaching-dashboard';
 import { AdminGate } from '@/components/auth-gate';
@@ -931,6 +931,9 @@ function HomePage() {
         </motion.div>
       )}
       {/* Footer — flows with content, at the very end */}
+      <div className="mt-auto pt-12 pb-4 text-center text-xs text-muted-foreground/40">
+        OpenMAIC Open Source Project
+      </div>
     </div>
   );
 }
@@ -1467,11 +1470,9 @@ function ClassroomCard({
 }
 
 export default function Page() {
-  const pathname = usePathname();
-
   return (
     <AdminGate>
-      {pathname === '/studio' ? <HomePage /> : <TeachingDashboard />}
+      <TeachingDashboard />
     </AdminGate>
   );
 }
