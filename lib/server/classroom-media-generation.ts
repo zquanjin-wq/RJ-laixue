@@ -321,7 +321,6 @@ const publicAudioUrl = await storeClassroomAudio(
   classroomId,
   filename,
   result.audio,
-  audioFormat,
 );
 
 speechAction.audioId = audioId;
