@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { callLLM } from '@/lib/ai/llm';
+import { getCurrentActor } from '@/lib/server/auth-context';
+import { getDatabasePool } from '@/lib/server/db/pool';
 import { resolveModel } from '@/lib/server/resolve-model';
-import { resolveActor } from '@/lib/server/learning-tasks/permissions';
-import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 
 type RequestBody = {
   question?: unknown;
@@ -13,18 +13,26 @@ type RequestBody = {
   thinkingConfig?: unknown;
 };
 
+type TaskRow = {
+  id: string;
+  title: string | null;
+  due_at: string | null;
+};
+
+type LearnerRow = {
+  task_id: string;
+  student_name: string | null;
+  status: string;
+  effective_seconds: number | string | null;
+};
+
 export async function POST(request: NextRequest) {
-  const server = await getServerSupabase();
-  const {
-    data: { user },
-  } = await server.auth.getUser();
-  if (!user)
+  const actor = await getCurrentActor();
+  if (!actor)
     return NextResponse.json(
       { success: false, error: '请先登录', errorCode: 'UNAUTHENTICATED' },
       { status: 401 },
     );
-
-  const actor = await resolveActor(user.id);
   if (actor.role === 'learner')
     return NextResponse.json(
       { success: false, error: '无权访问教学数据', errorCode: 'FORBIDDEN' },
@@ -48,33 +56,36 @@ export async function POST(request: NextRequest) {
     );
 
   try {
-    const svc = getServiceSupabase();
-    let taskQuery = svc
-      .from('learning_tasks')
-      .select('id, title, due_at, status, created_by')
-      .eq('status', 'published')
-      .order('created_at', { ascending: false });
-    if (actor.role === 'teacher') taskQuery = taskQuery.eq('created_by', user.id);
-    const { data: tasks, error: taskError } = await taskQuery;
-    if (taskError) throw taskError;
-    const taskIds = (tasks ?? []).map((task) => task.id);
-    const { data: learners, error: learnerError } = taskIds.length
-      ? await svc
-          .from('task_learners')
-          .select('task_id, student_id, status, progress_percent, effective_seconds, last_seen_at')
-          .in('task_id', taskIds)
-      : { data: [], error: null };
-    if (learnerError) throw learnerError;
-    const studentIds = [...new Set((learners ?? []).map((row) => row.student_id))];
-    const { data: students, error: studentError } = studentIds.length
-      ? await svc.from('students').select('id, name').in('id', studentIds)
-      : { data: [], error: null };
-    if (studentError) throw studentError;
+    const pool = getDatabasePool();
+    const ownerUserId = actor.role === 'teacher' ? actor.userId : null;
+    const tasksResult = await pool.query<TaskRow>(
+      `SELECT id::text, title, due_at::text
+         FROM app.learning_tasks
+        WHERE status = 'published'
+          AND ($1::text IS NULL OR created_by = $1)
+        ORDER BY created_at DESC`,
+      [ownerUserId],
+    );
+    const tasks = tasksResult.rows;
+    const taskIds = tasks.map((task) => task.id);
+    const learnersResult = taskIds.length
+      ? await pool.query<LearnerRow>(
+          `SELECT assignment.task_id::text,
+                  COALESCE(profile.display_name, account.name) AS student_name,
+                  assignment.status,
+                  assignment.effective_seconds
+             FROM app.task_assignments assignment
+             JOIN public."user" account ON account.id = assignment.user_id
+             LEFT JOIN app.user_profiles profile ON profile.user_id = assignment.user_id
+            WHERE assignment.task_id = ANY($1::uuid[])`,
+          [taskIds],
+        )
+      : { rows: [] as LearnerRow[] };
+    const learners = learnersResult.rows;
 
-    const names = new Map((students ?? []).map((student) => [student.id, student.name]));
     const now = Date.now();
-    const taskData = (tasks ?? []).map((task) => {
-      const roster = (learners ?? []).filter((row) => row.task_id === task.id);
+    const taskData = tasks.map((task) => {
+      const roster = learners.filter((row) => row.task_id === task.id);
       const started = roster.filter((row) => row.status !== 'not_started').length;
       const completed = roster.filter((row) => row.status === 'completed').length;
       const overdue = roster.filter(
@@ -93,12 +104,13 @@ export async function POST(request: NextRequest) {
         ),
       };
     });
-    const attention = (learners ?? [])
+    const taskTitles = new Map(tasks.map((task) => [task.id, task.title || '未命名任务']));
+    const attention = learners
       .filter((row) => row.status === 'not_started')
       .slice(0, 20)
       .map((row) => ({
-        task: (tasks ?? []).find((task) => task.id === row.task_id)?.title || '未命名任务',
-        learner: names.get(row.student_id) || '未命名学员',
+        task: taskTitles.get(row.task_id) || '未命名任务',
+        learner: row.student_name || '未命名学员',
       }));
 
     const { model, thinkingConfig } = await resolveModel({
