@@ -53,8 +53,9 @@ services:
     environment:
       PORT: '9000'
       RENDER_MAX_CONCURRENCY: '1'
+      RENDER_MAX_CONCURRENT_EXTRACTIONS: '1'
       RENDER_MAX_JOBS_PER_USER: '0'
-    mem_limit: 6g
+    mem_limit: 4g
     networks:
       - render
     restart: unless-stopped
