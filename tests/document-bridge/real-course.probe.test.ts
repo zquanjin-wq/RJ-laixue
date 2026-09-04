@@ -23,14 +23,14 @@ const courseData = (
 ) as ProbeCourseData;
 
 const mocks = vi.hoisted(() => ({
-  getUser: vi.fn(),
+  getSession: vi.fn(),
   getEntry: vi.fn(),
   putEntry: vi.fn(),
   report: vi.fn(),
   parityReport: vi.fn(),
 }));
-vi.mock('@/lib/supabase/client', () => ({
-  supabase: { auth: { getUser: mocks.getUser } },
+vi.mock('@/lib/auth/client', () => ({
+  authClient: { getSession: mocks.getSession },
 }));
 vi.mock('@/lib/document-bridge/ledger', () => ({
   getBridgeEntry: mocks.getEntry,
@@ -48,7 +48,7 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_DOCUMENT_STORE_BRIDGE = '1';
   process.env.NEXT_PUBLIC_DOCUMENT_STORE_PARITY_CHECK = '1';
   userSeq += 1;
-  mocks.getUser.mockResolvedValue({ data: { user: { id: `probe-user-${userSeq}` } } });
+  mocks.getSession.mockResolvedValue({ data: { user: { id: `probe-user-${userSeq}` } } });
   mocks.getEntry.mockResolvedValue(undefined);
   mocks.putEntry.mockResolvedValue(undefined);
   (globalThis as { indexedDB?: IDBFactory }).indexedDB = new IDBFactory();

@@ -4,7 +4,7 @@ import type { LegacyDocumentSnapshot } from '@/lib/document-bridge/types';
 const mocks = vi.hoisted(() => ({
   saveDocument: vi.fn(),
   loadDocument: vi.fn(),
-  getUser: vi.fn(),
+  getSession: vi.fn(),
   getEntry: vi.fn(),
   putEntry: vi.fn(),
   report: vi.fn(),
@@ -18,8 +18,8 @@ vi.mock('@openmaic/storage', () => ({
   },
 }));
 
-vi.mock('@/lib/supabase/client', () => ({
-  supabase: { auth: { getUser: mocks.getUser } },
+vi.mock('@/lib/auth/client', () => ({
+  authClient: { getSession: mocks.getSession },
 }));
 
 vi.mock('@/lib/document-bridge/ledger', () => ({
@@ -55,7 +55,7 @@ describe('DocumentStore bridge fallback guarantee', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_DOCUMENT_STORE_BRIDGE = '1';
     process.env.NEXT_PUBLIC_DOCUMENT_STORE_PARITY_CHECK = '1';
-    mocks.getUser.mockResolvedValue({ data: { user: { id: 'user-a' } } });
+    mocks.getSession.mockResolvedValue({ data: { user: { id: 'user-a' } } });
     mocks.getEntry.mockResolvedValue(undefined);
     mocks.putEntry.mockResolvedValue(undefined);
     mocks.saveDocument.mockResolvedValue(undefined);
@@ -97,7 +97,7 @@ describe('DocumentStore bridge fallback guarantee', () => {
 
     await expect(bridgeLegacyDocument(snapshot('course-disabled'))).resolves.toBe('skipped');
 
-    expect(mocks.getUser).not.toHaveBeenCalled();
+    expect(mocks.getSession).not.toHaveBeenCalled();
     expect(mocks.saveDocument).not.toHaveBeenCalled();
   });
 
@@ -159,7 +159,7 @@ describe('DocumentStore bridge fallback guarantee', () => {
       'skipped',
     );
 
-    expect(mocks.getUser).not.toHaveBeenCalled();
+    expect(mocks.getSession).not.toHaveBeenCalled();
     expect(mocks.loadDocument).not.toHaveBeenCalled();
   });
 });

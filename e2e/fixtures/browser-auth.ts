@@ -1,7 +1,5 @@
 'use client';
 
-import type { Session, User } from '@supabase/supabase-js';
-
 export type UserRole = 'admin' | 'teacher' | 'learner';
 
 export interface UserProfile {
@@ -20,7 +18,7 @@ const e2eUser = {
   identities: [],
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
-} as User;
+} as const;
 
 const e2eSession = {
   access_token: 'e2e-access-token',
@@ -29,7 +27,7 @@ const e2eSession = {
   expires_in: 60 * 60,
   expires_at: 1_800_000_000,
   user: e2eUser,
-} as Session;
+} as const;
 
 const e2eProfile: UserProfile = {
   id: e2eUser.id,

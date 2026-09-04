@@ -110,10 +110,6 @@ vi.mock('@/lib/dsl-extensions/serialize', () => ({
   stripRuntimeOnly: vi.fn((stage: unknown) => stage),
 }));
 
-vi.mock('@/lib/supabase/client', () => ({
-  supabase: { storage: { from: () => ({ uploadToSignedUrl: vi.fn() }) } },
-}));
-
 vi.mock('@/lib/utils/scene-order', () => ({
   orderSceneRecordsForDisplay: vi.fn((scenes: unknown[]) => ({
     ordered: scenes,
