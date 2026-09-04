@@ -14,7 +14,11 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 # composite frames. iptables lets the entrypoint lock down egress (block the
 # untrusted Chromium from reaching the app); ca-certificates covers TLS for any
 # asset the composition might still reference before lockdown.
-RUN apt-get update \
+RUN sed -i \
+     -e 's|deb.debian.org/debian|mirrors.cloud.tencent.com/debian|g' \
+     -e 's|security.debian.org/debian-security|mirrors.cloud.tencent.com/debian-security|g' \
+     /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
      chromium \
      ffmpeg \
