@@ -7,7 +7,6 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { createClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { CLASSROOMS_DIR } from '@/lib/server/classroom-storage';
 import { generateImage } from '@/lib/media/image-providers';
@@ -65,70 +64,21 @@ function mediaServingUrl(baseUrl: string, classroomId: string, subPath: string):
   return `${baseUrl}/api/classroom-media/${classroomId}/${subPath}`;
 }
 
-const AUDIO_BUCKET_NAME = 'course-audio';
-
-function getAudioContentType(format: string): string {
-  const normalized = format.toLowerCase();
-
-  if (normalized === 'mp3' || normalized === 'mpeg') return 'audio/mpeg';
-  if (normalized === 'wav') return 'audio/wav';
-  if (normalized === 'ogg') return 'audio/ogg';
-  if (normalized === 'aac') return 'audio/aac';
-  if (normalized === 'm4a') return 'audio/mp4';
-
-  return `audio/${normalized || 'mpeg'}`;
-}
-
-async function uploadAudioToSupabase(
+async function storeClassroomAudio(
   classroomId: string,
   filename: string,
   audio: Buffer | Uint8Array | ArrayBuffer,
-  format: string,
 ): Promise<string> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error(
-      `Missing Supabase env vars for audio upload. hasSupabaseUrl=${Boolean(
-        supabaseUrl,
-      )}, hasServiceRoleKey=${Boolean(serviceRoleKey)}`,
-    );
-  }
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-
-  let audioBuffer: Buffer;
-
-if (Buffer.isBuffer(audio)) {
-  audioBuffer = audio;
-} else if (audio instanceof ArrayBuffer) {
-  audioBuffer = Buffer.from(new Uint8Array(audio));
-} else {
-  audioBuffer = Buffer.from(audio);
+  const audioBuffer = Buffer.isBuffer(audio)
+    ? audio
+    : audio instanceof ArrayBuffer
+      ? Buffer.from(new Uint8Array(audio))
+      : Buffer.from(audio);
+  const audioDir = path.join(CLASSROOMS_DIR, classroomId, 'audio');
+  await ensureDir(audioDir);
+  await fs.writeFile(path.join(audioDir, filename), audioBuffer);
+  return mediaServingUrl('', classroomId, `audio/${filename}`);
 }
-  const filePath = `classrooms/${classroomId}/audio/${filename}`;
-
-  const { error } = await supabase.storage.from(AUDIO_BUCKET_NAME).upload(filePath, audioBuffer, {
-    contentType: getAudioContentType(format),
-    upsert: true,
-  });
-
-  if (error) {
-    throw new Error(`Supabase audio upload failed: ${error.message}`);
-  }
-
-  const { data } = supabase.storage.from(AUDIO_BUCKET_NAME).getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
-
-
 // ---------------------------------------------------------------------------
 // Image / Video generation
 // ---------------------------------------------------------------------------
@@ -367,7 +317,7 @@ processedAudioIds.add(audioId);
 
 const audioFormat = result.format || format;
 const filename = `${audioId}.${audioFormat}`;
-const publicAudioUrl = await uploadAudioToSupabase(
+const publicAudioUrl = await storeClassroomAudio(
   classroomId,
   filename,
   result.audio,
@@ -376,7 +326,7 @@ const publicAudioUrl = await uploadAudioToSupabase(
 
 speechAction.audioId = audioId;
 speechAction.audioUrl = publicAudioUrl;
-log.info(`Generated TTS and uploaded to Supabase: ${filename} (${result.audio.length} bytes)`);
+log.info(`Generated TTS and stored locally: ${filename} (${result.audio.length} bytes)`);
 // MiniMax 有 RPM 限制，生成后稍等，避免短时间内打爆接口
 await new Promise((resolve) => setTimeout(resolve, 3000));
 
