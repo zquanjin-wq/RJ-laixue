@@ -23,7 +23,8 @@ COPY --from=deps /app/packages ./packages
 COPY . .
 COPY --from=deps /app/public/vendor ./public/vendor
 
-RUN DATABASE_URL=postgres://laixue:placeholder@127.0.0.1:5432/laixue SUPABASE_URL=https://example.invalid SUPABASE_ANON_KEY=placeholder SUPABASE_SERVICE_ROLE_KEY=placeholder pnpm build
+RUN pnpm --dir packages/@openmaic/renderer build \
+  && DATABASE_URL=postgres://laixue:placeholder@127.0.0.1:5432/laixue SUPABASE_URL=https://example.invalid SUPABASE_ANON_KEY=placeholder SUPABASE_SERVICE_ROLE_KEY=placeholder pnpm build
 
 # ---- One-off administration tools ----
 FROM builder AS tools
