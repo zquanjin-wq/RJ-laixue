@@ -11,7 +11,7 @@ import {
   fetchCourseMaterialFromStorage,
   MaterialFetchError,
 } from '@/lib/server/course-asset-storage';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
@@ -33,14 +33,9 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
 
     if (contentType.includes('application/json')) {
-      const session = await getServerSupabase();
-      const {
-        data: { user: sessionUser },
-      } = await session.auth.getUser();
-      if (!sessionUser) {
-        return apiError('UNAUTHENTICATED', 401, '请先登录后再使用 path 模式解析 PDF');
-      }
-      const callerUserId = sessionUser.id;
+      const actor = await getCurrentActor();
+      if (!actor) return apiError('UNAUTHENTICATED', 401, 'Please sign in before parsing a file.');
+      const callerUserId = actor.userId;
 
       const body = (await req.json()) as {
         courseId?: string;

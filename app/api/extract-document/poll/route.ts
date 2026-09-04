@@ -16,7 +16,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { externalizeImages, safeApiSuccess } from '@/lib/server/extract-document-shared';
@@ -59,14 +59,11 @@ async function readMinerUJson<T>(res: Response, ctx: string): Promise<T> {
 export async function POST(req: NextRequest) {
   try {
     // ── Auth ──
-    const session = await getServerSupabase();
-    const {
-      data: { user: sessionUser },
-    } = await session.auth.getUser();
-    if (!sessionUser) {
-      return apiError('UNAUTHENTICATED', 401, '请先登录后再提取材料');
+    const actor = await getCurrentActor();
+    if (!actor) {
+      return apiError('UNAUTHENTICATED', 401, 'Please sign in before extracting materials.');
     }
-    const callerUserId = sessionUser.id;
+    const callerUserId = actor.userId;
 
     // ── Parse body ──
     const body = (await req.json()) as {

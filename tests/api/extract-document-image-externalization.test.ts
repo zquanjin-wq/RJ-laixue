@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server';
 // ── hoisted mocks ────────────────────────────────────────────────────────────
 
 const {
-  getServerSupabaseMock,
+  getCurrentActorMock,
   getServiceSupabaseMock,
   isServerConfiguredProviderMock,
   resolvePDFApiKeyMock,
@@ -12,7 +12,7 @@ const {
   validateUrlForSSRFMock,
   fetchCourseMaterialFromStorageMock,
 } = vi.hoisted(() => ({
-  getServerSupabaseMock: vi.fn(),
+  getCurrentActorMock: vi.fn(),
   getServiceSupabaseMock: vi.fn(),
   isServerConfiguredProviderMock: vi.fn(),
   resolvePDFApiKeyMock: vi.fn(),
@@ -21,8 +21,11 @@ const {
   fetchCourseMaterialFromStorageMock: vi.fn(),
 }));
 
+vi.mock('@/lib/server/auth-context', () => ({
+  getCurrentActor: getCurrentActorMock,
+}));
+
 vi.mock('@/lib/supabase/server', () => ({
-  getServerSupabase: getServerSupabaseMock,
   getServiceSupabase: getServiceSupabaseMock,
 }));
 
@@ -91,12 +94,11 @@ describe('POST /api/extract-document — image externalization', () => {
   beforeEach(() => {
     vi.resetModules();
 
-    getServerSupabaseMock.mockResolvedValue({
-      auth: {
-        getUser: vi.fn().mockResolvedValue({
-          data: { user: { id: callerUserId } },
-        }),
-      },
+    getCurrentActorMock.mockResolvedValue({
+      userId: callerUserId,
+      role: 'teacher',
+      email: 'teacher@example.com',
+      name: 'Test Teacher',
     });
 
     // Storage mock: returns fake public URLs, upload never fails by default
@@ -129,9 +131,7 @@ describe('POST /api/extract-document — image externalization', () => {
   // ── Auth / validation ─────────────────────────────────────────────────────
 
   it('401 when unauthenticated', async () => {
-    getServerSupabaseMock.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
-    });
+    getCurrentActorMock.mockResolvedValue(null);
     const resp = await postExtractDocument({ courseId, path: materialPath });
     expect(resp.status).toBe(401);
     expect((await resp.json()).errorCode).toBe('UNAUTHENTICATED');

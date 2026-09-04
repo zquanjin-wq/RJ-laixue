@@ -17,15 +17,18 @@ import type { NextRequest } from 'next/server';
 // ── Hoisted mocks ────────────────────────────────────────────────────────────
 
 const {
-  getServerSupabaseMock,
+  getCurrentActorMock,
   getServiceSupabaseMock,
 } = vi.hoisted(() => ({
-  getServerSupabaseMock: vi.fn(),
+  getCurrentActorMock: vi.fn(),
   getServiceSupabaseMock: vi.fn(),
 }));
 
+vi.mock('@/lib/server/auth-context', () => ({
+  getCurrentActor: getCurrentActorMock,
+}));
+
 vi.mock('@/lib/supabase/server', () => ({
-  getServerSupabase: getServerSupabaseMock,
   getServiceSupabase: getServiceSupabaseMock,
 }));
 
@@ -49,12 +52,11 @@ const COURSE_ID = CALLER_USER_ID; // pending/{callerUserId}/... matches
 const STORAGE_PATH = `pending/${CALLER_USER_ID}/material/test.pdf`;
 
 function mockAuth() {
-  getServerSupabaseMock.mockResolvedValue({
-    auth: {
-      getUser: vi.fn().mockResolvedValue({
-        data: { user: { id: CALLER_USER_ID } },
-      }),
-    },
+  getCurrentActorMock.mockResolvedValue({
+    userId: CALLER_USER_ID,
+    role: 'teacher',
+    email: 'teacher@example.com',
+    name: 'Test Teacher',
   });
 }
 
@@ -140,9 +142,7 @@ describe('POST /api/extract-document/start', () => {
   // ── Auth ────────────────────────────────────────────────────────────────
 
   it('401 when unauthenticated', async () => {
-    getServerSupabaseMock.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
-    });
+    getCurrentActorMock.mockResolvedValue(null);
     const resp = await postStart({ courseId: COURSE_ID, path: STORAGE_PATH });
     expect(resp.status).toBe(401);
     expect((await resp.json()).errorCode).toBe('UNAUTHENTICATED');
@@ -227,9 +227,7 @@ describe('POST /api/extract-document/poll', () => {
   // ── Auth ────────────────────────────────────────────────────────────────
 
   it('401 when unauthenticated', async () => {
-    getServerSupabaseMock.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
-    });
+    getCurrentActorMock.mockResolvedValue(null);
     const resp = await postPoll({ batchId: BATCH_ID, courseId: COURSE_ID, path: STORAGE_PATH });
     expect(resp.status).toBe(401);
   });

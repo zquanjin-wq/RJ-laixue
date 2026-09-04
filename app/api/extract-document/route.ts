@@ -18,7 +18,7 @@ import {
   fetchCourseMaterialFromStorage,
   MaterialFetchError,
 } from '@/lib/server/course-asset-storage';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
@@ -113,14 +113,11 @@ export async function POST(req: NextRequest) {
       // ── path 模式 ──
       // path 模式必须登录:任意 path 都可能指向 pending/{userId}/...,如果允许匿名
       // 调用,userId 比对形同虚设(无登录用户就没 userId 可传)。
-      const session = await getServerSupabase();
-      const {
-        data: { user: sessionUser },
-      } = await session.auth.getUser();
-      if (!sessionUser) {
-        return apiError('UNAUTHENTICATED', 401, '请先登录后再使用 path 模式提取材料');
+      const actor = await getCurrentActor();
+      if (!actor) {
+        return apiError('UNAUTHENTICATED', 401, 'Please sign in before extracting materials.');
       }
-      const callerUserId = sessionUser.id;
+      const callerUserId = actor.userId;
 
       const body = (await req.json()) as {
         courseId?: string;
