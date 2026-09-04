@@ -18,7 +18,7 @@
  */
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
+import { listLearners, requireAdmin } from '@/lib/server/admin-students';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CreateStudentForm } from './_components/create-student-form';
@@ -28,41 +28,20 @@ type StudentRow = {
   id: string;
   name: string;
   email: string | null;
-  access_code: string | null;
-  user_id: string | null;
-  disabled_at: string | null;
+  disabled_at: boolean;
   created_at: string;
 };
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminStudentsPage() {
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-  if (!user) {
+  let students: StudentRow[];
+  try {
+    await requireAdmin();
+    students = await listLearners();
+  } catch {
     redirect('/login?next=/admin/students');
   }
-
-  const serviceSupabase = getServiceSupabase();
-  const { data: callerProfile } = await serviceSupabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-  if (!callerProfile || callerProfile.role !== 'admin') {
-    redirect('/admin');
-  }
-
-  const { data: studentsData } = (await serviceSupabase
-    .from('students')
-    .select(
-      'id, name, email, access_code, user_id, disabled_at, created_at',
-    )
-    .order('created_at', { ascending: false })) as { data: StudentRow[] | null };
-
-  const students = studentsData ?? [];
   const activeCount = students.filter((s) => !s.disabled_at).length;
   const disabledCount = students.length - activeCount;
 
@@ -112,8 +91,7 @@ export default async function AdminStudentsPage() {
                   </div>
                   {s.disabled_at && (
                     <div className="text-xs text-muted-foreground">
-                      禁用时间：
-                      {new Date(s.disabled_at).toLocaleString('zh-CN')}
+                      该账号当前已禁用。
                     </div>
                   )}
                 </div>
@@ -121,7 +99,7 @@ export default async function AdminStudentsPage() {
                   <StudentActions
                     studentId={s.id}
                     studentName={s.name}
-                    disabled={!!s.disabled_at}
+                    disabled={s.disabled_at}
                   />
                 </div>
               </article>

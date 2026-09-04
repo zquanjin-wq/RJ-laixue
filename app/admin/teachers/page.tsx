@@ -10,7 +10,7 @@
  */
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
+import { listTeachers, requireAdmin } from '@/lib/server/admin-teachers';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CreateTeacherForm } from './_components/create-teacher-form';
@@ -18,55 +18,24 @@ import { TeacherActions } from './_components/teacher-actions';
 
 type TeacherProfile = {
   id: string;
-  display_name: string | null;
-  disabled_at: string | null;
+  display_name: string;
+  email: string;
+  disabled_at: boolean;
   created_at: string;
-  updated_at: string;
 };
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminTeachersPage() {
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-  if (!user) {
+  let teachers: TeacherProfile[];
+  try {
+    await requireAdmin();
+    teachers = await listTeachers();
+  } catch {
     redirect('/login?next=/admin/teachers');
   }
-
-  const serviceSupabase = getServiceSupabase();
-  const { data: callerProfile } = await serviceSupabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-  if (!callerProfile || callerProfile.role !== 'admin') {
-    redirect('/admin');
-  }
-
-  const { data: teachersData } = (await serviceSupabase
-    .from('profiles')
-    .select('id, display_name, disabled_at, created_at, updated_at')
-    .eq('role', 'teacher')
-    .order('created_at', { ascending: false })) as {
-    data: TeacherProfile[] | null;
-  };
-
-  const teachers = teachersData ?? [];
   const activeCount = teachers.filter((t) => !t.disabled_at).length;
   const disabledCount = teachers.length - activeCount;
-
-  // Look up the matching auth.users email for each teacher. We can't
-  // join profiles → auth.users, so we listUsers once and index by id.
-  const { data: authUsers } = await serviceSupabase.auth.admin.listUsers({
-    page: 1,
-    perPage: 200,
-  });
-  const emailById = new Map<string, string>();
-  for (const u of authUsers?.users ?? []) {
-    if (u.email) emailById.set(u.id, u.email);
-  }
 
   return (
     <main className="min-h-screen bg-background px-4 py-10">
@@ -112,23 +81,20 @@ export default async function AdminTeachersPage() {
                     )}
                   </div>
                   <div className="text-xs text-muted-foreground break-all">
-                    邮箱：{emailById.get(t.id) || '—'}
+                    邮箱：{t.email}
                   </div>
                   <div className="text-xs text-muted-foreground break-all">
                     user_id：{t.id}
                   </div>
                   {t.disabled_at && (
-                    <div className="text-xs text-muted-foreground">
-                      禁用时间：
-                      {new Date(t.disabled_at).toLocaleString('zh-CN')}
-                    </div>
+                    <div className="text-xs text-muted-foreground">该账号当前已禁用。</div>
                   )}
                 </div>
                 <div className="md:max-w-xs md:flex-shrink-0">
                   <TeacherActions
                     teacherId={t.id}
                     teacherName={t.display_name || '该老师'}
-                    disabled={!!t.disabled_at}
+                    disabled={t.disabled_at}
                   />
                 </div>
               </article>
