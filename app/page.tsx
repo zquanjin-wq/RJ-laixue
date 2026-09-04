@@ -930,25 +930,6 @@ export function HomePage() {
           </AnimatePresence>
         </motion.div>
       )}
-      {/* Footer — flows with content, at the very end */}
-      <div className="mt-auto flex flex-wrap justify-center gap-x-4 gap-y-1 pt-12 pb-4 text-center text-xs text-muted-foreground/60">
-        <a
-          href="https://beian.miit.gov.cn/"
-          target="_blank"
-          rel="noreferrer"
-          className="hover:text-muted-foreground"
-        >
-          京ICP备2026055800号-1
-        </a>
-        <a
-          href="https://beian.mps.gov.cn/#/query/webSearch?code=11010802050113"
-          target="_blank"
-          rel="noreferrer"
-          className="hover:text-muted-foreground"
-        >
-          京公网安备11010802050113号
-        </a>
-      </div>
     </div>
   );
 }
