@@ -91,7 +91,7 @@ const initialFormState: FormState = {
   vocationalTestMode: false,
 };
 
-export function HomePage() {
+function HomePage() {
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
