@@ -36,11 +36,11 @@ export function createPostgresRpcClient(pool: Pool): RuntimeStoreRpcClient {
     },
     async rows<T>(name: string, args: Record<string, unknown>): Promise<T[]> {
       const invocation = call(name, args);
-      const result = await pool.query<T>(
+      const result = await pool.query(
         `SELECT * FROM runtime.${invocation.name}(${invocation.placeholders})`,
         invocation.values,
       );
-      return result.rows;
+      return result.rows as T[];
     },
   };
 }
