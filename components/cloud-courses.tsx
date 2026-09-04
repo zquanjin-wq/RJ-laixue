@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Eye, Loader2, MoreHorizontal, Pencil, Search, Share2, Trash2 } from 'lucide-react';
 import { deleteCloudCourse, listCloudCourses, listMyCourses } from '@/lib/utils/cloud-sync';
 import { useAuth } from '@/lib/auth/use-auth';
@@ -105,9 +105,12 @@ export default function CloudCourses() {
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const closeMenu = () => setActionMenuId(null);
+    const closeMenu = (event?: PointerEvent) => {
+      if (!event || !actionMenuRef.current?.contains(event.target as Node)) setActionMenuId(null);
+    };
     const closeWithEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeMenu();
     };
@@ -245,7 +248,7 @@ export default function CloudCourses() {
                   {job?.status === 'completed' && job.downloadUrl && <a href={job.downloadUrl} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100"><Download className="size-3.5" />下载</a>}
                   <button type="button" onClick={() => window.open(`/classroom/${course.id}?view=1`, '_blank', 'noopener,noreferrer')} aria-label="预览课程" title="预览课程" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"><Eye className="size-4" /></button>
                   {canManage && <button type="button" onClick={() => window.open(`/classroom/${course.id}?editor=1`, '_blank', 'noopener,noreferrer')} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"><Pencil className="size-3.5 text-slate-400" />继续编辑</button>}
-                  <div className="relative shrink-0"><button type="button" onClick={(event) => { event.stopPropagation(); setActionMenuId((current) => current === course.id ? null : course.id); }} aria-label="更多操作" title="更多操作" className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{actionMenuId === course.id && <div onPointerDown={(event) => event.stopPropagation()} className="absolute right-0 z-30 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => void shareCourse(course.id)} disabled={sharingId === course.id} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50 disabled:opacity-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{canManage && <button type="button" onClick={() => void removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
+                  <div ref={actionMenuId === course.id ? actionMenuRef : undefined} className="relative shrink-0"><button type="button" onClick={(event) => { event.stopPropagation(); setActionMenuId((current) => current === course.id ? null : course.id); }} aria-label="更多操作" title="更多操作" className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{actionMenuId === course.id && <div className="absolute right-0 z-30 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => void shareCourse(course.id)} disabled={sharingId === course.id} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50 disabled:opacity-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{canManage && <button type="button" onClick={() => void removeCourse(course.id)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
                 </div>
               </div>
               {expanded && <div className="grid gap-3 border-t bg-slate-50 px-5 py-4 md:grid-cols-3"><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">课程主题</p><p className="mt-2 text-sm font-medium text-slate-800">{course.topic || '未填写课程主题'}</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">云端保存</p><p className="mt-2 text-sm font-medium text-slate-800">{course.save_state === 'ready' ? '已保存到云端' : course.save_state === 'draft' ? '草稿待保存' : '保存需要重试'}</p><p className="mt-1 text-xs text-slate-500">课程资产由云端资产库统一管理</p></div><div className="rounded-lg border bg-white p-3"><p className="text-xs font-medium text-slate-400">视频任务</p><div className="mt-2"><VideoStatus job={job} capability={videoCapability} /></div><p className="mt-1 text-xs text-slate-500">{activity}</p></div></div>}
