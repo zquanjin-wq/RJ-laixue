@@ -1,5 +1,5 @@
 import { AdminGate } from '@/components/auth-gate';
-import HomePage from '../page';
+import { HomePage } from '../page';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
