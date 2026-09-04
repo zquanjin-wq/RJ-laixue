@@ -1,77 +1,87 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
-import { resolveActor } from '@/lib/server/learning-tasks/permissions';
+import { getCurrentActor } from '@/lib/server/auth-context';
+import { getDatabasePool } from '@/lib/server/db/pool';
 import { learnerDisplayStatus } from '@/lib/server/learning-tasks/report';
 
 type TaskRow = {
   id: string;
-  title: string | null;
+  title: string;
   status: string;
   due_at: string | null;
-  created_by: string;
-  created_at: string;
 };
 
-export async function GET(request: NextRequest) {
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-  if (!user)
-    return NextResponse.json({ success: false, errorCode: 'UNAUTHENTICATED' }, { status: 401 });
+type LearnerRow = {
+  task_id: string;
+  student_id: string;
+  student_name: string;
+  status: 'not_started' | 'in_progress' | 'completed';
+  progress_percent: number | string;
+  mastery_percent: number | string | null;
+  effective_seconds: number | string;
+  last_seen_at: string | null;
+};
 
-  const actor = await resolveActor(user.id);
+type TaskCourseCount = { task_id: string; course_count: number | string };
+
+export async function GET(request: NextRequest) {
+  const actor = await getCurrentActor();
+  if (!actor)
+    return NextResponse.json({ success: false, errorCode: 'UNAUTHENTICATED' }, { status: 401 });
   if (actor.role === 'learner')
     return NextResponse.json({ success: false, errorCode: 'FORBIDDEN' }, { status: 403 });
 
-  const taskId = request.nextUrl.searchParams.get('taskId') || undefined;
+  const taskId = request.nextUrl.searchParams.get('taskId') || null;
   const status = request.nextUrl.searchParams.get('status') || 'published';
-  const svc = getServiceSupabase();
-  let taskQuery = svc
-    .from('learning_tasks')
-    .select('id, title, status, due_at, created_by, created_at')
-    .order('created_at', { ascending: false });
-  if (actor.role === 'teacher') taskQuery = taskQuery.eq('created_by', user.id);
-  if (taskId) taskQuery = taskQuery.eq('id', taskId);
-  if (status !== 'all') taskQuery = taskQuery.eq('status', status);
-
-  const { data: rawTasks, error } = await taskQuery;
-  if (error) throw error;
-  const tasks = (rawTasks ?? []) as TaskRow[];
+  const ownerUserId = actor.role === 'teacher' ? actor.userId : null;
+  const pool = getDatabasePool();
+  const tasksResult = await pool.query<TaskRow>(
+    `SELECT id::text, title, status, due_at::text
+       FROM app.learning_tasks
+      WHERE ($1::text IS NULL OR created_by = $1)
+        AND ($2::text IS NULL OR id::text = $2)
+        AND ($3::text = 'all' OR status = $3)
+      ORDER BY created_at DESC`,
+    [ownerUserId, taskId, status],
+  );
+  const tasks = tasksResult.rows;
   const taskIds = tasks.map((task) => task.id);
-  const { data: learnerRows } = taskIds.length
-    ? await svc
-        .from('task_learners')
-        .select(
-          'task_id, student_id, status, progress_percent, mastery_percent, effective_seconds, last_seen_at',
-        )
-        .in('task_id', taskIds)
-    : { data: [] };
-  const { data: taskCourses } = taskIds.length
-    ? await svc.from('task_courses').select('task_id, course_id').in('task_id', taskIds)
-    : { data: [] };
-  const studentIds = [...new Set((learnerRows ?? []).map((row) => row.student_id))];
-  const { data: students } = studentIds.length
-    ? await svc.from('students').select('id, name').in('id', studentIds)
-    : { data: [] };
-  const nameById = new Map((students ?? []).map((student) => [student.id, student.name]));
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const [learnersResult, courseCountsResult] = taskIds.length
+    ? await Promise.all([
+        pool.query<LearnerRow>(
+          `SELECT assignment.task_id::text, assignment.user_id AS student_id,
+                  COALESCE(profile.display_name, account.name) AS student_name,
+                  assignment.status, assignment.progress_percent,
+                  assignment.mastery_percent, assignment.effective_seconds,
+                  assignment.last_seen_at::text
+             FROM app.task_assignments assignment
+             JOIN public."user" account ON account.id = assignment.user_id
+             LEFT JOIN app.user_profiles profile ON profile.user_id = assignment.user_id
+            WHERE assignment.task_id = ANY($1::uuid[])`,
+          [taskIds],
+        ),
+        pool.query<TaskCourseCount>(
+          `SELECT task_id::text, count(*) AS course_count
+             FROM app.task_courses
+            WHERE task_id = ANY($1::uuid[])
+            GROUP BY task_id`,
+          [taskIds],
+        ),
+      ])
+    : [{ rows: [] as LearnerRow[] }, { rows: [] as TaskCourseCount[] }];
 
-  const learners = (learnerRows ?? []).map((row) => {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const courseCountByTask = new Map(
+    courseCountsResult.rows.map((row) => [row.task_id, Number(row.course_count)]),
+  );
+  const learners = learnersResult.rows.map((row) => {
     const task = taskById.get(row.task_id);
-    const displayStatus = learnerDisplayStatus(
-      {
-        status:
-          row.status === 'completed' || row.status === 'in_progress' ? row.status : 'not_started',
-      },
-      task?.due_at ?? null,
-    );
+    const status = learnerDisplayStatus({ status: row.status }, task?.due_at ?? null);
     return {
       taskId: row.task_id,
       taskTitle: task?.title || '未命名任务',
       studentId: row.student_id,
-      studentName: nameById.get(row.student_id) || '未命名学员',
-      status: displayStatus,
+      studentName: row.student_name || '未命名学员',
+      status,
       progressPercent: Number(row.progress_percent ?? 0),
       masteryPercent: row.mastery_percent == null ? null : Number(row.mastery_percent),
       effectiveSeconds: Number(row.effective_seconds ?? 0),
@@ -87,7 +97,7 @@ export async function GET(request: NextRequest) {
   const effectiveSeconds = learners.reduce((sum, learner) => sum + learner.effectiveSeconds, 0);
   const needsAttention = learners
     .filter((learner) => learner.status === 'not_started' || learner.status === 'overdue')
-    .sort((a, b) => Number(a.status === 'overdue') - Number(b.status === 'overdue'))
+    .sort((left, right) => Number(left.status === 'overdue') - Number(right.status === 'overdue'))
     .slice(0, 12);
 
   const taskSummary = tasks.map((task) => {
@@ -103,7 +113,7 @@ export async function GET(request: NextRequest) {
       completionRate: taskLearners.length
         ? Math.round((taskCompleted / taskLearners.length) * 100)
         : 0,
-      courseCount: (taskCourses ?? []).filter((item) => item.task_id === task.id).length || 1,
+      courseCount: courseCountByTask.get(task.id) ?? 0,
       overdueCount: taskLearners.filter((learner) => learner.status === 'overdue').length,
       notStartedCount: taskLearners.filter((learner) => learner.status === 'not_started').length,
     };
