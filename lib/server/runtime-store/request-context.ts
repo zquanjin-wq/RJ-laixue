@@ -7,9 +7,9 @@
  *   - makeRuntimeStore()：service role 的 RuntimeStorePg 实例。
  */
 import { requireAuthOrTeacher, type AuthResult } from '@/lib/server/api-guard';
-import { getServiceSupabase } from '@/lib/supabase/server';
+import { getDatabasePool } from '@/lib/server/db/pool';
 import { RuntimeStorePg } from './pg';
-import { createSupabaseRpcClient } from './supabase-rpc';
+import { createPostgresRpcClient } from './postgres-rpc';
 
 /** 运行时数据接口对全部登录角色开放（学员是主写入方）。 */
 export async function requireRuntimeUser(): Promise<AuthResult> {
@@ -17,5 +17,5 @@ export async function requireRuntimeUser(): Promise<AuthResult> {
 }
 
 export function makeRuntimeStore(): RuntimeStorePg {
-  return new RuntimeStorePg(createSupabaseRpcClient(getServiceSupabase()));
+  return new RuntimeStorePg(createPostgresRpcClient(getDatabasePool()));
 }
