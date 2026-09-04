@@ -19,6 +19,7 @@
     "test": "vitest run --no-file-parallelism",
     "db:migrate": "tsx scripts/migrate-database.ts",
     "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "cos:configure-cors": "tsx scripts/configure-cos-cors.ts",
     "cos:verify": "tsx scripts/verify-cos.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

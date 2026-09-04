@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Archive,
+  Film,
   Download,
   FileDown,
   Loader2,
@@ -18,7 +18,7 @@ import { useTheme } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
-import { useExportClassroom } from '@/lib/export/use-export-classroom';
+import { useExportCourseVideo } from '@/lib/export/use-export-course-video';
 import { LanguageSwitcher } from '../language-switcher';
 import { SettingsDialog } from '../settings';
 import {
@@ -78,7 +78,7 @@ export function HeaderControls({
   const failedOutlines = useStageStore((s) => s.failedOutlines);
   const mediaTasks = useMediaGenerationStore((s) => s.tasks);
   const { exporting: isExporting, exportPPTX, exportResourcePack } = useExportPPTX();
-  const { exporting: isExportingZip, exportClassroomZip } = useExportClassroom();
+  const { preparing: isPreparingVideo, start: exportCourseVideo } = useExportCourseVideo();
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -242,27 +242,27 @@ export function HeaderControls({
       <div className="relative" ref={exportRef}>
         <button
           onClick={() => {
-            if (canExport && !isExporting && !isExportingZip) {
+            if (canExport && !isExporting && !isPreparingVideo) {
               setExportMenuOpen(!exportMenuOpen);
             }
           }}
-          disabled={!canExport || isExporting || isExportingZip}
+          disabled={!canExport || isExporting || isPreparingVideo}
           title={
             canExport
-              ? isExporting || isExportingZip
+              ? isExporting || isPreparingVideo
                 ? t('export.exporting')
                 : t('export.pptx')
               : t('share.notReady')
           }
           className={cn(
             'shrink-0 p-2 rounded-full transition-all',
-            canExport && !isExporting && !isExportingZip
+            canExport && !isExporting && !isPreparingVideo
               ? 'text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm'
               : 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-50',
           )}
           aria-label={t('export.pptx')}
         >
-          {isExporting || isExportingZip ? (
+          {isExporting || isPreparingVideo ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Download className="w-4 h-4" />
@@ -298,16 +298,16 @@ export function HeaderControls({
             <button
               onClick={() => {
                 setExportMenuOpen(false);
-                exportClassroomZip();
+                void exportCourseVideo();
               }}
-              disabled={isExportingZip}
+              disabled={isPreparingVideo}
               className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
             >
-              <Archive className="w-4 h-4 text-gray-400 shrink-0" />
+              <Film className="w-4 h-4 text-gray-400 shrink-0" />
               <div>
-                <div>{t('export.classroomZip')}</div>
+                <div>生成课程视频</div>
                 <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                  {t('export.classroomZipDesc')}
+                  生成包含配音的 MP4 视频
                 </div>
               </div>
             </button>

@@ -20,11 +20,15 @@ services:
       - .env.production
     environment:
       DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
+      RENDER_SERVICE_URL: http://render-service:9000
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - app-data:/app/data
+    networks:
+      - default
+      - render
     restart: unless-stopped
 
   revoice-worker:
@@ -37,6 +41,36 @@ services:
     depends_on:
       - app
     command: ['node', 'scripts/run-course-revoice-worker.mjs']
+    restart: unless-stopped
+
+  render-service:
+    build: ./render-service
+    profiles: ['video-export']
+    expose:
+      - '9000'
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PORT: '9000'
+      RENDER_MAX_CONCURRENCY: '1'
+      RENDER_MAX_JOBS_PER_USER: '0'
+    mem_limit: 6g
+    networks:
+      - render
+    restart: unless-stopped
+
+  video-export-worker:
+    build: .
+    profiles: ['video-export']
+    env_file:
+      - .env.production
+    environment:
+      COURSE_VIDEO_EXPORT_WORKER_URL: http://app:3000/api/cron/course-video-exports
+      COURSE_VIDEO_EXPORT_INTERVAL_MS: '5000'
+    depends_on:
+      - app
+      - render-service
+    command: ['node', 'scripts/run-course-video-export-worker.mjs']
     restart: unless-stopped
 
   caddy:
@@ -67,7 +101,9 @@ services:
     command: ['node', 'scripts/migrate-database.mjs']
 
   bootstrap-admin:
-    build: .
+    build:
+      context: .
+      target: tools
     profiles: ['tools']
     env_file:
       - .env.production
@@ -83,3 +119,7 @@ volumes:
   app-data:
   caddy-data:
   caddy-config:
+
+networks:
+  render:
+    internal: true

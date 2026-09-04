@@ -40,16 +40,24 @@ export async function inlineSceneContent(
 
 const log = createLogger('ExportClassroom');
 
+export interface ExportClassroomOptions { download?: boolean; notify?: boolean; }
+export interface ExportedClassroom {
+  manifest: ClassroomManifest;
+  audioByRef: Map<string, { blob: Blob; duration?: number }>;
+}
+
 export function useExportClassroom() {
   const [exporting, setExporting] = useState(false);
   const { t } = useI18n();
 
-  const exportClassroomZip = useCallback(async () => {
+  const exportClassroomZip = useCallback(async (options: ExportClassroomOptions = {}): Promise<ExportedClassroom | undefined> => {
     const { stage, scenes } = useStageStore.getState();
     if (!stage?.id || scenes.length === 0) return;
 
     setExporting(true);
-    const toastId = toast.loading(t('export.exporting'));
+    const shouldDownload = options.download ?? true;
+    const shouldNotify = options.notify ?? true;
+    const toastId = shouldNotify ? toast.loading(t('export.exporting')) : undefined;
 
     try {
       const JSZip = (await import('jszip')).default;
@@ -73,6 +81,7 @@ export function useExportClassroom() {
       for (const af of audioFiles) {
         audioIdToPath.set(af.record.id, af.zipPath);
       }
+      const audioByRef = new Map(audioFiles.map((audio) => [audio.zipPath, { blob: audio.record.blob, duration: audio.record.duration }]));
 
       // 6. Build manifest
       const manifestStage: ManifestStage = {
@@ -210,7 +219,7 @@ export function useExportClassroom() {
       // 10. Generate and download
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const safeName = latestName.replace(/[\\/:*?"<>|]/g, '_') || 'classroom';
-      saveAs(zipBlob, `${safeName}${CLASSROOM_ZIP_EXTENSION}`);
+      if (shouldDownload) saveAs(zipBlob, `${safeName}${CLASSROOM_ZIP_EXTENSION}`);
 
       if (aggregateReport.failed.length > 0) {
         log.warn('Some interactive-scene assets could not be inlined:', aggregateReport.failed);
@@ -229,10 +238,11 @@ export function useExportClassroom() {
           description: hosts.join(', '),
         });
       }
-      toast.success(t('export.exportSuccess'), { id: toastId });
+      if (shouldNotify) toast.success(t('export.exportSuccess'), { id: toastId });
+      return { manifest, audioByRef };
     } catch (error) {
       log.error('Classroom ZIP export failed:', error);
-      toast.error(t('export.exportFailed'), { id: toastId });
+      if (shouldNotify) toast.error(t('export.exportFailed'), { id: toastId });
     } finally {
       setExporting(false);
     }

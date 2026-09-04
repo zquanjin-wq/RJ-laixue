@@ -85,7 +85,7 @@ export class CourseVideoExportRepository {
   async claimNext(): Promise<CourseVideoExport | null> {
     const result = await this.pool.query<CourseVideoExport>(
       `WITH candidate AS (
-         SELECT id FROM app.course_video_exports
+         SELECT id AS candidate_id FROM app.course_video_exports
          WHERE status = 'queued'
            AND request ? 'inputObjectKey'
          ORDER BY created_at
@@ -95,8 +95,20 @@ export class CourseVideoExportRepository {
        UPDATE app.course_video_exports export
        SET status = 'running', started_at = COALESCE(started_at, now()), updated_at = now(), error = NULL
        FROM candidate
-       WHERE export.id = candidate.id
+       WHERE export.id = candidate.candidate_id
        RETURNING ${columns}`,
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async activateInput(id: string): Promise<CourseVideoExport | null> {
+    const result = await this.pool.query<CourseVideoExport>(
+      `UPDATE app.course_video_exports
+       SET request = (request - 'uploadObjectKey') || jsonb_build_object('inputObjectKey', request->>'uploadObjectKey'),
+           updated_at = now()
+       WHERE id = $1 AND status = 'queued' AND request ? 'uploadObjectKey'
+       RETURNING ${columns}`,
+      [id],
     );
     return result.rows[0] ?? null;
   }

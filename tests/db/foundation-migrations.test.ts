@@ -11,6 +11,7 @@ import { betterAuth } from 'better-auth';
 import { admin } from 'better-auth/plugins';
 import { migrateDatabase } from '@/lib/server/db/migrate';
 import { CourseRepository } from '@/lib/server/db/course-repository';
+import { CourseVideoExportRepository } from '@/lib/server/db/course-video-export-repository';
 import { AccessRepository } from '@/lib/server/db/access-repository';
 import { JobRepository } from '@/lib/server/db/job-repository';
 import { LearningRepository } from '@/lib/server/db/learning-repository';
@@ -106,6 +107,8 @@ describe('P1 PostgreSQL foundation', () => {
       '0005_learning_activity.sql',
       '0006_jobs_and_usage.sql',
       '0007_runtime_store.sql',
+      '0008_learning_analytics_and_revoice.sql',
+      '0009_course_video_exports.sql',
     ]);
     expect(second.skipped).toEqual(first.applied);
 
@@ -175,6 +178,75 @@ describe('P1 PostgreSQL foundation', () => {
 
     expect(await courses.softDeleteCourse('course-1', 'user-1')).toBe(true);
     expect(await courses.getCourse('course-1')).toBeNull();
+  });
+
+  it('stores course video export status and its COS output reference atomically', async () => {
+    const courses = new CourseRepository(pool);
+    await courses.createCourse({
+      id: 'course-video-export',
+      ownerUserId: 'user-1',
+      title: 'Exportable course',
+      content: {},
+    });
+    const exports = new CourseVideoExportRepository(pool);
+    const created = await exports.create({
+      courseId: 'course-video-export',
+      requestedBy: 'user-1',
+      request: { resolution: '1080p' },
+    });
+    expect(created.status).toBe('queued');
+    expect(created.output).toBeNull();
+
+    const running = await exports.updateStatus({
+      id: created.id,
+      status: 'running',
+      expectedStatuses: ['queued'],
+    });
+    expect(running?.startedAt).toBeInstanceOf(Date);
+    expect(
+      await exports.recordOutput({
+        id: created.id,
+        output: {
+          bucket: 'laixue-course-exports',
+          objectKey: `course-exports/${created.id}.mp4`,
+          contentType: 'video/mp4',
+          sizeBytes: 2048,
+          etag: 'etag-1',
+        },
+      }),
+    ).toMatchObject({
+      status: 'succeeded',
+      output: {
+        bucket: 'laixue-course-exports',
+        objectKey: `course-exports/${created.id}.mp4`,
+        contentType: 'video/mp4',
+        sizeBytes: 2048,
+        etag: 'etag-1',
+      },
+    });
+    expect(await exports.updateStatus({ id: created.id, status: 'failed' })).toBeNull();
+    expect((await exports.listForCourse('course-video-export'))[0]?.id).toBe(created.id);
+  });
+
+  it('only lets the worker claim a video export after its COS source upload is activated', async () => {
+    const courses = new CourseRepository(pool);
+    await courses.createCourse({ id: 'course-video-activation', ownerUserId: 'user-1', title: 'Activation course', content: {} });
+    const exports = new CourseVideoExportRepository(pool);
+    const pending = await exports.create({
+      courseId: 'course-video-activation', requestedBy: 'user-1',
+      request: { uploadObjectKey: 'courses/course-video-activation/video-exports/pending/source.zip' },
+    });
+
+    expect(await exports.claimNext()).toBeNull();
+    expect(await exports.activateInput(pending.id)).toMatchObject({ id: pending.id, status: 'queued' });
+    expect(await exports.claimNext()).toMatchObject({ id: pending.id, status: 'running' });
+
+    const uploadFailed = await exports.create({
+      courseId: 'course-video-activation', requestedBy: 'user-1',
+      request: { uploadObjectKey: 'courses/course-video-activation/video-exports/failed/source.zip' },
+    });
+    expect(await exports.claimNext()).toBeNull();
+    expect((await exports.get(uploadFailed.id))?.status).toBe('queued');
   });
 
   it('publishes a task and records learning activity once', async () => {

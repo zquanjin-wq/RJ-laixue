@@ -25,6 +25,9 @@ COPY --from=deps /app/public/vendor ./public/vendor
 
 RUN DATABASE_URL=postgres://laixue:placeholder@127.0.0.1:5432/laixue SUPABASE_URL=https://example.invalid SUPABASE_ANON_KEY=placeholder SUPABASE_SERVICE_ROLE_KEY=placeholder pnpm build
 
+# ---- One-off administration tools ----
+FROM builder AS tools
+
 # ---- Stage 4: Runner ----
 FROM node:22-alpine AS runner
 
@@ -46,6 +49,7 @@ COPY --chown=nextjs:nodejs db ./db
 COPY --chown=nextjs:nodejs scripts/migrate-database.mjs ./scripts/migrate-database.mjs
 COPY --chown=nextjs:nodejs scripts/bootstrap-admin.mjs ./scripts/bootstrap-admin.mjs
 COPY --chown=nextjs:nodejs scripts/run-course-revoice-worker.mjs ./scripts/run-course-revoice-worker.mjs
+COPY --chown=nextjs:nodejs scripts/run-course-video-export-worker.mjs ./scripts/run-course-video-export-worker.mjs
 
 USER nextjs
 

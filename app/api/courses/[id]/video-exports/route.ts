@@ -69,3 +69,24 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     throw error;
   }
 }
+
+export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const access = await requireVideoExportManager();
+  if ('response' in access) return access.response;
+  const { id } = await context.params;
+  const courseId = validateVideoExportIdentifier(id);
+  if (!courseId.success) return NextResponse.json({ success: false, errorCode: 'INVALID_REQUEST', error: '无效的课程标识。' }, { status: 400 });
+  const course = await new CourseRepository(getDatabasePool()).getCourse(courseId.data);
+  if (!course || (course.ownerUserId !== access.actor.userId && access.actor.role !== 'admin')) {
+    return NextResponse.json({ success: false, errorCode: 'NOT_FOUND', error: '课程不存在。' }, { status: 404 });
+  }
+  const body = await request.json().catch(() => null) as { jobId?: string } | null;
+  const jobId = body?.jobId ? validateVideoExportIdentifier(body.jobId) : null;
+  if (!jobId?.success) return NextResponse.json({ success: false, errorCode: 'INVALID_REQUEST', error: '无效的视频任务标识。' }, { status: 400 });
+  const service = getVideoExportService();
+  const current = await service.getById(jobId.data);
+  if (!current || current.courseId !== courseId.data) return NextResponse.json({ success: false, errorCode: 'NOT_FOUND', error: '视频任务不存在。' }, { status: 404 });
+  const exportJob = await service.confirmInputUpload(jobId.data);
+  if (!exportJob) return NextResponse.json({ success: false, errorCode: 'CONFLICT', error: '视频任务无法激活。' }, { status: 409 });
+  return NextResponse.json({ success: true, export: exportJob }, { status: 202 });
+}

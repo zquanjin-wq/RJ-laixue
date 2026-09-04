@@ -14,6 +14,7 @@ export interface VideoExportService {
   getCapability(): Promise<VideoExportCapability>;
   listForCourse(courseId: string): Promise<VideoExportRecord[]>;
   request(input: VideoExportRequestInput): Promise<VideoExportRecord & { inputUploadUrl: string }>;
+  confirmInputUpload(id: string): Promise<VideoExportRecord | null>;
   getById(id: string): Promise<VideoExportRecord | null>;
 }
 
@@ -61,9 +62,14 @@ class PostgresVideoExportService implements VideoExportService {
     const inputObjectKey = `courses/${input.courseId}/video-exports/${row.id}/source-${randomUUID()}.zip`;
     await getDatabasePool().query(
       `UPDATE app.course_video_exports SET request = $2::jsonb, updated_at = now() WHERE id = $1`,
-      [row.id, JSON.stringify({ inputObjectKey, sourceRevision: input.sourceRevision ?? null })],
+      [row.id, JSON.stringify({ uploadObjectKey: inputObjectKey, sourceRevision: input.sourceRevision ?? null })],
     );
-    return { ...present({ ...row, request: { inputObjectKey } }), inputUploadUrl: await new CosStorage().getUploadUrl(inputObjectKey) };
+    return { ...present({ ...row, request: { uploadObjectKey: inputObjectKey } }), inputUploadUrl: await new CosStorage().getUploadUrl(inputObjectKey) };
+  }
+
+  async confirmInputUpload(id: string) {
+    const row = await this.repository.activateInput(id);
+    return row ? present(row) : null;
   }
 
   async getById(id: string) {

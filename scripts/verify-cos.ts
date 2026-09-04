@@ -1,5 +1,11 @@
 import { CosStorage } from '../lib/server/cos-storage';
 
+const BROWSER_ORIGIN = 'https://laixue.online';
+
+function allowOrigin(response: Response): string | null {
+  return response.headers.get('access-control-allow-origin');
+}
+
 async function main() {
   const storage = new CosStorage();
   const key = `system-check/${Date.now()}-connectivity.txt`;
@@ -7,6 +13,21 @@ async function main() {
 
   try {
     const uploadUrl = await storage.getUploadUrl(key, 60);
+
+    const preflight = await fetch(uploadUrl, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: BROWSER_ORIGIN,
+        'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    });
+    if (!preflight.ok || ![BROWSER_ORIGIN, '*'].includes(allowOrigin(preflight) ?? '')) {
+      throw new Error(
+        `COS browser upload preflight failed: HTTP ${preflight.status}, allow-origin=${allowOrigin(preflight) ?? '(missing)'}`,
+      );
+    }
+
     const upload = await fetch(uploadUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
