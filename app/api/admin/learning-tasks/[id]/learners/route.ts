@@ -1,104 +1,34 @@
-/**
- * PUT /api/admin/learning-tasks/[id]/learners  — 替换学员名单（RPC 原子事务）
- */
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSupabase } from '@/lib/supabase/server';
-import { getServiceSupabase } from '@/lib/supabase/server';
-import { checkTaskManagePermission } from '@/lib/server/learning-tasks/permissions';
+import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/server/auth-context';
+import { AccessRepository } from '@/lib/server/db/access-repository';
+import { getDatabasePool } from '@/lib/server/db/pool';
 
-export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id: taskId } = await params;
-
-  let body: Record<string, unknown> = {};
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { success: false, error: '无效的 JSON 请求体', errorCode: 'INVALID_BODY' },
-      { status: 400 },
-    );
-  }
-
-  const learnerIds: string[] = Array.isArray(body.learnerIds)
-    ? [...new Set(body.learnerIds.filter((id: unknown) => typeof id === 'string'))]
-    : [];
-
-  if (learnerIds.length === 0) {
-    return NextResponse.json(
-      { success: false, error: '学员名单不能为空', errorCode: 'INVALID_LEARNERS' },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const serverSupabase = await getServerSupabase();
-    const {
-      data: { user },
-    } = await serverSupabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: '未登录', errorCode: 'UNAUTHENTICATED' },
-        { status: 401 },
-      );
-    }
-
-    const perm = await checkTaskManagePermission(user.id, taskId);
-    if (!perm.ok) {
-      return NextResponse.json(
-        { success: false, error: '无权修改此任务', errorCode: 'FORBIDDEN' },
-        { status: 403 },
-      );
-    }
-
-    const svc = getServiceSupabase();
-    const { data: task } = await svc
-      .from('learning_tasks')
-      .select('status')
-      .eq('id', taskId)
-      .maybeSingle();
-    if (!task) {
-      return NextResponse.json(
-        { success: false, error: 'Task not found', errorCode: 'NOT_FOUND' },
-        { status: 404 },
-      );
-    }
-
-    const rpcName = task.status === 'published' ? 'add_task_learners' : 'replace_task_learners';
-
-    // 使用 RPC 原子替换
-    const { data: rpcResult, error: rpcError } = await svc.rpc(rpcName, {
-      p_task_id: taskId,
-      p_learner_ids: learnerIds,
-    });
-
-    if (rpcError) {
-      if (rpcError.message.includes('Only draft') || rpcError.message.includes('TASK_NOT_DRAFT')) {
-        return NextResponse.json(
-          { success: false, error: '只能修改草稿任务学员名单', errorCode: 'TASK_NOT_DRAFT' },
-          { status: 400 },
-        );
-      }
-      if (rpcError.message.includes('No valid')) {
-        return NextResponse.json(
-          { success: false, error: '无有效学员', errorCode: 'INVALID_LEARNERS' },
-          { status: 400 },
-        );
-      }
-      throw rpcError;
-    }
-
-    // 读取最新名单
-    const { data: learners } = await svc
-      .from('task_learners')
-      .select('id, student_id, status, assigned_at')
-      .eq('task_id', taskId);
-
-    return NextResponse.json({ success: true, data: learners ?? [] });
-  } catch (error: unknown) {
-    console.error('[admin/learning-tasks/[id]/learners] put failed:', error);
-    return NextResponse.json(
-      { success: false, error: '更新学员名单失败', errorCode: 'INTERNAL_ERROR' },
-      { status: 500 },
-    );
+    const taskId = (await params).id;
+    const actor = await requireUser();
+    if (!await new AccessRepository(getDatabasePool()).canManageTask(actor, taskId)) return NextResponse.json({ success: false, errorCode: 'FORBIDDEN' }, { status: 403 });
+    const body = await request.json() as { learnerIds?: unknown };
+    const learnerIds = [...new Set((Array.isArray(body.learnerIds) ? body.learnerIds : []).filter((value): value is string => typeof value === 'string' && value.length > 0))];
+    if (!learnerIds.length) return NextResponse.json({ success: false, errorCode: 'INVALID_LEARNERS' }, { status: 400 });
+    const database = getDatabasePool();
+    const learners = await database.query<{ id: string }>(`SELECT u.id FROM public."user" u JOIN app.user_profiles p ON p.user_id = u.id WHERE p.role = 'learner' AND u.banned IS NOT TRUE AND u.id = ANY($1::text[])`, [learnerIds]);
+    if (learners.rowCount !== learnerIds.length) return NextResponse.json({ success: false, errorCode: 'INVALID_LEARNERS' }, { status: 400 });
+    const client = await database.connect();
+    try {
+      await client.query('BEGIN');
+      const task = await client.query<{ status: string }>('SELECT status FROM app.learning_tasks WHERE id = $1 FOR UPDATE', [taskId]);
+      if (!task.rowCount) return NextResponse.json({ success: false, errorCode: 'NOT_FOUND' }, { status: 404 });
+      if (task.rows[0].status === 'draft') { await client.query('DELETE FROM app.task_assignments WHERE task_id = $1', [taskId]); }
+      else if (task.rows[0].status !== 'published') return NextResponse.json({ success: false, errorCode: 'TASK_NOT_DRAFT' }, { status: 400 });
+      for (const learnerId of learnerIds) await client.query('INSERT INTO app.task_assignments (task_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, learnerId]);
+      if (task.rows[0].status === 'published') await client.query(`INSERT INTO app.task_course_progress (task_id, user_id, course_id) SELECT $1, assignment.user_id, course.course_id FROM app.task_assignments assignment CROSS JOIN app.task_courses course WHERE assignment.task_id = $1 AND course.task_id = $1 ON CONFLICT DO NOTHING`, [taskId]);
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    const result = await database.query('SELECT id, user_id AS student_id, status, assigned_at FROM app.task_assignments WHERE task_id = $1 ORDER BY assigned_at', [taskId]);
+    return NextResponse.json({ success: true, data: result.rows });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    return NextResponse.json({ success: false, errorCode: message === 'Unauthenticated' ? 'UNAUTHENTICATED' : 'INTERNAL_ERROR' }, { status: message === 'Unauthenticated' ? 401 : 500 });
   }
 }

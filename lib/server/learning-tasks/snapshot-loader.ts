@@ -1,136 +1,17 @@
-/** Loads an immutable task-course snapshot after checking task entry permission. */
-import { getServiceSupabase } from '@/lib/supabase/server';
+import { getDatabasePool } from '@/lib/server/db/pool';
 import { checkTaskEntryPermission } from './permissions';
-
-export type SnapshotLoadResult =
-  | {
-      ok: true;
-      data: { stage: unknown; scenes: unknown[]; outlines: unknown[] };
-      actor: 'learner' | 'preview';
-    }
-  | { ok: false; error: string; errorCode: string; status: number };
-
-export async function loadTaskSnapshot(
-  userId: string,
-  taskId: string,
-  courseId?: string,
-): Promise<SnapshotLoadResult> {
-  const svc = getServiceSupabase();
-  const { data: task, error: taskError } = await svc
-    .from('learning_tasks')
-    .select('id, course_id, status, start_at, due_at, snapshot_id')
-    .eq('id', taskId)
-    .maybeSingle();
-
-  if (taskError)
-    return { ok: false, error: '查询任务失败。', errorCode: 'INTERNAL_ERROR', status: 500 };
-  if (!task) return { ok: false, error: '任务不存在。', errorCode: 'TASK_NOT_FOUND', status: 404 };
-  if (task.status === 'archived' || task.status === 'closed') {
-    return { ok: false, error: '任务已结束。', errorCode: 'TASK_CLOSED', status: 403 };
-  }
-  if (task.status !== 'published') {
-    return {
-      ok: false,
-      error: '任务尚未发布。',
-      errorCode: 'TASK_NOT_PUBLISHED',
-      status: 403,
-    };
-  }
-
+export type SnapshotLoadResult = | { ok: true; data: { stage: unknown; scenes: unknown[]; outlines: unknown[] }; actor: 'learner' | 'preview' } | { ok: false; error: string; errorCode: string; status: number };
+export async function loadTaskSnapshot(userId: string, taskId: string, courseId?: string): Promise<SnapshotLoadResult> {
+  const pool = getDatabasePool();
+  const task = await pool.query<{ status: string; startAt: string | null }>(`SELECT status, start_at::text AS "startAt" FROM app.learning_tasks WHERE id = $1`, [taskId]);
+  if (!task.rows[0]) return { ok:false,error:'Task not found.',errorCode:'TASK_NOT_FOUND',status:404 };
+  if (task.rows[0].status !== 'published') return { ok:false,error:'Task is not available.',errorCode:'TASK_NOT_PUBLISHED',status:403 };
   const permission = await checkTaskEntryPermission(userId, taskId);
-  if (!permission.ok) {
-    const errorCode =
-      permission.reason === 'learner_not_bound'
-        ? 'LEARNER_NOT_BOUND'
-        : permission.reason === 'learner_disabled'
-          ? 'LEARNER_DISABLED'
-          : 'LEARNER_NOT_ASSIGNED';
-    return { ok: false, error: '无权进入此学习任务。', errorCode, status: 403 };
-  }
-  const entryActor = permission.actor;
-
-  if (entryActor === 'learner' && task.start_at && new Date(task.start_at) > new Date()) {
-    return {
-      ok: false,
-      error: '任务尚未开始。',
-      errorCode: 'TASK_NOT_STARTED',
-      status: 403,
-    };
-  }
-
-  let snapshotId = task.snapshot_id;
-  if (courseId) {
-    const { data: taskCourse } = await svc
-      .from('task_courses')
-      .select('snapshot_id')
-      .eq('task_id', taskId)
-      .eq('course_id', courseId)
-      .maybeSingle();
-    snapshotId = taskCourse?.snapshot_id ?? null;
-  }
-  if (!snapshotId) {
-    return {
-      ok: false,
-      error: '任务课程快照缺失。',
-      errorCode: 'SNAPSHOT_MISSING',
-      status: 500,
-    };
-  }
-
-  const { data: snapshot, error: snapshotError } = await svc
-    .from('course_snapshots')
-    .select('snapshot_data')
-    .eq('id', snapshotId)
-    .maybeSingle();
-  if (snapshotError || !snapshot) {
-    return {
-      ok: false,
-      error: '课程快照不存在。',
-      errorCode: 'SNAPSHOT_NOT_FOUND',
-      status: 404,
-    };
-  }
-
-  const data = (snapshot.snapshot_data ?? {}) as {
-    stage?: unknown;
-    scenes?: unknown;
-    outlines?: unknown;
-  };
-  if (!data.stage || !Array.isArray(data.scenes)) {
-    return {
-      ok: false,
-      error: '课程快照数据不完整。',
-      errorCode: 'SNAPSHOT_INVALID',
-      status: 500,
-    };
-  }
-
-  return {
-    ok: true,
-    data: {
-      stage: data.stage,
-      scenes: data.scenes.map(stripQuizAnswers),
-      outlines: Array.isArray(data.outlines) ? data.outlines : [],
-    },
-    actor: entryActor,
-  };
+  if (!permission.ok) return { ok:false,error:'Not assigned to this task.',errorCode:'LEARNER_NOT_ASSIGNED',status:403 };
+  if (permission.actor === 'learner' && task.rows[0].startAt && new Date(task.rows[0].startAt) > new Date()) return { ok:false,error:'Task has not started.',errorCode:'TASK_NOT_STARTED',status:403 };
+  const snapshot = await pool.query<{ content: unknown }>(`SELECT s.content FROM app.task_courses tc JOIN app.course_snapshots s ON s.id = tc.snapshot_id WHERE tc.task_id = $1 AND ($2::text IS NULL OR tc.course_id = $2) ORDER BY tc.position LIMIT 1`, [taskId, courseId ?? null]);
+  const data = snapshot.rows[0]?.content as { stage?: unknown; scenes?: unknown; outlines?: unknown } | undefined;
+  if (!data?.stage || !Array.isArray(data.scenes)) return { ok:false,error:'Task course snapshot is unavailable.',errorCode:'SNAPSHOT_NOT_FOUND',status:404 };
+  return { ok:true, data:{ stage:data.stage, scenes:data.scenes.map(stripQuizAnswers), outlines:Array.isArray(data.outlines)?data.outlines:[] }, actor:permission.actor };
 }
-
-function stripQuizAnswers(scene: unknown): unknown {
-  if (scene === null || typeof scene !== 'object') return scene;
-  const source = scene as Record<string, unknown>;
-  if (source.type !== 'quiz' || !source.content || typeof source.content !== 'object')
-    return source;
-  const content = source.content as Record<string, unknown>;
-  if (!Array.isArray(content.questions)) return source;
-
-  const questions = (content.questions as Array<Record<string, unknown>>).map((question) => {
-    const safeQuestion = { ...question };
-    delete safeQuestion.answer;
-    delete safeQuestion.correctAnswer;
-    delete safeQuestion.explanation;
-    delete safeQuestion.correctOptions;
-    return safeQuestion;
-  });
-  return { ...source, content: { ...content, questions } };
-}
+function stripQuizAnswers(scene: unknown): unknown { if (!scene || typeof scene !== 'object') return scene; const source=scene as Record<string,unknown>; const content=source.content as Record<string,unknown>|undefined; if(source.type!=='quiz'||!Array.isArray(content?.questions)) return source; return {...source,content:{...content,questions:(content.questions as Array<Record<string,unknown>>).map(question=>{const safe={...question}; delete safe.answer; delete safe.correctAnswer; delete safe.explanation; delete safe.correctOptions; return safe;})}}; }

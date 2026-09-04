@@ -11,7 +11,7 @@
  */
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { resolveTaskEntry } from '@/lib/server/learning-tasks/task-entry';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,22 +25,15 @@ interface PageProps {
 export default async function LearnTaskPage({ params }: PageProps) {
   const { token } = await params;
 
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-
-  if (!user) {
+  const actor = await getCurrentActor();
+  if (!actor) {
     const next = `/learn/${encodeURIComponent(token)}`;
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
-
-  const entry = await resolveTaskEntry(user.id, token);
+  const entry = await resolveTaskEntry(actor.userId, token);
 
   if (!entry.ok) {
-    if (entry.status === 404) {
-      notFound();
-    }
+    if (entry.reason === 'not_found') notFound();
 
     return (
       <main className="min-h-screen bg-background flex items-center justify-center px-4">
@@ -48,11 +41,11 @@ export default async function LearnTaskPage({ params }: PageProps) {
           <CardHeader>
             <CardTitle>无法进入学习任务</CardTitle>
             <CardDescription>
-              {entry.status === 403 ? '你没有权限访问此任务。' : '任务加载失败，请稍后重试。'}
+              {entry.reason === 'forbidden' ? '你没有权限访问此任务。' : '任务加载失败，请稍后重试。'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">{entry.error}</p>
+            <p className="text-sm text-muted-foreground">Please contact your teacher if you think this is incorrect.</p>
             <Button asChild variant="outline" size="sm">
               <Link href="/student/courses">返回学员首页</Link>
             </Button>
@@ -86,7 +79,7 @@ export default async function LearnTaskPage({ params }: PageProps) {
         taskId={entry.taskId}
         title={entry.title}
         token={token}
-        courses={entry.courses ?? []}
+        courses={(entry.courses ?? []).map((course) => ({ courseId: course.id, title: course.title, position: course.position }))}
       />
     );
   }

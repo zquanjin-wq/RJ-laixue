@@ -1,103 +1,67 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
-const { getServerSupabaseMock, recordTaskLearningEventMock } = vi.hoisted(() => ({
-  getServerSupabaseMock: vi.fn(),
-  recordTaskLearningEventMock: vi.fn(),
+const { getCurrentActor, recordTaskLearningEvent } = vi.hoisted(() => ({
+  getCurrentActor: vi.fn(),
+  recordTaskLearningEvent: vi.fn(),
 }));
 
-vi.mock('@/lib/supabase/server', () => ({ getServerSupabase: getServerSupabaseMock }));
-vi.mock('@/lib/server/task-learning', () => ({
-  recordTaskLearningEvent: recordTaskLearningEventMock,
-}));
+vi.mock('@/lib/server/auth-context', () => ({ getCurrentActor }));
+vi.mock('@/lib/server/task-learning', () => ({ recordTaskLearningEvent }));
 
 function request(body: Record<string, unknown>) {
   return new Request('http://localhost/api/learning/task-events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }) as unknown as NextRequest;
+  }) as NextRequest;
 }
 
+const validEvent = {
+  taskId: 'task-1',
+  courseId: 'course-1',
+  eventType: 'scene_started',
+  clientEventId: 'event-1',
+};
+
+afterEach(() => vi.resetAllMocks());
+
 describe('POST /api/learning/task-events', () => {
-  beforeEach(() => {
-    getServerSupabaseMock.mockReset();
-    recordTaskLearningEventMock.mockReset();
+  it('validates task event fields before authenticating', async () => {
+    const { POST } = await import('@/app/api/learning/task-events/route');
+
+    expect((await POST(request({ taskId: 'task-1' }))).status).toBe(400);
+    expect(getCurrentActor).not.toHaveBeenCalled();
   });
 
-  it('requires task event fields before checking the database', async () => {
+  it('uses the authenticated user and ignores client supplied learner ids', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'user-1', role: 'learner' });
+    recordTaskLearningEvent.mockResolvedValue({ ok: true, recorded: true, progressPercent: 50, masteryPercent: null, completed: false });
     const { POST } = await import('@/app/api/learning/task-events/route');
-    const response = await POST(request({ taskId: 'task-1' }));
-    expect(response.status).toBe(400);
-    expect(getServerSupabaseMock).not.toHaveBeenCalled();
-  });
 
-  it('uses the logged-in user and never accepts a student id', async () => {
-    getServerSupabaseMock.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-1' } } }) },
-    });
-    recordTaskLearningEventMock.mockResolvedValue({
-      ok: true,
-      recorded: true,
-      progressPercent: 50,
-      masteryPercent: null,
-      completed: false,
-    });
-    const { POST } = await import('@/app/api/learning/task-events/route');
-    const response = await POST(
-      request({
-        taskId: 'task-1',
-        courseId: 'course-1',
-        eventType: 'scene_started',
-        clientEventId: 'event-1',
-        studentId: 'forged',
-      }),
-    );
+    const response = await POST(request({ ...validEvent, studentId: 'forged' }));
+
     expect(response.status).toBe(200);
-    expect(recordTaskLearningEventMock).toHaveBeenCalledWith(
-      'user-1',
-      expect.objectContaining({ taskId: 'task-1', courseId: 'course-1' }),
-    );
-    expect(recordTaskLearningEventMock.mock.calls[0][1]).not.toHaveProperty('studentId');
+    expect(recordTaskLearningEvent).toHaveBeenCalledWith('user-1', expect.objectContaining(validEvent));
+    expect(recordTaskLearningEvent.mock.calls[0][1]).not.toHaveProperty('studentId');
   });
 
   it('does not write for an unauthenticated request', async () => {
-    getServerSupabaseMock.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
-    });
+    getCurrentActor.mockResolvedValue(null);
     const { POST } = await import('@/app/api/learning/task-events/route');
-    const response = await POST(
-      request({
-        taskId: 'task-1',
-        courseId: 'course-1',
-        eventType: 'task_opened',
-        clientEventId: 'event-1',
-      }),
-    );
-    expect(response.status).toBe(401);
-    expect(recordTaskLearningEventMock).not.toHaveBeenCalled();
+
+    expect((await POST(request(validEvent))).status).toBe(401);
+    expect(recordTaskLearningEvent).not.toHaveBeenCalled();
   });
 
-  it('returns the service permission result without falling back to a course event', async () => {
-    getServerSupabaseMock.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-1' } } }) },
-    });
-    recordTaskLearningEventMock.mockResolvedValue({
-      ok: false,
-      error: '无权记录此学习任务',
-      errorCode: 'LEARNER_NOT_ASSIGNED',
-      status: 403,
-    });
+  it('returns the task service permission result directly', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'user-1', role: 'learner' });
+    recordTaskLearningEvent.mockResolvedValue({ ok: false, error: 'Not assigned', errorCode: 'LEARNER_NOT_ASSIGNED', status: 403 });
     const { POST } = await import('@/app/api/learning/task-events/route');
-    const response = await POST(
-      request({
-        taskId: 'task-1',
-        courseId: 'course-1',
-        eventType: 'task_opened',
-        clientEventId: 'event-1',
-      }),
-    );
+
+    const response = await POST(request(validEvent));
+
     expect(response.status).toBe(403);
-    expect((await response.json()).errorCode).toBe('LEARNER_NOT_ASSIGNED');
+    await expect(response.json()).resolves.toMatchObject({ errorCode: 'LEARNER_NOT_ASSIGNED' });
   });
 });

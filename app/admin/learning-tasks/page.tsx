@@ -7,8 +7,8 @@
  */
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
-import { resolveActor } from '@/lib/server/learning-tasks/permissions';
+import { requireUser } from '@/lib/server/auth-context';
+import { getDatabasePool } from '@/lib/server/db/pool';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TaskListFilters } from './_components/task-list-filters';
@@ -17,7 +17,6 @@ export const dynamic = 'force-dynamic';
 
 type TaskRow = {
   id: string;
-  course_id: string;
   title: string | null;
   status: string;
   start_at: string | null;
@@ -27,72 +26,29 @@ type TaskRow = {
 };
 
 export default async function AdminLearningTasksPage() {
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login?next=/admin/learning-tasks');
+  let enriched: Array<TaskRow & { course_count: number; learner_count: number; completed_count: number }> = [];
+  let hasError = false;
+  try {
+    const actor = await requireUser();
+    if (actor.role === 'learner') redirect('/admin');
+    const result = await getDatabasePool().query<TaskRow & { course_count: number; learner_count: number; completed_count: number }>(
+      `SELECT t.id, t.title, t.status, t.start_at, t.due_at, t.created_by, t.created_at,
+              count(DISTINCT tc.course_id)::integer AS course_count,
+              count(DISTINCT ta.user_id)::integer AS learner_count,
+              count(DISTINCT tcp.user_id) FILTER (WHERE tcp.status = 'completed')::integer AS completed_count
+       FROM app.learning_tasks t
+       LEFT JOIN app.task_courses tc ON tc.task_id = t.id
+       LEFT JOIN app.task_assignments ta ON ta.task_id = t.id
+       LEFT JOIN app.task_course_progress tcp ON tcp.task_id = t.id
+       WHERE ($1 = 'admin' OR t.created_by = $2)
+       GROUP BY t.id
+       ORDER BY t.created_at DESC`,
+      [actor.role, actor.userId],
+    );
+    enriched = result.rows;
+  } catch {
+    hasError = true;
   }
-
-  const actor = await resolveActor(user.id);
-  if (actor.role === 'learner') {
-    redirect('/admin');
-  }
-
-  const svc = getServiceSupabase();
-  let query = svc
-    .from('learning_tasks')
-    .select(
-      'id, course_id, title, description, status, task_type, start_at, due_at, created_by, created_at, updated_at',
-    )
-    .order('created_at', { ascending: false });
-
-  if (actor.role === 'teacher') {
-    query = query.eq('created_by', user.id);
-  }
-
-  const { data: tasksData, error: queryError } = (await query) as {
-    data: TaskRow[] | null;
-    error: unknown;
-  };
-  const tasks = tasksData ?? [];
-  const hasError = !!queryError;
-
-  const taskIds = tasks.map((t) => t.id);
-
-  const [{ data: taskCourses }, { data: learnerCounts }, { data: learnerProgress }] =
-    await Promise.all([
-      taskIds.length > 0
-        ? svc.from('task_courses').select('task_id, course_id').in('task_id', taskIds)
-        : Promise.resolve({ data: [] }),
-      taskIds.length > 0
-        ? svc.rpc('count_task_learners', { p_task_ids: taskIds })
-        : Promise.resolve({ data: [] }),
-      taskIds.length > 0
-        ? svc.from('task_learners').select('task_id, status').in('task_id', taskIds)
-        : Promise.resolve({ data: [] }),
-    ]);
-
-  const courseCountByTaskId = new Map<string, number>();
-  for (const item of taskCourses ?? [])
-    courseCountByTaskId.set(item.task_id, (courseCountByTaskId.get(item.task_id) ?? 0) + 1);
-  const countByTaskId = new Map(
-    (learnerCounts ?? []).map((r: { task_id?: string; count?: number }) => [
-      r.task_id,
-      r.count ?? 0,
-    ]),
-  );
-
-  const enriched = tasks.map((t) => ({
-    ...t,
-    course_count: courseCountByTaskId.get(t.id) ?? 1,
-    learner_count: (countByTaskId.get(t.id) as number | undefined) ?? 0,
-    completed_count: (learnerProgress ?? []).filter(
-      (item) => item.task_id === t.id && item.status === 'completed',
-    ).length,
-  }));
 
   return (
     <main className="min-h-screen bg-background px-4 py-10">

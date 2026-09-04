@@ -1,101 +1,72 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
-const { getServerSupabaseMock, getServiceSupabaseMock } = vi.hoisted(() => ({
-  getServerSupabaseMock: vi.fn(),
-  getServiceSupabaseMock: vi.fn(),
+const { getCurrentActor, canManageTask, getTask, getTaskAnalytics } = vi.hoisted(() => ({
+  getCurrentActor: vi.fn(),
+  canManageTask: vi.fn(),
+  getTask: vi.fn(),
+  getTaskAnalytics: vi.fn(),
 }));
 
-vi.mock('@/lib/supabase/server', () => ({
-  getServerSupabase: getServerSupabaseMock,
-  getServiceSupabase: getServiceSupabaseMock,
+vi.mock('@/lib/server/auth-context', () => ({ getCurrentActor }));
+vi.mock('@/lib/server/db/pool', () => ({ getDatabasePool: vi.fn(() => ({})) }));
+vi.mock('@/lib/server/db/access-repository', () => ({
+  AccessRepository: class { canManageTask = canManageTask; },
+}));
+vi.mock('@/lib/server/db/learning-analytics-repository', () => ({
+  LearningAnalyticsRepository: class {
+    getTask = getTask;
+    getTaskAnalytics = getTaskAnalytics;
+  },
 }));
 
-function auth(user: { id: string } | null) {
-  return { auth: { getUser: vi.fn().mockResolvedValue({ data: { user } }) } };
-}
-
-function service(role: string, owner: string) {
-  const rows: Record<string, unknown[]> = {
-    profiles: [{ role }],
-    learning_tasks: [{ id: 'task-1', created_by: owner, due_at: null, snapshot_id: 'snap-1' }],
-    task_learners: [
-      {
-        student_id: 's1',
-        status: 'completed',
-        progress_percent: 100,
-        mastery_percent: 100,
-        effective_seconds: 30,
-        last_seen_at: '2026-08-01T00:00:00.000Z',
-      },
-      {
-        student_id: 's2',
-        status: 'not_started',
-        progress_percent: 0,
-        mastery_percent: null,
-        effective_seconds: 0,
-        last_seen_at: null,
-      },
-    ],
-    task_learning_events: [
-      { student_id: 's1', event_type: 'scene_completed', scene_id: 'slide-1' },
-      { student_id: 's1', event_type: 'question_asked', scene_id: 'slide-1' },
-    ],
-    students: [
-      { id: 's1', name: '张三' },
-      { id: 's2', name: '李四' },
-    ],
-    course_snapshots: [
-      { snapshot_data: { scenes: [{ id: 'slide-1', type: 'slide', title: '第一节', order: 1 }] } },
-    ],
-  };
-  return {
-    from(table: string) {
-      const data = rows[table] ?? [];
-      const chain: any = Promise.resolve({ data, error: null });
-      chain.eq = () => chain;
-      chain.in = () => chain;
-      chain.maybeSingle = async () => ({ data: data[0] ?? null, error: null });
-      return { select: () => chain };
-    },
-  };
+async function getReport() {
+  const { GET } = await import('@/app/api/admin/learning-tasks/[id]/report/route');
+  return GET(new Request('http://localhost') as NextRequest, { params: Promise.resolve({ id: 'task-1' }) });
 }
 
 afterEach(() => vi.resetAllMocks());
 
 describe('GET /api/admin/learning-tasks/[id]/report', () => {
-  it('未登录返回 401', async () => {
-    getServerSupabaseMock.mockResolvedValue(auth(null));
-    const { GET } = await import('@/app/api/admin/learning-tasks/[id]/report/route');
-    const res = await GET(new Request('http://localhost') as NextRequest, {
-      params: Promise.resolve({ id: 'task-1' }),
-    });
-    expect(res.status).toBe(401);
-    expect((await res.json()).errorCode).toBe('UNAUTHENTICATED');
+  it('rejects unauthenticated requests', async () => {
+    getCurrentActor.mockResolvedValue(null);
+
+    const response = await getReport();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ errorCode: 'UNAUTHENTICATED' });
   });
 
-  it('教师不能查看他人的任务', async () => {
-    getServerSupabaseMock.mockResolvedValue(auth({ id: 'teacher-1' }));
-    getServiceSupabaseMock.mockReturnValue(service('teacher', 'teacher-2'));
-    const { GET } = await import('@/app/api/admin/learning-tasks/[id]/report/route');
-    const res = await GET(new Request('http://localhost') as NextRequest, {
-      params: Promise.resolve({ id: 'task-1' }),
-    });
-    expect(res.status).toBe(403);
+  it('rejects teachers who cannot manage the task', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
+    canManageTask.mockResolvedValue(false);
+
+    expect((await getReport()).status).toBe(403);
+    expect(getTask).not.toHaveBeenCalled();
   });
 
-  it('任务所有者获得真实聚合数据', async () => {
-    getServerSupabaseMock.mockResolvedValue(auth({ id: 'teacher-1' }));
-    getServiceSupabaseMock.mockReturnValue(service('teacher', 'teacher-1'));
-    const { GET } = await import('@/app/api/admin/learning-tasks/[id]/report/route');
-    const res = await GET(new Request('http://localhost') as NextRequest, {
-      params: Promise.resolve({ id: 'task-1' }),
+  it('returns PostgreSQL aggregate data to the task manager', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
+    canManageTask.mockResolvedValue(true);
+    getTask.mockResolvedValue({ id: 'task-1', due_at: null });
+    getTaskAnalytics.mockResolvedValue({
+      learners: [
+        { student_id: 'learner-1', name: '张三', status: 'completed', progress_percent: 100, mastery_percent: 100, effective_seconds: 30, last_seen_at: '2026-09-01T00:00:00.000Z' },
+        { student_id: 'learner-2', name: '李四', status: 'not_started', progress_percent: 0, mastery_percent: null, effective_seconds: 0, last_seen_at: null },
+      ],
+      courses: [{ course_id: 'course-1', title: '课程一', position: 1, is_required: true }],
+      progress: [
+        { course_id: 'course-1', status: 'completed', effective_seconds: 30 },
+        { course_id: 'course-1', status: 'not_started', effective_seconds: 0 },
+      ],
     });
-    const json = await res.json();
-    expect(res.status).toBe(200);
-    expect(json.data.overview).toMatchObject({ total: 2, completed: 1, effectiveSeconds: 30 });
-    expect(json.data.chapters).toBeUndefined();
-    expect(json.data.learners[0].name).toBe('张三');
+
+    const response = await getReport();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.overview).toMatchObject({ total: 2, completed: 1, effectiveSeconds: 30 });
+    expect(body.data.courses).toEqual([expect.objectContaining({ courseId: 'course-1', completionRate: 50 })]);
+    expect(body.data.learners[0]).toMatchObject({ name: '张三', displayStatus: 'completed' });
   });
 });

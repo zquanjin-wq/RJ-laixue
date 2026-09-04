@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { recordTaskLearningEvent, type TaskLearningEventType } from '@/lib/server/task-learning';
 
 const EVENT_TYPES: TaskLearningEventType[] = [
@@ -29,18 +29,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: '学习事件参数不完整' }, { status: 400 });
   }
 
-  const supabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user)
-    return NextResponse.json(
-      { success: false, error: '未登录', errorCode: 'UNAUTHENTICATED' },
-      { status: 401 },
-    );
+  const actor = await getCurrentActor();
+  if (!actor) return NextResponse.json({ success: false, errorCode: 'UNAUTHENTICATED' }, { status: 401 });
 
   try {
-    const result = await recordTaskLearningEvent(user.id, {
+    const result = await recordTaskLearningEvent(actor.userId, {
       taskId,
       courseId,
       eventType: eventType as TaskLearningEventType,

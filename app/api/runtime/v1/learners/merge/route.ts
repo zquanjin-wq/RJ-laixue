@@ -20,7 +20,8 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { rateLimitByUser } from '@/lib/server/api-guard';
 import { requireRuntimeUser, makeRuntimeStore } from '@/lib/server/runtime-store/request-context';
 import { runtimeStoreErrorResponse } from '@/lib/server/runtime-store/http-error';
-import { getServiceSupabase } from '@/lib/supabase/server';
+import { getDatabasePool } from '@/lib/server/db/pool';
+import { createNodePgRuntimeClient } from '@/lib/server/runtime-store/node-pg-rpc';
 
 export async function POST(req: NextRequest) {
   const guard = await requireRuntimeUser();
@@ -43,20 +44,17 @@ export async function POST(req: NextRequest) {
   }
   try {
     const store = makeRuntimeStore();
+    const runtimeDatabase = createNodePgRuntimeClient(getDatabasePool());
     // 原子 merge：grant 校验 + 核销 + 搬移同一条 SQL。version_conflict 时
     // 先迁移该 learner 的过期版本行（不烧 grant）再重试一次。
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { data, error } = await getServiceSupabase().rpc('runtime_merge_with_grant', {
+      const outcome = String(await runtimeDatabase.scalar('runtime_merge_with_grant', {
         p_grant_id: body.grantId,
         p_from: body.fromLearnerKey,
         p_to: guard.user.id,
         p_expect_version: RUNTIME_DSL_VERSION,
         p_now: new Date().toISOString(),
-      });
-      if (error) {
-        return apiError('INTERNAL_ERROR', 500, `merge 执行失败：${error.message}`);
-      }
-      const outcome = String(data);
+      }));
       if (outcome.startsWith('ok:')) {
         return apiSuccess({ moved: Number(outcome.slice('ok:'.length)) });
       }

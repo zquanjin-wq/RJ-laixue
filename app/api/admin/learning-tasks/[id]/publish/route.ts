@@ -1,88 +1,25 @@
-/**
- * POST /api/admin/learning-tasks/[id]/publish  — 发布任务（RPC 原子+并发安全）
- */
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSupabase } from '@/lib/supabase/server';
-import { getServiceSupabase } from '@/lib/supabase/server';
-import { checkTaskManagePermission } from '@/lib/server/learning-tasks/permissions';
+import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/server/auth-context';
+import { AccessRepository } from '@/lib/server/db/access-repository';
+import { getDatabasePool } from '@/lib/server/db/pool';
+import { TaskRepository } from '@/lib/server/db/task-repository';
 
-export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id: taskId } = await params;
-
+export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const serverSupabase = await getServerSupabase();
-    const {
-      data: { user },
-    } = await serverSupabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: '未登录', errorCode: 'UNAUTHENTICATED' },
-        { status: 401 },
-      );
+    const actor = await requireUser();
+    const taskId = (await params).id;
+    if (!await new AccessRepository(getDatabasePool()).canManageTask(actor, taskId)) {
+      return NextResponse.json({ success: false, errorCode: 'FORBIDDEN', error: '无权发布此任务。' }, { status: 403 });
     }
-
-    const perm = await checkTaskManagePermission(user.id, taskId);
-    if (!perm.ok) {
-      return NextResponse.json(
-        { success: false, error: '无权发布此任务', errorCode: 'FORBIDDEN' },
-        { status: 403 },
-      );
-    }
-
-    const svc = getServiceSupabase();
-
-    const { data: rpcResult, error: rpcError } = await svc.rpc('publish_task_course_package', {
-      p_task_id: taskId,
-      p_user_id: user.id,
-    });
-
-    if (rpcError) {
-      if (rpcError.message.includes('TASK_NOT_FOUND')) {
-        return NextResponse.json(
-          { success: false, error: '任务不存在', errorCode: 'TASK_NOT_FOUND' },
-          { status: 404 },
-        );
-      }
-      if (rpcError.message.includes('Only draft') || rpcError.message.includes('TASK_NOT_DRAFT')) {
-        return NextResponse.json(
-          { success: false, error: '非草稿状态不可发布', errorCode: 'TASK_NOT_DRAFT' },
-          { status: 400 },
-        );
-      }
-      if (
-        rpcError.message.includes('No assigned learners') ||
-        rpcError.message.includes('TASK_EMPTY_ROSTER')
-      ) {
-        return NextResponse.json(
-          { success: false, error: '任务没有分配学员', errorCode: 'TASK_EMPTY_ROSTER' },
-          { status: 400 },
-        );
-      }
-      if (rpcError.message.includes('COURSE_NOT_FOUND')) {
-        return NextResponse.json(
-          { success: false, error: '课程不存在', errorCode: 'COURSE_NOT_FOUND' },
-          { status: 404 },
-        );
-      }
-      throw rpcError;
-    }
-
-    const result = rpcResult as Record<string, unknown>;
-    return NextResponse.json({
-      success: true,
-      data: {
-        id: taskId,
-        status: result.status,
-        snapshot_id: result.snapshot_id,
-        share_token: result.share_token,
-        published: result.published,
-      },
-    });
-  } catch (error: unknown) {
-    console.error('[admin/learning-tasks/[id]/publish] failed:', error);
-    return NextResponse.json(
-      { success: false, error: '发布任务失败', errorCode: 'INTERNAL_ERROR' },
-      { status: 500 },
-    );
+    const result = await new TaskRepository(getDatabasePool()).publishTask(taskId, actor.userId);
+    return NextResponse.json({ success: true, data: { id: result.taskId, status: 'published', share_token: result.shareToken, published: result.publishedAt } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message === 'Unauthenticated') return NextResponse.json({ success: false, errorCode: 'UNAUTHENTICATED', error: '请先登录。' }, { status: 401 });
+    if (message === 'Task not found') return NextResponse.json({ success: false, errorCode: 'TASK_NOT_FOUND', error: '任务不存在。' }, { status: 404 });
+    if (/Only draft/.test(message)) return NextResponse.json({ success: false, errorCode: 'TASK_NOT_DRAFT', error: '非草稿状态不可发布。' }, { status: 400 });
+    if (/requires courses and learners/.test(message)) return NextResponse.json({ success: false, errorCode: 'TASK_EMPTY_ROSTER', error: '任务必须包含课件和学员。' }, { status: 400 });
+    console.error('[admin/learning-tasks] publish failed', error);
+    return NextResponse.json({ success: false, errorCode: 'INTERNAL_ERROR', error: '发布任务失败。' }, { status: 500 });
   }
 }

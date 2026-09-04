@@ -6,45 +6,27 @@
  */
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
-import {
-  resolveActor,
-  checkCoursePublishPermission,
-} from '@/lib/server/learning-tasks/permissions';
+import { requireUser } from '@/lib/server/auth-context';
+import { CourseRepository } from '@/lib/server/db/course-repository';
+import { getDatabasePool } from '@/lib/server/db/pool';
 import { Button } from '@/components/ui/button';
 import { CreateTaskForm } from '../_components/create-task-form';
 
 export const dynamic = 'force-dynamic';
 
 export default async function NewLearningTaskPage() {
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-
-  if (!user) {
+  let courses: Array<{ id: string; title: string }>;
+  try {
+    const actor = await requireUser();
+    if (actor.role === 'learner') redirect('/admin');
+    const repository = new CourseRepository(getDatabasePool());
+    const records = actor.role === 'admin'
+      ? await repository.listCourses()
+      : await repository.listOwnedCourses(actor.userId);
+    courses = records.map((course) => ({ id: course.id, title: course.title }));
+  } catch {
     redirect('/login?next=/admin/learning-tasks/new');
   }
-
-  const actor = await resolveActor(user.id);
-  if (actor.role === 'learner') {
-    redirect('/admin');
-  }
-
-  const svc = getServiceSupabase();
-
-  // 拉取课程候选：admin 看全部，teacher 看自己的 + 遗留课程
-  const { data: coursesData } = await svc
-    .from('courses')
-    .select('id, title, created_by')
-    .order('updated_at', { ascending: false });
-
-  const courses = (coursesData ?? [])
-    .filter((c) => {
-      if (actor.role === 'admin') return true;
-      return !c.created_by || c.created_by === user.id;
-    })
-    .map((c) => ({ id: c.id, title: c.title }));
 
   return (
     <main className="min-h-screen bg-background px-4 py-10">
