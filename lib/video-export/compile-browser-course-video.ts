@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { slideToPng } from '@openmaic/renderer/snapshot';
+import { slideToPng, type ResolvedSnapshotImage } from '@openmaic/renderer/snapshot';
 import type { ClassroomManifest } from '@/lib/export/classroom-zip-types';
 import { compileCourseVideo } from './compile-course-video';
 import { prepareCourseVideoSource, type CaptureSlide } from './course-video-source';
@@ -35,6 +35,20 @@ async function readAudioDuration(blob: Blob): Promise<number> {
   }
 }
 
+async function proxyImageForSnapshot(src: string): Promise<ResolvedSnapshotImage> {
+  const response = await fetch('/api/proxy-media', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url: src }),
+  });
+  if (!response.ok) {
+    throw new Error(`课程图片无法安全导出（HTTP ${response.status}）`);
+  }
+
+  const objectUrl = URL.createObjectURL(await response.blob());
+  return { src: objectUrl, cleanup: () => URL.revokeObjectURL(objectUrl) };
+}
+
 /**
  * Browser bridge for the eventual export button: capture the existing PPTist
  * canvas with the app renderer, then compile those snapshots and locally held
@@ -56,7 +70,12 @@ export async function compileBrowserCourseVideo(
   const captureSlide =
     options.captureSlide ??
     (async (slide) => {
-      const image = await slideToPng(slide, { width: 1280, pixelRatio: 1, format: 'blob' });
+      const image = await slideToPng(slide, {
+        width: 1280,
+        pixelRatio: 1,
+        format: 'blob',
+        resolveImage: proxyImageForSnapshot,
+      });
       return image as Blob;
     });
   const source = await prepareCourseVideoSource(manifest, captureSlide);

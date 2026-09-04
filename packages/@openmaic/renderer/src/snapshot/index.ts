@@ -64,6 +64,17 @@ export interface SlideToPngOptions {
    * was captured. Do not use in production.
    */
   debugVisibleMs?: number;
+  /**
+   * Optionally replace cross-origin image URLs with canvas-safe local URLs
+   * before the snapshot. Callers can route CORS-locked assets through their
+   * own authenticated media proxy and return a blob URL here.
+   */
+  resolveImage?: (src: string) => Promise<ResolvedSnapshotImage>;
+}
+
+export interface ResolvedSnapshotImage {
+  src: string;
+  cleanup?: () => void;
 }
 
 const DEFAULT_VIEWPORT_RATIO = 0.5625;
@@ -112,6 +123,7 @@ export async function slideToPng(
   document.body.appendChild(container);
 
   let root: Root | null = null;
+  const imageCleanups: Array<() => void> = [];
   try {
     root = createRoot(container);
     // flushSync forces the initial commit to happen synchronously instead of
@@ -174,6 +186,8 @@ export async function slideToPng(
     await Promise.all(
       Array.from(container.querySelectorAll('video')).map((video) => replaceVideoWithFrame(video)),
     );
+
+    imageCleanups.push(...(await resolveSnapshotAssets(container, options.resolveImage)));
 
     // html2canvas-pro doesn't implement CSS `filter` functions (brightness /
     // contrast / saturate / opacity etc.), so PowerPoint picture corrections —
@@ -262,12 +276,74 @@ export async function slideToPng(
       const r = root;
       setTimeout(() => r.unmount(), 0);
     }
+    imageCleanups.forEach((cleanup) => cleanup());
     setTimeout(() => container.remove(), 0);
   }
 }
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+async function resolveSnapshotAssets(
+  container: HTMLElement,
+  resolveImage: SlideToPngOptions['resolveImage'],
+): Promise<Array<() => void>> {
+  if (!resolveImage) return [];
+
+  const cleanups: Array<() => void> = [];
+  await Promise.all(
+    Array.from(container.querySelectorAll<HTMLImageElement>('img')).map(async (img) => {
+      const src = img.currentSrc || img.src;
+      if (!shouldResolveImage(src)) return;
+
+      const resolved = await resolveImage(src);
+      img.removeAttribute('srcset');
+      img.src = resolved.src;
+      if (resolved.cleanup) cleanups.push(resolved.cleanup);
+      await waitForImage(img);
+    }),
+  );
+
+  await Promise.all(
+    Array.from(container.querySelectorAll<HTMLElement>('*')).map(async (element) => {
+      const backgroundImage = element.style.backgroundImage;
+      if (!backgroundImage.includes('url(')) return;
+
+      const replacements = await Promise.all(
+        [...backgroundImage.matchAll(/url\((['"]?)(.*?)\1\)/g)].map(async (match) => {
+          const src = match[2];
+          if (!shouldResolveImage(src)) return match[0];
+
+          const resolved = await resolveImage(src);
+          if (resolved.cleanup) cleanups.push(resolved.cleanup);
+          return `url("${resolved.src}")`;
+        }),
+      );
+
+      let replacementIndex = 0;
+      element.style.backgroundImage = backgroundImage.replace(/url\((['"]?)(.*?)\1\)/g, () => {
+        const replacement = replacements[replacementIndex];
+        replacementIndex += 1;
+        return replacement;
+      });
+    }),
+  );
+
+  return cleanups;
+}
+
+function shouldResolveImage(src: string): boolean {
+  const url = new URL(src, window.location.href);
+  return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== window.location.origin;
+}
+
+function waitForImage(img: HTMLImageElement): Promise<void> {
+  if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    img.addEventListener('load', () => resolve(), { once: true });
+    img.addEventListener('error', () => reject(new Error('课程图片加载失败')), { once: true });
+  });
 }
 
 /**
