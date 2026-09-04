@@ -5,7 +5,7 @@
  * 必须登录；服务端解析身份，不接受客户端 studentId。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { loadTaskSnapshot } from '@/lib/server/learning-tasks/snapshot-loader';
 
 export const dynamic = 'force-dynamic';
@@ -20,18 +20,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-  if (!user) {
+  const actor = await getCurrentActor();
+  if (!actor) {
     return NextResponse.json(
       { success: false, error: '未登录', errorCode: 'UNAUTHENTICATED' },
       { status: 401 },
     );
   }
 
-  const result = await loadTaskSnapshot(user.id, taskId, courseId);
+  const result = await loadTaskSnapshot(actor.userId, taskId, courseId);
 
   if (!result.ok) {
     return NextResponse.json(
