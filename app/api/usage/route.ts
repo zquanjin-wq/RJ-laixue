@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { requireAuthOrTeacher } from '@/lib/server/api-guard';
 import {
   readUsageRecords,
   type UsageRecord,
@@ -9,6 +10,8 @@ import {
 } from '@/lib/server/usage-storage';
 
 const log = createLogger('UsageAPI');
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+const MAX_MONTHS = 12;
 
 interface Bucket {
   key: string;
@@ -69,9 +72,21 @@ function dayKey(createdAt: number): string {
  * day, and by modality. Pure usage — no cost. Optional `?months=YYYY-MM,...`.
  */
 export async function GET(req: NextRequest) {
+  const guard = await requireAuthOrTeacher(['admin']);
+  if (!guard.ok) return guard.response;
+
   try {
     const monthsParam = req.nextUrl.searchParams.get('months');
-    const months = monthsParam ? monthsParam.split(',').map((s) => s.trim()) : undefined;
+    const months = monthsParam ? monthsParam.split(',').map((month) => month.trim()) : undefined;
+    if (
+      months &&
+      (months.length === 0 ||
+        months.length > MAX_MONTHS ||
+        months.some((month) => !MONTH_KEY.test(month)) ||
+        new Set(months).size !== months.length)
+    ) {
+      return apiError('INVALID_REQUEST', 400, 'Invalid month filter');
+    }
 
     const records = await readUsageRecords({ months });
 
@@ -107,10 +122,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     log.error('Usage aggregation failed:', error);
-    return apiError(
-      'INTERNAL_ERROR',
-      500,
-      error instanceof Error ? error.message : 'Failed to read usage',
-    );
+    return apiError('INTERNAL_ERROR', 500, 'Failed to read usage');
   }
 }
