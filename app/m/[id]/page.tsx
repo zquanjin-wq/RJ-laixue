@@ -8,7 +8,7 @@
 
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { getCurrentActor } from '@/lib/server/auth-context';
 import { loadMobileCourse } from '@/lib/mobile/course-data';
 import { buildChapters } from '@/lib/mobile/scene-helpers';
 import { MobilePlayer } from './_components/MobilePlayer';
@@ -31,19 +31,15 @@ export default async function MobilePlayerPage({ params, searchParams }: PagePro
   const taskId = sp.task;
   const taskToken = sp.token;
 
-  const serverSupabase = await getServerSupabase();
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-
-  if (!user) {
+  const actor = await getCurrentActor();
+  if (!actor) {
     const next = taskId
       ? `/m/${id}?task=${encodeURIComponent(taskId)}${taskToken ? `&token=${encodeURIComponent(taskToken)}` : ''}`
       : `/m/${id}`;
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
 
-  const course = await loadMobileCourse(id, taskId);
+  const course = await loadMobileCourse(actor.userId, id, taskId);
   if (!course) {
     notFound();
   }

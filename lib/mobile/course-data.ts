@@ -1,32 +1,6 @@
-/**
- * lib/mobile/course-data.ts
- *
- * Server-side fetcher for a single course's full data (stage + scenes
- * + outlines). Reuses /api/courses/[id] (which uses service_role and
- * returns the full course JSON).
- *
- * ── SECURITY ─────────────────────────────────────────────────────
- * THIS MODULE IS SERVER-ONLY. It reads `SUPABASE_SERVICE_ROLE_KEY`
- * (admin key, bypasses RLS) to look up courses by id. If this file
- * is ever imported from a 'use client' module, the service_role key
- * will leak into the browser bundle and **anyone can read / mutate
- * the entire courses table**. Keep it server-only.
- *
- * The current call graph (verified 2026-07-23):
- *   - imported by app/m/[id]/page.tsx (RSC, server-only)
- *   - NOT imported by any 'use client' module
- *   - mobile player shell hands the result to MobilePlayer, which is
- *     client-only, but it receives plain JSON (no service_role)
- *
- * If you need to add a new caller, prefer going through
- * /api/courses/[id] (which now does auth + role + assignment check
- * as of 2026-07-23) instead of importing this module directly. That
- * way the call site never sees the service_role key at all.
- */
-
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
 import type { Scene } from '@/lib/types/stage';
+import { getDatabasePool } from '@/lib/server/db/pool';
+import { CourseRepository } from '@/lib/server/db/course-repository';
 import { loadTaskSnapshot } from '@/lib/server/learning-tasks/snapshot-loader';
 
 export interface MobileCourse {
@@ -41,7 +15,6 @@ export interface MobileCourse {
     outlines: unknown[];
     audioGeneration?: unknown;
   };
-  /** Teacher voice config from stage (for TTS fallback on mobile). */
   teacherVoiceConfig?: {
     providerId: string;
     voiceId: string;
@@ -50,51 +23,15 @@ export interface MobileCourse {
 }
 
 export async function loadMobileCourse(
+  userId: string,
   courseId: string,
   taskId?: string,
 ): Promise<MobileCourse | null> {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(
-          cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>,
-        ) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options as Parameters<typeof cookieStore.set>[2]),
-            );
-          } catch {
-            // Server component — can't write cookies. Auth refresh is handled
-            // by middleware.
-          }
-        },
-      },
-    },
-  );
-
-  // Identify the signed-in user via cookie session.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  // Task mode: authoritative snapshot only.
   if (taskId) {
-    const result = await loadTaskSnapshot(user.id, taskId);
+    const result = await loadTaskSnapshot(userId, taskId, courseId);
     if (!result.ok) return null;
-
-    const data = result.data;
-    const stage = data.stage as Record<string, unknown> | undefined;
-    const tvc = stage?.teacherVoiceConfig as
-      | { providerId: string; voiceId: string; modelId?: string }
-      | undefined;
-
+    const stage = result.data.stage as Record<string, unknown> | undefined;
+    const teacherVoiceConfig = stage?.teacherVoiceConfig as MobileCourse['teacherVoiceConfig'];
     return {
       id: courseId,
       title: (stage?.name as string) || '未命名课件',
@@ -102,58 +39,30 @@ export async function loadMobileCourse(
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       data: {
-        stage: data.stage,
-        scenes: Array.isArray(data.scenes) ? (data.scenes as Scene[]) : [],
-        outlines: Array.isArray(data.outlines) ? data.outlines : [],
+        stage: result.data.stage,
+        scenes: result.data.scenes as Scene[],
+        outlines: result.data.outlines,
       },
-      teacherVoiceConfig: tvc
-        ? { providerId: tvc.providerId, voiceId: tvc.voiceId, modelId: tvc.modelId }
-        : undefined,
+      teacherVoiceConfig,
     };
   }
 
-  // Use service_role to bypass RLS. Same pattern as the existing
-  // /api/courses/[id] route.
-  const { createClient } = await import('@supabase/supabase-js');
-  const serviceSupabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
-  );
-
-  const { data, error } = await serviceSupabase
-    .from('courses')
-    .select('id, title, topic, created_at, updated_at, data')
-    .eq('id', courseId)
-    .maybeSingle();
-
-  if (error || !data) return null;
-
-  // The courses.data column is JSONB with a known shape (stage, scenes,
-  // outlines, audioGeneration).
-  const courseData = (data.data ?? {}) as MobileCourse['data'];
-  const stage = courseData.stage as Record<string, unknown> | undefined;
-
-  // Extract teacherVoiceConfig from stage (set at course creation time,
-  // read-only here — we never modify it).
-  const tvc = stage?.teacherVoiceConfig as
-    | { providerId: string; voiceId: string; modelId?: string }
-    | undefined;
-
+  const course = await new CourseRepository(getDatabasePool()).getCourse(courseId);
+  if (!course) return null;
+  const data = (course.content ?? {}) as MobileCourse['data'];
+  const stage = data.stage as Record<string, unknown> | undefined;
   return {
-    id: data.id,
-    title: data.title,
-    topic: data.topic ?? '',
-    created_at: data.created_at,
-    updated_at: data.updated_at,
+    id: course.id,
+    title: course.title || '未命名课件',
+    topic: course.topic || '',
+    created_at: course.createdAt.toISOString(),
+    updated_at: course.updatedAt.toISOString(),
     data: {
-      stage: courseData.stage,
-      scenes: Array.isArray(courseData.scenes) ? courseData.scenes : [],
-      outlines: Array.isArray(courseData.outlines) ? courseData.outlines : [],
-      audioGeneration: courseData.audioGeneration,
+      stage: data.stage,
+      scenes: Array.isArray(data.scenes) ? data.scenes : [],
+      outlines: Array.isArray(data.outlines) ? data.outlines : [],
+      audioGeneration: data.audioGeneration,
     },
-    teacherVoiceConfig: tvc
-      ? { providerId: tvc.providerId, voiceId: tvc.voiceId, modelId: tvc.modelId }
-      : undefined,
+    teacherVoiceConfig: stage?.teacherVoiceConfig as MobileCourse['teacherVoiceConfig'],
   };
 }
