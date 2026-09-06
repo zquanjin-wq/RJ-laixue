@@ -48,6 +48,7 @@ sudo docker compose --project-name laixue-rebuild --env-file .env.production bui
 sudo docker compose --project-name laixue-rebuild --env-file .env.production up -d --no-deps --force-recreate app
 printf '%s\n' '$shortRevision' > .deployed-revision
 "@
+  $remoteScript = $remoteScript -replace "`r`n", "`n"
   $base64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
   & ssh -i $SshKeyPath "${RemoteUser}@${HostName}" "echo $base64 | base64 -d | bash"
   if ($LASTEXITCODE -ne 0) { throw 'Remote release failed.' }

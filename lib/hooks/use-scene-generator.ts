@@ -55,23 +55,14 @@ const OUTLINE_TIMEOUT_MS = 3 * 60 * 1000;
 const TOTAL_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
- * Fire-and-forget cloud save after successful generation completes.
+ * Persist a fully generated course before exposing it as complete.
  *
- * Why fire-and-forget (not awaited): generation itself is already slow,
- * and saveStageToCloud bundles an audio publish pass that can add
- * another 5-30s. Blocking the caller on top of that would keep
- * `generationComplete` truthy-but-frozen, making the user stare at a
- * "生成中" UI while their course is already done. Instead we flip the
- * completion flag immediately and let the upload run in the background;
- * a toast tells the user when it lands or when it failed (in which case
- * they can fall back to the manual "保存到云端" button).
- *
- * Not called from the `paused` / `aborted` paths — if generation is
- * incomplete, the user may still want to retry outlines, and an upload
- * of half-baked data is more harmful than helpful.
+ * The save can publish audio and externalize assets, so completion waits
+ * for the same durable cloud write used by the manual save controls.
+ * A failure preserves the local course and shows the user a retry path.
  */
-function fireAndForgetAutoSave(stageId: string): void {
-  saveStageToCloud(stageId)
+async function saveGeneratedCourseToCloud(stageId: string): Promise<void> {
+  await saveStageToCloud(stageId)
     .then(() => {
       toast.success('课程已自动保存到云端');
     })
@@ -82,13 +73,13 @@ function fireAndForgetAutoSave(stageId: string): void {
 }
 
 /**
- * Single switch for the *auto-save-on-generation-complete* path.
+ * Single switch for the *save-on-generation-complete* path.
  * Phase 4 (RuntimeStore cloud save) flips this off to retire
- * fireAndForgetAutoSave without touching any other file.
+ * saveGeneratedCourseToCloud without touching any other file.
  *
  * Set NEXT_PUBLIC_LEGACY_AUTOSAVE=0 in env to disable. Default = on.
  *
- * IMPORTANT: This flag ONLY gates the two fireAndForgetAutoSave
+ * IMPORTANT: This flag ONLY gates the two saveGeneratedCourseToCloud
  * call sites below. It does NOT affect:
  *   - The scene-order repair re-upload in app/classroom/[id]/page.tsx
  *     (line 280, triggered by an explicit self-heal pass)
@@ -799,13 +790,11 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         .sort((a, b) => a.order - b.order);
 
       if (pending.length === 0) {
-        store.getState().setGenerationStatus('completed');
         store.getState().setGeneratingOutlines([]);
+        if (isLegacyAutoSaveEnabled()) await saveGeneratedCourseToCloud(stage.id);
+        store.getState().setGenerationStatus('completed');
         store.getState().markGenerationCompleteIfDone();
-        if (store.getState().generationComplete) {
-          options.onComplete?.();
-          if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
-        }
+        if (store.getState().generationComplete) options.onComplete?.();
         // Nothing to wait on — disarm both watchdogs proactively.
         clearAllOutlineTimeouts();
         abortAllOutlineRequests();
@@ -1060,15 +1049,13 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               // (store status is 'completed' but user sees the hint below)
               await Promise.allSettled(pendingTtsBg);
             }
-            store.getState().setGenerationStatus('completed');
             store.getState().setGeneratingOutlines([]);
+            if (isLegacyAutoSaveEnabled()) await saveGeneratedCourseToCloud(stage.id);
+            store.getState().setGenerationStatus('completed');
             store.getState().markGenerationCompleteIfDone();
-            if (store.getState().generationComplete) {
-              options.onComplete?.();
-              if (isLegacyAutoSaveEnabled()) fireAndForgetAutoSave(stage.id);
-            }
+            if (store.getState().generationComplete) options.onComplete?.();
             // Clean completion: disarm both watchdogs so no late firing
-            // can race the auto-save toast.
+            // can race the completion transition.
             clearAllOutlineTimeouts();
             clearTotalTimeout();
           }
