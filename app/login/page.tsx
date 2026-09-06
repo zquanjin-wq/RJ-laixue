@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { SiteMigrationNotice } from '@/components/site-migration-notice';
 import { safeNextPath } from '@/lib/utils/safe-next';
 
 function LoginContent() {
@@ -55,6 +56,7 @@ function LoginContent() {
 
   return (
     <main className="min-h-screen bg-background flex items-center justify-center px-4">
+      <SiteMigrationNotice />
       <Card className="w-full max-w-sm rounded-lg">
         <CardHeader>
           <CardTitle>登录来学</CardTitle>

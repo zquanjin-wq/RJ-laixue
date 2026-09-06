@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { TeachingDashboard } from '@/components/teaching-dashboard';
 import { AdminGate } from '@/components/auth-gate';
+import { SiteMigrationNotice } from '@/components/site-migration-notice';
 import {
   ArrowUp,
   Check,
@@ -1471,8 +1472,11 @@ function ClassroomCard({
 
 export default function Page() {
   return (
-    <AdminGate>
-      <TeachingDashboard />
-    </AdminGate>
+    <>
+      <AdminGate>
+        <TeachingDashboard />
+      </AdminGate>
+      <SiteMigrationNotice />
+    </>
   );
 }
