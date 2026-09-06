@@ -157,11 +157,23 @@ export class CourseVideoExportRepository {
            completed_at = now(),
            updated_at = now()
        WHERE status = 'running'
+         AND NOT (request ? 'render')
          AND updated_at < now() - ($1::bigint * interval '1 millisecond')
        RETURNING id`,
       [maxAgeMs],
     );
     return result.rowCount ?? 0;
+  }
+
+  async findRunningWithRender(): Promise<CourseVideoExport | null> {
+    const result = await this.pool.query<CourseVideoExport>(
+      `SELECT ${columns}
+       FROM app.course_video_exports
+       WHERE status = 'running' AND request ? 'render'
+       ORDER BY started_at NULLS LAST, created_at
+       LIMIT 1`,
+    );
+    return result.rows[0] ?? null;
   }
 
   async updateStatus(input: {
