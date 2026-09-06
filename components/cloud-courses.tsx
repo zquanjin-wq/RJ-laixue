@@ -26,6 +26,10 @@ type VideoExport = {
   status: VideoExportStatus;
   downloadUrl: string | null;
   failureReason: string | null;
+  progress: number | null;
+  currentStage: string | null;
+  framesRendered: number | null;
+  totalFrames: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -76,14 +80,19 @@ function CourseStatus({ state }: { state: CourseSaveState }) {
 function VideoStatus({ job, capability }: { job?: VideoExport; capability: VideoExportCapability | null }) {
   if (job?.status === 'completed') return <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700"><i className="size-2 rounded-full bg-emerald-500" />已生成</span>;
   if (job?.status === 'failed' || job?.status === 'cancelled') return <span className="inline-flex items-center gap-1.5 text-sm font-medium text-red-700"><i className="size-2 rounded-full bg-red-500" />{job.status === 'failed' ? '生成失败' : '已取消'}</span>;
-  if (job) return <span className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700"><i className="size-2 animate-pulse rounded-full bg-blue-500" />{job.status === 'queued' ? '等待生成' : '生成中'}</span>;
+  if (job?.status === 'queued') return <span className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700"><i className="size-2 animate-pulse rounded-full bg-blue-500" />等待生成</span>;
+  if (job?.status === 'rendering') return <span className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700"><i className="size-2 animate-pulse rounded-full bg-blue-500" />生成中{job.progress === null ? '' : ` ${Math.round(job.progress * 100)}%`}</span>;
   if (capability && !capability.available) return <span title={capability.message} className="inline-flex items-center gap-1.5 text-sm text-slate-500"><i className="size-2 rounded-full bg-slate-300" />未配置</span>;
   return <span className="text-sm text-slate-400">未生成</span>;
 }
 
 function videoActivity(job: VideoExport | undefined, capability: VideoExportCapability | null) {
   if (job?.status === 'queued') return `已提交于 ${formatDate(job.createdAt)}`;
-  if (job?.status === 'rendering') return `生成中，状态更新于 ${formatDate(job.updatedAt)}`;
+  if (job?.status === 'rendering') {
+    const progress = job.progress === null ? '正在准备渲染' : `渲染进度 ${Math.round(job.progress * 100)}%`;
+    const frames = job.framesRendered !== null && job.totalFrames !== null ? ` · ${job.framesRendered}/${job.totalFrames} 帧` : '';
+    return `${progress}${frames}${job.currentStage ? ` · ${job.currentStage}` : ''}`;
+  }
   if (job?.status === 'completed') return `已生成于 ${formatDate(job.updatedAt)}`;
   if (job?.status === 'failed') return job.failureReason ? `生成失败：${job.failureReason}` : `生成失败于 ${formatDate(job.updatedAt)}`;
   if (job?.status === 'cancelled') return `已取消于 ${formatDate(job.updatedAt)}`;

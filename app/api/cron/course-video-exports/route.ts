@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { runNextCourseVideoExport } from '@/lib/server/course-video-export-worker';
+import { startNextCourseVideoExport } from '@/lib/server/course-video-export-worker';
 
 export const runtime = 'nodejs';
 
@@ -8,5 +8,5 @@ export async function POST(request: NextRequest) {
   if (!expected || request.headers.get('authorization') !== `Bearer ${expected}`) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
-  return NextResponse.json({ success: true, processed: await runNextCourseVideoExport() });
+  return NextResponse.json({ success: true, started: startNextCourseVideoExport() });
 }

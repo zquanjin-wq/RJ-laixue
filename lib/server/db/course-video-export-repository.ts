@@ -124,6 +124,46 @@ export class CourseVideoExportRepository {
     return result.rows[0] ?? null;
   }
 
+  async updateRenderProgress(input: {
+    id: string;
+    renderJobId: string;
+    progress: number;
+    currentStage?: string;
+    framesRendered?: number;
+    totalFrames?: number;
+  }): Promise<CourseVideoExport | null> {
+    const render = {
+      jobId: input.renderJobId,
+      progress: Math.max(0, Math.min(1, input.progress)),
+      currentStage: input.currentStage ?? null,
+      framesRendered: input.framesRendered ?? null,
+      totalFrames: input.totalFrames ?? null,
+    };
+    const result = await this.pool.query<CourseVideoExport>(
+      `UPDATE app.course_video_exports
+       SET request = jsonb_set(request, '{render}', $2::jsonb, true), updated_at = now()
+       WHERE id = $1 AND status = 'running'
+       RETURNING ${columns}`,
+      [input.id, JSON.stringify(render)],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async failStaleRunning(maxAgeMs: number): Promise<number> {
+    const result = await this.pool.query<{ id: string }>(
+      `UPDATE app.course_video_exports
+       SET status = 'failed',
+           error = '视频渲染进程长时间未响应，任务已停止。请重试。',
+           completed_at = now(),
+           updated_at = now()
+       WHERE status = 'running'
+         AND updated_at < now() - ($1::bigint * interval '1 millisecond')
+       RETURNING id`,
+      [maxAgeMs],
+    );
+    return result.rowCount ?? 0;
+  }
+
   async updateStatus(input: {
     id: string;
     status: MutableCourseVideoExportStatus;

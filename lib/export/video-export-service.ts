@@ -35,11 +35,28 @@ async function capability(): Promise<VideoExportCapability> {
   return unavailableCapability;
 }
 
+type RenderProgress = {
+  progress?: unknown;
+  currentStage?: unknown;
+  framesRendered?: unknown;
+  totalFrames?: unknown;
+};
+
+function numberOrNull(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function present(row: CourseVideoExport, downloadUrl: string | null = null): VideoExportRecord {
+  const request = row.request as { render?: RenderProgress } | null;
+  const render = request?.render;
   return {
     id: row.id, courseId: row.courseId, requestedBy: row.requestedBy, format: 'mp4',
     status: row.status === 'running' ? 'rendering' : row.status === 'succeeded' ? 'completed' : row.status,
     sourceRevision: null, downloadUrl, failureReason: row.error,
+    progress: numberOrNull(render?.progress),
+    currentStage: typeof render?.currentStage === 'string' ? render.currentStage : null,
+    framesRendered: numberOrNull(render?.framesRendered),
+    totalFrames: numberOrNull(render?.totalFrames),
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   };
 }

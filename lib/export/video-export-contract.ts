@@ -19,6 +19,10 @@ export interface VideoExportRecord {
   sourceRevision: number | null;
   downloadUrl: string | null;
   failureReason: string | null;
+  progress: number | null;
+  currentStage: string | null;
+  framesRendered: number | null;
+  totalFrames: number | null;
   createdAt: string;
   updatedAt: string;
 }
