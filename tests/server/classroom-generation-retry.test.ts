@@ -187,4 +187,48 @@ describe('classroom scene generation retries', () => {
 
     expect(mocks.generateSceneActions).toHaveBeenCalledTimes(1);
   });
+
+  it('restores completed pages after a failed commit without repeating generation or changing IDs', async () => {
+    const { generateClassroom } = await import('@/lib/server/classroom-generation');
+    const { generationRequestHash } =
+      await import('@/lib/server/db/classroom-generation-repository');
+    const saved = new Map<string, { hash: string; value: unknown }>();
+    const checkpoints = {
+      async run<T>(key: string, input: unknown, produce: () => Promise<T>): Promise<T> {
+        const hash = generationRequestHash(input);
+        const prior = saved.get(key);
+        if (prior?.hash === hash) return structuredClone(prior.value) as T;
+        const value = await produce();
+        saved.set(key, { hash, value: structuredClone(value) });
+        return value;
+      },
+    };
+    mocks.generateSceneContent.mockResolvedValue(slideContent);
+    const persist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('database temporarily unavailable'))
+      .mockImplementation(async (data) => ({
+        ...data,
+        url: '/courses/fixed-course',
+        createdAt: '2026-09-07',
+      }));
+    const options = {
+      baseUrl: 'http://localhost',
+      execution: { courseId: 'fixed-course', checkpoints },
+      persist,
+    };
+    await expect(generateClassroom({ requirement: 'retry' }, options)).rejects.toThrow(
+      'database temporarily unavailable',
+    );
+    const firstDraft = structuredClone(persist.mock.calls[0][0]);
+    const result = await generateClassroom({ requirement: 'retry' }, options);
+    expect(result.id).toBe('fixed-course');
+    expect(result.scenes).toEqual(firstDraft.scenes);
+    expect(result.stage).toEqual(firstDraft.stage);
+    expect(mocks.generateSceneOutlinesFromRequirements).toHaveBeenCalledTimes(1);
+    expect(mocks.generateSceneContent).toHaveBeenCalledTimes(1);
+    expect(mocks.generateSceneActions).toHaveBeenCalledTimes(1);
+    expect(mocks.createSceneWithActions).toHaveBeenCalledTimes(1);
+    expect(mocks.persistClassroom).not.toHaveBeenCalled();
+  });
 });

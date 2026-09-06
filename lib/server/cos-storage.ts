@@ -56,6 +56,14 @@ export class CosStorage {
     });
   }
 
+  async assertObjectExists(key: string): Promise<void> {
+    await this.client.headObject({
+      Bucket: this.config.bucket,
+      Region: this.config.region,
+      Key: key,
+    });
+  }
+
   async getDownloadUrl(key: string, expiresInSeconds = 900): Promise<string> {
     return this.client.getObjectUrl({
       Bucket: this.config.bucket,

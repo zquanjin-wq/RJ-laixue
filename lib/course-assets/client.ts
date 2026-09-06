@@ -87,6 +87,15 @@ async function requestSignedUpload({
   return result.data as SignedUploadResponse;
 }
 
+async function confirmCourseUpload(path: string): Promise<void> {
+  const response = await fetch('/api/course-assets/confirm-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) throw new Error(`资产上传确认失败(HTTP ${response.status})`);
+}
+
 /**
  * 浏览器通过短期地址直传 Blob 到 COS，文件不经过应用服务器。
  */
@@ -113,6 +122,7 @@ export async function uploadCourseBlob(
     body: blob,
   });
   if (!upload.ok) throw new Error(`资产直传失败(HTTP ${upload.status})`);
+  await confirmCourseUpload(signed.path);
   return signed.publicUrl as string;
 }
 
@@ -152,6 +162,7 @@ export async function uploadCourseMaterial(
     body: file,
   });
   if (!upload.ok) throw new Error(`课程材料直传失败(HTTP ${upload.status})`);
+  await confirmCourseUpload(signed.path);
   return { path: signed.path, size: file.size };
 }
 
@@ -178,6 +189,7 @@ export async function uploadCourseTextMaterial(
     body: blob,
   });
   if (!upload.ok) throw new Error(`文本作业直传失败(HTTP ${upload.status})`);
+  await confirmCourseUpload(signed.path);
   return { path: signed.path, size: blob.size };
 }
 

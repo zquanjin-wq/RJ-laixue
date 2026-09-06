@@ -52,15 +52,18 @@ const courseColumns = `
 export class CourseRepository {
   constructor(private readonly pool: Pool) {}
 
-  async createCourse(input: {
-    id: string;
-    ownerUserId: string;
-    title: string;
-    topic?: string | null;
-    content: unknown;
-    saveState?: CourseSaveState;
-  }): Promise<CourseRecord> {
-    const result = await this.pool.query<CourseRecord>(
+  async createCourse(
+    input: {
+      id: string;
+      ownerUserId: string;
+      title: string;
+      topic?: string | null;
+      content: unknown;
+      saveState?: CourseSaveState;
+    },
+    transaction?: PoolClient,
+  ): Promise<CourseRecord> {
+    const result = await (transaction ?? this.pool).query<CourseRecord>(
       `INSERT INTO app.courses
         (id, owner_user_id, title, topic, content, save_state)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
@@ -108,16 +111,19 @@ export class CourseRepository {
     return result.rows;
   }
 
-  async updateCourse(input: {
-    id: string;
-    ownerUserId: string;
-    expectedRevision: number;
-    title: string;
-    topic?: string | null;
-    content: unknown;
-    saveState: CourseSaveState;
-  }): Promise<CourseRecord | null> {
-    const result = await this.pool.query<CourseRecord>(
+  async updateCourse(
+    input: {
+      id: string;
+      ownerUserId: string;
+      expectedRevision: number;
+      title: string;
+      topic?: string | null;
+      content: unknown;
+      saveState: CourseSaveState;
+    },
+    transaction?: PoolClient,
+  ): Promise<CourseRecord | null> {
+    const result = await (transaction ?? this.pool).query<CourseRecord>(
       `UPDATE app.courses
        SET title = $4,
            topic = $5,
@@ -183,7 +189,7 @@ export class CourseRepository {
         input.objectKey,
         input.contentType,
         input.sizeBytes,
-        input.courseId ? 'ready' : 'pending',
+        'pending',
       ],
     );
     return result.rows[0];
@@ -205,6 +211,19 @@ export class CourseRepository {
        FROM app.course_assets
        WHERE object_key = $1 AND deleted_at IS NULL`,
       [objectKey],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async markAssetReady(objectKey: string, ownerUserId: string): Promise<CourseAssetRecord | null> {
+    const result = await this.pool.query<CourseAssetRecord>(
+      `UPDATE app.course_assets
+       SET state='ready', bound_at=CASE WHEN course_id IS NULL THEN bound_at ELSE COALESCE(bound_at,now()) END
+       WHERE object_key=$1 AND owner_user_id=$2 AND state='pending' AND deleted_at IS NULL
+       RETURNING id,course_id AS "courseId",owner_user_id AS "ownerUserId",kind,
+         object_key AS "objectKey",content_type AS "contentType",size_bytes::double precision AS "sizeBytes",
+         state,created_at AS "createdAt",bound_at AS "boundAt"`,
+      [objectKey, ownerUserId],
     );
     return result.rows[0] ?? null;
   }

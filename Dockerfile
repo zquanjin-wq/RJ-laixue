@@ -51,6 +51,7 @@ COPY --chown=nextjs:nodejs scripts/migrate-database.mjs ./scripts/migrate-databa
 COPY --chown=nextjs:nodejs scripts/bootstrap-admin.mjs ./scripts/bootstrap-admin.mjs
 COPY --chown=nextjs:nodejs scripts/run-course-revoice-worker.mjs ./scripts/run-course-revoice-worker.mjs
 COPY --chown=nextjs:nodejs scripts/run-course-video-export-worker.mjs ./scripts/run-course-video-export-worker.mjs
+COPY --chown=nextjs:nodejs scripts/run-classroom-generation-worker.mjs ./scripts/run-classroom-generation-worker.mjs
 
 USER nextjs
 

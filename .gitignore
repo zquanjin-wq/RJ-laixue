@@ -74,6 +74,7 @@ next-env.d.ts
 # generated data
 /data
 /logs
+/.pnpm-store/
 
 # RJ-laixue docs (PRD.md / DEV.md) ARE tracked; OPENMAIC upstream's
 # private developer docs live under subdirectories we don't add.

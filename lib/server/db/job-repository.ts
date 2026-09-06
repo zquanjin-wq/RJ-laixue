@@ -37,6 +37,9 @@ export class JobRepository {
   }
 
   async claimNext(workerId: string, type: string): Promise<BackgroundJob | null> {
+    if (type === 'classroom-generation') {
+      throw new Error('Use ClassroomGenerationRepository for fenced generation execution');
+    }
     const result = await this.pool.query<BackgroundJob>(
       `WITH candidate AS (
          SELECT id
@@ -67,7 +70,7 @@ export class JobRepository {
       `UPDATE app.background_jobs
        SET status = 'succeeded', result = $2::jsonb, completed_at = now(),
            locked_by = NULL, locked_until = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'running'`,
+       WHERE id = $1 AND status = 'running' AND type <> 'classroom-generation'`,
       [jobId, JSON.stringify(result)],
     );
   }

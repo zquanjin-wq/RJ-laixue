@@ -33,6 +33,8 @@ import { withGenerationRetry } from '@/lib/generation/generation-retry';
 import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
 import type { UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
+import type { GenerationCheckpoints } from '@/lib/server/generation-checkpoints';
+import type { ThinkingConfig } from '@/lib/types/provider';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 
 const log = createLogger('Classroom');
@@ -169,9 +171,21 @@ export async function generateClassroom(
   options: {
     baseUrl: string;
     onProgress?: (progress: ClassroomGenerationProgress) => Promise<void> | void;
+    /** Supplied by the durable worker. Legacy callers retain their existing storage path. */
+    execution?: {
+      courseId: string;
+      checkpoints: GenerationCheckpoints;
+      model?: { modelString: string; thinkingConfig?: ThinkingConfig };
+    };
+    persist?: typeof persistClassroom;
   },
 ): Promise<GenerateClassroomResult> {
   const { requirement, pdfContent } = input;
+  if (options.execution && !options.persist) {
+    throw new Error('Durable generation requires a transactional course persistence callback');
+  }
+  const checkpoint = <T>(key: string, value: unknown, produce: () => Promise<T>) =>
+    options.execution ? options.execution.checkpoints.run(key, value, produce) : produce();
 
   await options.onProgress?.({
     step: 'initializing',
@@ -187,7 +201,7 @@ export async function generateClassroom(
     providerId,
     apiKey,
     thinkingConfig: classroomThinking,
-  } = await resolveModel({ stage: 'generate-classroom' });
+  } = await resolveModel(options.execution?.model ?? { stage: 'generate-classroom' });
   log.info(`Using server-configured model: ${modelString}`);
 
   // Fail fast if the resolved provider has no API key configured
@@ -215,6 +229,7 @@ export async function generateClassroom(
           { role: 'user', content: userPrompt },
         ],
         maxOutputTokens: modelInfo?.outputWindow,
+        ...(options.execution ? { maxRetries: 0 } : {}),
       },
       'generate-classroom',
       undefined,
@@ -272,56 +287,62 @@ export async function generateClassroom(
   });
 
   // Web search (optional, graceful degradation)
-  let researchContext: string | undefined;
-  if (input.enableWebSearch) {
-    const webSearchConfig = resolveClassroomWebSearchConfig(input);
-    if (webSearchConfig) {
-      // Re-resolve the query-rewrite model only when explicitly routed. If
-      // resolution itself fails (e.g. unknown provider in the route), fall back
-      // to the classroom model here; a route with a missing key resolves fine
-      // and surfaces only later in callLLM, which the outer try/catch below
-      // degrades gracefully — either way the pipeline still works.
-      const rewriteRoute = getStageModel('web-search-query-rewrite');
-      if (rewriteRoute) {
+  const researchContext = await checkpoint('research', input, async () => {
+    let researchContext: string | undefined;
+    if (input.enableWebSearch) {
+      const webSearchConfig = resolveClassroomWebSearchConfig(input);
+      if (webSearchConfig) {
+        // Re-resolve the query-rewrite model only when explicitly routed. If
+        // resolution itself fails (e.g. unknown provider in the route), fall back
+        // to the classroom model here; a route with a missing key resolves fine
+        // and surfaces only later in callLLM, which the outer try/catch below
+        // degrades gracefully — either way the pipeline still works.
+        const rewriteRoute = getStageModel('web-search-query-rewrite');
+        if (rewriteRoute) {
+          try {
+            const rewriteResolved = await resolveModel({ stage: 'web-search-query-rewrite' });
+            searchQueryModel = rewriteResolved.model;
+            searchQueryThinking = rewriteResolved.thinkingConfig;
+          } catch (err) {
+            log.warn(
+              `web-search-query-rewrite route "${rewriteRoute}" unavailable; using classroom model for query rewrite`,
+              err,
+            );
+          }
+        }
         try {
-          const rewriteResolved = await resolveModel({ stage: 'web-search-query-rewrite' });
-          searchQueryModel = rewriteResolved.model;
-          searchQueryThinking = rewriteResolved.thinkingConfig;
-        } catch (err) {
-          log.warn(
-            `web-search-query-rewrite route "${rewriteRoute}" unavailable; using classroom model for query rewrite`,
-            err,
-          );
-        }
-      }
-      try {
-        const searchQuery = await buildSearchQuery(requirement, pdfText, searchQueryAiCall);
+          const searchQuery = await buildSearchQuery(requirement, pdfText, searchQueryAiCall);
 
-        log.info('Running web search for classroom generation', {
-          hasPdfContext: searchQuery.hasPdfContext,
-          rawRequirementLength: searchQuery.rawRequirementLength,
-          rewriteAttempted: searchQuery.rewriteAttempted,
-          finalQueryLength: searchQuery.finalQueryLength,
-        });
+          log.info('Running web search for classroom generation', {
+            hasPdfContext: searchQuery.hasPdfContext,
+            rawRequirementLength: searchQuery.rawRequirementLength,
+            rewriteAttempted: searchQuery.rewriteAttempted,
+            finalQueryLength: searchQuery.finalQueryLength,
+          });
 
-        const searchResult = await searchWeb({
-          providerId: webSearchConfig.providerId,
-          query: searchQuery.query,
-          apiKey: webSearchConfig.apiKey,
-          baseUrl: webSearchConfig.baseUrl,
-          baiduSubSources: webSearchConfig.baiduSubSources,
-        });
-        researchContext = formatSearchResultsAsContext(searchResult);
-        if (researchContext) {
-          log.info(`Web search returned ${searchResult.sources.length} sources`);
+          const searchResult = await searchWeb({
+            providerId: webSearchConfig.providerId,
+            query: searchQuery.query,
+            apiKey: webSearchConfig.apiKey,
+            baseUrl: webSearchConfig.baseUrl,
+            baiduSubSources: webSearchConfig.baiduSubSources,
+          });
+          researchContext = formatSearchResultsAsContext(searchResult);
+          if (researchContext) {
+            log.info(`Web search returned ${searchResult.sources.length} sources`);
+          }
+        } catch (e) {
+          log.warn('Web search failed, continuing without search context:', e);
         }
-      } catch (e) {
-        log.warn('Web search failed, continuing without search context:', e);
+      } else {
+        log.warn(
+          'enableWebSearch is true but no web search API key configured, skipping web search',
+        );
       }
-    } else {
-      log.warn('enableWebSearch is true but no web search API key configured, skipping web search');
     }
-  }
+
+    return researchContext ?? null;
+  });
 
   await options.onProgress?.({
     step: 'generating_outlines',
@@ -330,19 +351,25 @@ export async function generateClassroom(
     scenesGenerated: 0,
   });
 
-  const outlinesResult = await generateSceneOutlinesFromRequirements(
-    requirements,
-    pdfText,
-    undefined,
-    aiCall,
-    undefined,
-    {
-      imageGenerationEnabled: input.enableImageGeneration,
-      videoGenerationEnabled: input.enableVideoGeneration,
-      researchContext,
-      // NO teacherContext — agents haven't been generated yet
-    },
-  );
+  const outlinesResult = await checkpoint('outlines', { input, researchContext }, async () => {
+    const result = await generateSceneOutlinesFromRequirements(
+      requirements,
+      pdfText,
+      undefined,
+      aiCall,
+      undefined,
+      {
+        imageGenerationEnabled: input.enableImageGeneration,
+        videoGenerationEnabled: input.enableVideoGeneration,
+        researchContext: researchContext ?? undefined,
+        // NO teacherContext — agents haven't been generated yet
+      },
+    );
+    if (options.execution && (!result.success || !result.data?.outlines.length)) {
+      throw new Error(result.error || 'No valid scene outlines were generated');
+    }
+    return result;
+  });
 
   if (!outlinesResult.success || !outlinesResult.data) {
     log.error('Failed to generate outlines:', outlinesResult.error);
@@ -363,50 +390,61 @@ export async function generateClassroom(
   });
 
   // Resolve agents based on agentMode — now AFTER outlines so we can use languageDirective
-  let agents: AgentInfo[];
   const agentMode = input.agentMode || 'default';
-  if (agentMode === 'generate') {
-    log.info('Generating custom agent profiles via LLM...');
-    try {
-      agents = await generateAgentProfiles(requirement, languageDirective, aiCall);
-      log.info(`Generated ${agents.length} agent profiles`);
-    } catch (e) {
-      log.warn('Agent profile generation failed, falling back to defaults:', e);
-      agents = getDefaultAgents();
-    }
-  } else {
-    agents = getDefaultAgents();
-  }
-
-  const stageId = nanoid(10);
-  const stage: Stage = {
-    id: stageId,
-    name: courseTitle || outlines[0]?.title || requirement.slice(0, 50),
-    description: undefined,
-    languageDirective,
-    videoManifest: buildVideoManifestFromOutlines(outlines),
-    style: 'interactive',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    // For LLM-generated agents, embed full configs so the client can
-    // hydrate the agent registry without prior IndexedDB data.
-    // For default agents, just record IDs — the client already has them.
-    ...(agentMode === 'generate'
-      ? {
-          generatedAgentConfigs: agents.map((a, i) => ({
-            id: a.id,
-            name: a.name,
-            role: a.role,
-            persona: a.persona || '',
-            avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
-            color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
-            priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
-          })),
+  const agents = await checkpoint(
+    'agents',
+    { requirement, languageDirective, agentMode },
+    async () => {
+      let agents: AgentInfo[];
+      if (agentMode === 'generate') {
+        log.info('Generating custom agent profiles via LLM...');
+        try {
+          agents = await generateAgentProfiles(requirement, languageDirective, aiCall);
+          log.info(`Generated ${agents.length} agent profiles`);
+        } catch (e) {
+          log.warn('Agent profile generation failed, falling back to defaults:', e);
+          agents = getDefaultAgents();
         }
-      : {
-          agentIds: agents.map((a) => a.id),
-        }),
-  };
+      } else {
+        agents = getDefaultAgents();
+      }
+      return agents;
+    },
+  );
+
+  const stageId = options.execution?.courseId ?? nanoid(10);
+  const stage = await checkpoint(
+    'stage',
+    { stageId, outlines, agents, languageDirective },
+    async (): Promise<Stage> => ({
+      id: stageId,
+      name: courseTitle || outlines[0]?.title || requirement.slice(0, 50),
+      description: undefined,
+      languageDirective,
+      videoManifest: buildVideoManifestFromOutlines(outlines),
+      style: 'interactive',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      // For LLM-generated agents, embed full configs so the client can
+      // hydrate the agent registry without prior IndexedDB data.
+      // For default agents, just record IDs — the client already has them.
+      ...(agentMode === 'generate'
+        ? {
+            generatedAgentConfigs: agents.map((a, i) => ({
+              id: a.id,
+              name: a.name,
+              role: a.role,
+              persona: a.persona || '',
+              avatar: AGENT_DEFAULT_AVATARS[i % AGENT_DEFAULT_AVATARS.length],
+              color: AGENT_COLOR_PALETTE[i % AGENT_COLOR_PALETTE.length],
+              priority: a.role === 'teacher' ? 10 : a.role === 'assistant' ? 7 : 5,
+            })),
+          }
+        : {
+            agentIds: agents.map((a) => a.id),
+          }),
+    }),
+  );
 
   const store = createInMemoryStore(stage);
   const api = createStageAPI(store);
@@ -419,6 +457,7 @@ export async function generateClassroom(
       allowProceduralSkill: vocationalActive,
     });
     const progressStart = 30 + Math.floor((index / Math.max(outlines.length, 1)) * 60);
+    const sceneInput = { safeOutline, agents, languageDirective, vocationalActive };
 
     await options.onProgress?.({
       step: 'generating_scenes',
@@ -444,41 +483,65 @@ export async function generateClassroom(
       });
     };
 
-    const content = await withGenerationRetry(
-      () =>
-        generateSceneContent(safeOutline, sceneAiCall, {
-          agents,
-          languageDirective,
-          allowProceduralSkill: vocationalActive,
-        }),
-      {
-        label: `scene ${index + 1}/${outlines.length} content`,
-        shouldRetryResult: (result) => result === null,
-        onRetry: (event) => reportSceneRetry('content', event),
-      },
-    );
+    const content = await checkpoint(`scene/${index}/content`, sceneInput, async () => {
+      const generated = await withGenerationRetry(
+        () =>
+          generateSceneContent(safeOutline, sceneAiCall, {
+            agents,
+            languageDirective,
+            allowProceduralSkill: vocationalActive,
+          }),
+        {
+          label: `scene ${index + 1}/${outlines.length} content`,
+          ...(options.execution ? { maxRetries: 2 } : {}),
+          shouldRetryResult: (result) => result === null,
+          onRetry: (event) => reportSceneRetry('content', event),
+        },
+      );
+      if (!generated && options.execution)
+        throw new Error(`Required scene content missing: ${safeOutline.title}`);
+      return generated;
+    });
     if (!content) {
       log.warn(`Skipping scene "${safeOutline.title}" — content generation failed`);
       continue;
     }
 
-    const actions = await withGenerationRetry(
-      () =>
-        generateSceneActions(safeOutline, content, sceneAiCall, {
-          agents,
-          languageDirective,
-        }),
-      {
-        label: `scene ${index + 1}/${outlines.length} actions`,
-        onRetry: (event) => reportSceneRetry('actions', event),
-      },
+    const actions = await checkpoint(`scene/${index}/actions`, { ...sceneInput, content }, () =>
+      withGenerationRetry(
+        () =>
+          generateSceneActions(safeOutline, content, sceneAiCall, {
+            agents,
+            languageDirective,
+          }),
+        {
+          label: `scene ${index + 1}/${outlines.length} actions`,
+          ...(options.execution ? { maxRetries: 2 } : {}),
+          onRetry: (event) => reportSceneRetry('actions', event),
+        },
+      ),
     );
     log.info(`Scene "${safeOutline.title}": ${actions.length} actions`);
 
-    const sceneId = createSceneWithActions(safeOutline, content, actions, api);
+    const completedScene = await checkpoint(
+      `scene/${index}/assembled`,
+      { ...sceneInput, content, actions },
+      async () => {
+        const sceneId = createSceneWithActions(safeOutline, content, actions, api);
+        const scene = store.getState().scenes.find((item) => item.id === sceneId);
+        if (!scene && options.execution)
+          throw new Error(`Required scene assembly failed: ${safeOutline.title}`);
+        return scene ?? null;
+      },
+    );
+    const sceneId = completedScene?.id;
     if (!sceneId) {
       log.warn(`Skipping scene "${safeOutline.title}" — scene creation failed`);
       continue;
+    }
+    // A restored scene must also enter this run's in-memory store; retain its saved ID.
+    if (completedScene && !store.getState().scenes.some((item) => item.id === sceneId)) {
+      store.setState({ scenes: [...store.getState().scenes, completedScene] });
     }
 
     generatedScenes += 1;
@@ -492,7 +555,7 @@ export async function generateClassroom(
     });
   }
 
-  const scenes = store.getState().scenes;
+  let scenes = store.getState().scenes;
   log.info(`Pipeline complete: ${scenes.length} scenes generated`);
 
   if (scenes.length === 0) {
@@ -529,9 +592,33 @@ export async function generateClassroom(
     });
 
     try {
-      await generateTTSForClassroom(scenes, stageId, options.baseUrl);
+      if (options.execution) {
+        const voicedScenes: Scene[] = [];
+        for (const [index, scene] of scenes.entries()) {
+          voicedScenes.push(
+            await checkpoint(`scene/${index}/tts`, scene, async () => {
+              const voiced = structuredClone(scene);
+              await generateTTSForClassroom([voiced], stageId, options.baseUrl);
+              const speeches = voiced.actions?.filter(
+                (action) => action.type === 'speech' && action.text.trim(),
+              );
+              if (
+                !speeches?.length ||
+                speeches.some((action) => action.type === 'speech' && !action.audioUrl)
+              ) {
+                throw new Error(`Required narration missing: ${scene.id}`);
+              }
+              return voiced;
+            }),
+          );
+        }
+        scenes = voicedScenes;
+      } else {
+        await generateTTSForClassroom(scenes, stageId, options.baseUrl);
+      }
       log.info('TTS generation complete');
     } catch (err) {
+      if (options.execution) throw err;
       log.warn('TTS generation phase failed, continuing:', err);
     }
   }
@@ -544,7 +631,7 @@ export async function generateClassroom(
     totalScenes: outlines.length,
   });
 
-  const persisted = await persistClassroom(
+  const persisted = await (options.persist ?? persistClassroom)(
     {
       id: stageId,
       stage,

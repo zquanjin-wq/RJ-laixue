@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
   const courses = new CourseRepository(getDatabasePool());
   const asset = await courses.getAssetByObjectKey(objectKey);
-  if (!asset || asset.state === 'deleted') {
+  if (!asset || asset.state !== 'ready') {
     return NextResponse.json({ success: false, error: '资产不存在' }, { status: 404 });
   }
   if (guard.role !== 'admin' && guard.role !== 'learner' && asset.ownerUserId !== guard.user.id) {

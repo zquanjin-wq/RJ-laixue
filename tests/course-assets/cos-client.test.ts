@@ -22,7 +22,8 @@ describe('COS course asset client', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const assetUrl = await uploadCourseBlob(
@@ -42,6 +43,11 @@ describe('COS course asset client', () => {
       'https://cos.example/upload',
       expect.objectContaining({ method: 'PUT' }),
     );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/course-assets/confirm-upload',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('keeps course material as an object key for the parser workflow', async () => {
@@ -60,7 +66,8 @@ describe('COS course asset client', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const uploaded = await uploadCourseMaterial(

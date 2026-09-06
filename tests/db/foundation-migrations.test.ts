@@ -14,6 +14,12 @@ import { CourseRepository } from '@/lib/server/db/course-repository';
 import { CourseVideoExportRepository } from '@/lib/server/db/course-video-export-repository';
 import { AccessRepository } from '@/lib/server/db/access-repository';
 import { JobRepository } from '@/lib/server/db/job-repository';
+import {
+  ClassroomGenerationRepository,
+  GenerationIdempotencyConflict,
+  GenerationLeaseLost,
+  generationRequestHash,
+} from '@/lib/server/db/classroom-generation-repository';
 import { LearningRepository } from '@/lib/server/db/learning-repository';
 import { TaskRepository } from '@/lib/server/db/task-repository';
 import { PeopleRepository } from '@/lib/server/db/people-repository';
@@ -109,6 +115,7 @@ describe('P1 PostgreSQL foundation', () => {
       '0007_runtime_store.sql',
       '0008_learning_analytics_and_revoice.sql',
       '0009_course_video_exports.sql',
+      '0010_classroom_generation_jobs.sql',
     ]);
     expect(second.skipped).toEqual(first.applied);
 
@@ -126,6 +133,185 @@ describe('P1 PostgreSQL foundation', () => {
       `SELECT role FROM app.user_profiles WHERE user_id = 'user-1'`,
     );
     expect(profile.rows[0]?.role).toBe('learner');
+  });
+
+  it('deduplicates generation requests and fences reclaimed or cancelled workers', async () => {
+    const jobs = new ClassroomGenerationRepository(pool);
+    const request = {
+      ownerUserId: 'user-1',
+      operation: 'create' as const,
+      channel: 'web' as const,
+      inputKind: 'text' as const,
+      idempotencyKey: 'generation-concurrent',
+      payload: { requirement: '欢迎新同事', enableTTS: false },
+    };
+    const submitted = await Promise.all([jobs.enqueue(request), jobs.enqueue(request)]);
+    expect(submitted[0].id).toBe(submitted[1].id);
+    expect(submitted[0].courseId).toBe(submitted[1].courseId);
+    expect(submitted.filter((job) => !job.reused)).toHaveLength(1);
+    expect(generationRequestHash({ a: 1, b: 2 })).toBe(generationRequestHash({ b: 2, a: 1 }));
+    await expect(
+      jobs.enqueue({ ...request, payload: { requirement: 'different' } }),
+    ).rejects.toBeInstanceOf(GenerationIdempotencyConflict);
+    const count = await pool.query(
+      `SELECT count(*)::int AS n FROM app.background_jobs WHERE type='classroom-generation'`,
+    );
+    expect(count.rows[0].n).toBe(1);
+
+    const claimed = await Promise.all([jobs.claimNext('worker-a'), jobs.claimNext('worker-b')]);
+    expect(claimed.filter(Boolean)).toHaveLength(1);
+    const first = claimed.find(Boolean)!;
+    const fingerprint = generationRequestHash(request.payload);
+    await jobs.saveStep(first, 'outlines', fingerprint, { pages: ['stable-page-id'] });
+    await jobs.heartbeat(first, { step: 'outlines', progress: 20 });
+    await pool.query(
+      `UPDATE app.background_jobs SET locked_until=now()-interval '1 second' WHERE id=$1`,
+      [first.id],
+    );
+    await expect(jobs.heartbeat(first, {})).rejects.toBeInstanceOf(GenerationLeaseLost);
+    const recovered = (await jobs.claimNext('worker-c'))!;
+    expect(recovered.epoch).toBe(first.epoch + 1);
+    expect(recovered.courseId).toBe(first.courseId);
+    expect(await jobs.readStep(recovered, 'outlines', fingerprint)).toEqual({
+      pages: ['stable-page-id'],
+    });
+    expect(await jobs.readStep(recovered, 'outlines', 'different')).toBeNull();
+    await expect(jobs.saveStep(first, 'outlines', fingerprint, {})).rejects.toBeInstanceOf(
+      GenerationLeaseLost,
+    );
+    await expect(jobs.fail(first, 'OLD', 'stale', false)).rejects.toBeInstanceOf(
+      GenerationLeaseLost,
+    );
+    await new JobRepository(pool).succeed(first.id, { bypass: true });
+    expect(await jobs.cancel(first.id, 'wrong-owner')).toBe(false);
+    expect(await jobs.cancel(first.id, 'user-1')).toBe(true);
+    await expect(jobs.saveStep(recovered, 'scenes', fingerprint, {})).rejects.toBeInstanceOf(
+      GenerationLeaseLost,
+    );
+    await expect(jobs.heartbeat(recovered, {})).rejects.toBeInstanceOf(GenerationLeaseLost);
+    await expect(jobs.fail(recovered, 'LATE', 'cancelled', true)).rejects.toBeInstanceOf(
+      GenerationLeaseLost,
+    );
+    expect(await jobs.claimNext('worker-d')).toBeNull();
+  });
+
+  it('backs off transient generation failures and terminates exhausted leases', async () => {
+    const jobs = new ClassroomGenerationRepository(pool);
+    const submitted = await jobs.enqueue({
+      ownerUserId: 'user-1',
+      operation: 'create',
+      channel: 'skill',
+      inputKind: 'text',
+      idempotencyKey: 'generation-retry',
+      payload: { requirement: 'retry' },
+    });
+    let lease = (await jobs.claimNext('retry-worker'))!;
+    await jobs.fail(lease, 'TEMPORARY', 'provider unavailable', true);
+    expect(await jobs.claimNext('early-worker')).toBeNull();
+    await pool.query(
+      `UPDATE app.background_jobs SET run_after=now()-interval '1 second' WHERE id=$1`,
+      [submitted.id],
+    );
+    lease = (await jobs.claimNext('retry-worker'))!;
+    expect(lease.attempts).toBe(2);
+    await jobs.fail(lease, 'TEMPORARY', 'provider unavailable', true);
+    await pool.query(
+      `UPDATE app.background_jobs SET run_after=now()-interval '1 second' WHERE id=$1`,
+      [submitted.id],
+    );
+    lease = (await jobs.claimNext('retry-worker'))!;
+    expect(lease.attempts).toBe(3);
+    await pool.query(
+      `UPDATE app.background_jobs SET locked_until=now()-interval '1 second' WHERE id=$1`,
+      [submitted.id],
+    );
+    expect(await jobs.claimNext('recovery-worker')).toBeNull();
+    const result = await pool.query(
+      `SELECT status,error_code FROM app.background_jobs WHERE id=$1`,
+      [submitted.id],
+    );
+    expect(result.rows[0]).toEqual({ status: 'failed', error_code: 'ATTEMPTS_EXHAUSTED' });
+    await expect(jobs.heartbeat(lease, {})).rejects.toBeInstanceOf(GenerationLeaseLost);
+  });
+
+  it('commits the formal draft atomically and refuses revoked roles and stale revisions', async () => {
+    const jobs = new ClassroomGenerationRepository(pool);
+    const courses = new CourseRepository(pool);
+    const created = await jobs.enqueue({
+      ownerUserId: 'user-1',
+      operation: 'create',
+      channel: 'web',
+      inputKind: 'text',
+      idempotencyKey: 'generation-commit',
+      payload: { requirement: 'formal draft' },
+    });
+    const lease = (await jobs.claimNext('commit-worker'))!;
+    const draft = {
+      stage: {
+        id: created.courseId,
+        name: '正式草稿',
+        style: 'interactive' as const,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      scenes: [
+        {
+          id: 'generated-scene',
+          stageId: created.courseId,
+          type: 'slide' as const,
+          title: '欢迎',
+          order: 0,
+          content: {
+            type: 'slide' as const,
+            canvas: {
+              id: 'canvas',
+              elements: [],
+              viewportSize: 1280,
+              viewportRatio: 0.5625,
+              theme: {
+                themeColors: ['#3366ff'],
+                fontColor: '#000000',
+                fontName: 'Arial',
+                backgroundColor: '#ffffff',
+              },
+            },
+          },
+          actions: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    };
+    await expect(jobs.commitCourse(lease, draft)).rejects.toThrow('no longer create courses');
+    expect(await courses.getCourse(created.courseId)).toBeNull();
+    await pool.query(`UPDATE app.user_profiles SET role='teacher' WHERE user_id='user-1'`);
+    const committed = await jobs.commitCourse(lease, draft);
+    expect(committed).toEqual({ status: 'succeeded', courseId: created.courseId, revision: 1 });
+    expect((await courses.getCourse(created.courseId))?.saveState).toBe('draft');
+    await expect(jobs.commitCourse(lease, draft)).rejects.toBeInstanceOf(GenerationLeaseLost);
+
+    await jobs.enqueue({
+      ownerUserId: 'user-1',
+      operation: 'enhance',
+      channel: 'web',
+      inputKind: 'pptx',
+      courseId: created.courseId,
+      sourceRevision: 1,
+      idempotencyKey: 'enhance-conflict',
+      payload: {},
+    });
+    const enhancer = (await jobs.claimNext('enhance-worker'))!;
+    await courses.updateCourse({
+      id: created.courseId,
+      ownerUserId: 'user-1',
+      expectedRevision: 1,
+      title: '讲师的新修改',
+      content: { edited: true },
+      saveState: 'draft',
+    });
+    expect(await jobs.commitCourse(enhancer, draft)).toEqual({ status: 'conflict' });
+    expect((await courses.getCourse(created.courseId))?.title).toBe('讲师的新修改');
+    await pool.query(`UPDATE app.user_profiles SET role='learner' WHERE user_id='user-1'`);
   });
 
   it('saves courses by revision and creates reusable publication snapshots', async () => {
@@ -168,7 +354,10 @@ describe('P1 PostgreSQL foundation', () => {
       contentType: 'audio/mpeg',
       sizeBytes: 1024,
     });
-    expect(asset.state).toBe('ready');
+    expect(asset.state).toBe('pending');
+    expect(await courses.markAssetReady(asset.objectKey, 'user-1')).toMatchObject({
+      state: 'ready',
+    });
 
     const firstSnapshot = await courses.createSnapshot('course-1', 'user-1');
     const repeatedSnapshot = await courses.createSnapshot('course-1', 'user-1');
@@ -230,20 +419,34 @@ describe('P1 PostgreSQL foundation', () => {
 
   it('only lets the worker claim a video export after its COS source upload is activated', async () => {
     const courses = new CourseRepository(pool);
-    await courses.createCourse({ id: 'course-video-activation', ownerUserId: 'user-1', title: 'Activation course', content: {} });
+    await courses.createCourse({
+      id: 'course-video-activation',
+      ownerUserId: 'user-1',
+      title: 'Activation course',
+      content: {},
+    });
     const exports = new CourseVideoExportRepository(pool);
     const pending = await exports.create({
-      courseId: 'course-video-activation', requestedBy: 'user-1',
-      request: { uploadObjectKey: 'courses/course-video-activation/video-exports/pending/source.zip' },
+      courseId: 'course-video-activation',
+      requestedBy: 'user-1',
+      request: {
+        uploadObjectKey: 'courses/course-video-activation/video-exports/pending/source.zip',
+      },
     });
 
     expect(await exports.claimNext()).toBeNull();
-    expect(await exports.activateInput(pending.id)).toMatchObject({ id: pending.id, status: 'queued' });
+    expect(await exports.activateInput(pending.id)).toMatchObject({
+      id: pending.id,
+      status: 'queued',
+    });
     expect(await exports.claimNext()).toMatchObject({ id: pending.id, status: 'running' });
 
     const uploadFailed = await exports.create({
-      courseId: 'course-video-activation', requestedBy: 'user-1',
-      request: { uploadObjectKey: 'courses/course-video-activation/video-exports/failed/source.zip' },
+      courseId: 'course-video-activation',
+      requestedBy: 'user-1',
+      request: {
+        uploadObjectKey: 'courses/course-video-activation/video-exports/failed/source.zip',
+      },
     });
     expect(await exports.claimNext()).toBeNull();
     expect((await exports.get(uploadFailed.id))?.status).toBe('queued');

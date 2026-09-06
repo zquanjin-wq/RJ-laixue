@@ -44,8 +44,9 @@ if [ '$($DryRun.IsPresent)' = 'True' ]; then
   exit 0
 fi
 cd "`$HOME/laixue"
-sudo docker compose --project-name laixue-rebuild --env-file .env.production build app
-sudo docker compose --project-name laixue-rebuild --env-file .env.production up -d --no-deps --force-recreate app
+sudo docker compose --project-name laixue-rebuild --env-file .env.production build app revoice-worker classroom-generation-worker migrate
+sudo docker compose --project-name laixue-rebuild --env-file .env.production --profile tools run --rm migrate
+sudo docker compose --project-name laixue-rebuild --env-file .env.production up -d --no-deps --force-recreate app revoice-worker classroom-generation-worker
 printf '%s\n' '$shortRevision' > .deployed-revision
 "@
   $remoteScript = $remoteScript -replace "`r`n", "`n"
