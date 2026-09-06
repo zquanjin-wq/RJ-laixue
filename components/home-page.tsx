@@ -74,6 +74,9 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 // flag until it's wired end-to-end, so the UI doesn't expose a no-op button.
 // Enable with NEXT_PUBLIC_ENABLE_PPTX_IMPORT=true.
 const PPTX_IMPORT_ENABLED = process.env.NEXT_PUBLIC_ENABLE_PPTX_IMPORT === 'true';
+// The durable server-side path is released independently from the legacy browser pipeline.
+// It currently accepts text-only drafts; materials and optional enrichment retain their existing flow.
+const DURABLE_GENERATION_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DURABLE_GENERATION === 'true';
 
 interface FormState {
   pdfFiles: File[];
@@ -304,6 +307,39 @@ export function HomePage() {
     setError(null);
 
     try {
+      const canUseDurablePath =
+        DURABLE_GENERATION_UI_ENABLED &&
+        form.pdfFiles.length === 0 &&
+        !form.webSearch &&
+        !form.interactiveMode &&
+        !form.vocationalTestMode;
+      if (canUseDurablePath) {
+        const submission = await fetch('/api/generation-jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify({ requirement: form.requirement, agentMode: 'default' }),
+        });
+        const created = await submission.json().catch(() => null);
+        if (!submission.ok || !created?.jobId || !created?.courseId || !created?.pollUrl) {
+          throw new Error(created?.error || '课程生成任务创建失败');
+        }
+        const deadline = Date.now() + 30 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, created.pollIntervalMs ?? 5000));
+          const poll = await fetch(created.pollUrl, { cache: 'no-store' });
+          const job = await poll.json().catch(() => null);
+          if (!poll.ok || !job) throw new Error('课程生成状态读取失败');
+          if (job.status === 'succeeded') {
+            router.push(`/classroom/${encodeURIComponent(created.courseId)}?editor=1`);
+            return;
+          }
+          if (['failed', 'cancelled', 'conflict'].includes(job.status)) {
+            throw new Error('课程生成未完成，请在稍后重试。');
+          }
+        }
+        throw new Error('课程生成等待超时，请稍后在课程列表中查看结果。');
+      }
+
       const userProfile = useUserProfileStore.getState();
       const requirements: UserRequirements = {
         requirement: form.requirement,
@@ -1463,4 +1499,3 @@ function ClassroomCard({
     </div>
   );
 }
-
