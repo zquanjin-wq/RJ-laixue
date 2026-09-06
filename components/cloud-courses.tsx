@@ -82,7 +82,11 @@ function VideoStatus({ job, capability }: { job?: VideoExport; capability: Video
 }
 
 function videoActivity(job: VideoExport | undefined, capability: VideoExportCapability | null) {
-  if (job) return job.status === 'failed' && job.failureReason ? job.failureReason : `视频${formatDate(job.updatedAt)}`;
+  if (job?.status === 'queued') return `已提交于 ${formatDate(job.createdAt)}`;
+  if (job?.status === 'rendering') return `生成中，状态更新于 ${formatDate(job.updatedAt)}`;
+  if (job?.status === 'completed') return `已生成于 ${formatDate(job.updatedAt)}`;
+  if (job?.status === 'failed') return job.failureReason ? `生成失败：${job.failureReason}` : `生成失败于 ${formatDate(job.updatedAt)}`;
+  if (job?.status === 'cancelled') return `已取消于 ${formatDate(job.updatedAt)}`;
   return capability && !capability.available ? '视频渲染服务未配置' : '尚无视频任务';
 }
 
@@ -123,24 +127,24 @@ export default function CloudCourses() {
     };
   }, []);
 
-  const fetchCourses = useCallback(async () => {
+  const fetchCourses = useCallback(async (showLoading = false) => {
     if (!profile) return;
-    setLoading(true);
-    setError(null);
+    if (showLoading) setLoading(true);
     try {
       const rows = profile.role === 'admin' ? await listCloudCourses() : await listMyCourses();
       const videoResults = await Promise.all(rows.map((course) => loadVideoExports(course.id)));
       setCourses(rows);
       setVideoExports(Object.fromEntries(rows.map((course, index) => [course.id, videoResults[index].exports])));
       setVideoCapability(videoResults.map((result) => result.capability).find((capability) => capability !== null) ?? null);
+      setError(null);
     } catch (fetchError) {
-      setError(getErrorMessage(fetchError, '获取云端课程失败。'));
+      if (showLoading) setError(getErrorMessage(fetchError, '获取云端课程失败。'));
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [profile]);
 
-  useEffect(() => { void fetchCourses(); }, [fetchCourses]);
+  useEffect(() => { void fetchCourses(true); }, [fetchCourses]);
 
   const hasActiveVideoExport = useMemo(
     () => Object.values(videoExports).flat().some((job) => job.status === 'queued' || job.status === 'rendering'),
@@ -231,7 +235,7 @@ export default function CloudCourses() {
       {visibleCourses.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-12 text-center"><p className="text-sm font-medium text-slate-700">{courses.length === 0 ? '还没有保存到云端的课程' : '没有匹配的课程'}</p><p className="mt-2 text-sm text-slate-500">{courses.length === 0 ? '创建课程后保存到云端，即可在这里集中管理。' : '请调整搜索关键词或筛选条件后重试。'}</p>{courses.length === 0 && <Link href="/studio" className="mt-4 inline-flex h-9 items-center rounded-lg bg-emerald-600 px-3 text-sm font-medium text-white transition-colors hover:bg-emerald-700">AI 创建课程</Link>}</div> : (
         <div className="overflow-visible">
           <div className="min-w-[1120px]">
-            <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500"><span>课程</span><span>课程状态</span><span>视频状态</span><span>最近活动</span><span className="text-right">操作</span></div>
+            <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500"><span>课程</span><span>课程状态</span><span>视频状态</span><span>视频任务详情</span><span className="text-right">操作</span></div>
             {visibleCourses.map((course) => {
             const job = latestVideoExport(videoExports[course.id]);
             const expanded = expandedId === course.id;
