@@ -182,6 +182,8 @@ async function runPptxAiClassroomJob(input: {
       languageDirective: request.languageDirective,
       pages: inspections,
       aiCall,
+      teacherVoice: request.teacherVoice,
+      companionCount: request.companionCount,
     }),
   );
   const scripts: PptxPageScript[] = [];

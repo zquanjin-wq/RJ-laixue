@@ -26,6 +26,10 @@ export const pptxAiClassroomRequestSchema = z
     languageDirective: z.string().trim().min(1).max(80).default('zh-CN'),
     interactionIntensity: z.enum(['light', 'standard', 'rich']).default('standard'),
     enableTTS: z.boolean().default(true),
+    teacherVoice: z
+      .object({ providerId: z.string().trim().min(1).max(80), modelId: z.string().trim().max(120).optional(), voiceId: z.string().trim().min(1).max(160) })
+      .optional(),
+    companionCount: z.number().int().min(1).max(3).default(1),
     applySafeRepairs: z.boolean().default(true),
   })
   .strict();
