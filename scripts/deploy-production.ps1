@@ -49,9 +49,9 @@ sudo docker compose --project-name laixue-rebuild --env-file .env.production --p
 sudo docker compose --project-name laixue-rebuild --env-file .env.production up -d --no-deps --force-recreate app revoice-worker classroom-generation-worker
 printf '%s\n' '$shortRevision' > .deployed-revision
 "@
-  $remoteScript = $remoteScript -replace "`r`n", "`n"
-  $base64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
-  & ssh -i $SshKeyPath "${RemoteUser}@${HostName}" "echo $base64 | base64 -d | bash"
+  # PowerShell writes pipeline text with CRLF. Strip it on the Linux side so
+  # heredoc-derived shell lines and continuations keep their intended shape.
+  $remoteScript | & ssh -i $SshKeyPath "${RemoteUser}@${HostName}" 'tr -d "\r" | bash -s'
   if ($LASTEXITCODE -ne 0) { throw 'Remote release failed.' }
 } finally {
   Remove-Item -LiteralPath $archivePath -ErrorAction SilentlyContinue
