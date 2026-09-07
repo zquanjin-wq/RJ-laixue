@@ -76,8 +76,7 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 // The durable server-side path is released independently from the legacy browser pipeline.
 // It currently accepts text-only drafts; materials and optional enrichment retain their existing flow.
 const DURABLE_GENERATION_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DURABLE_GENERATION === 'true';
-const PPTX_AI_CLASSROOM_UI_ENABLED =
-  process.env.NEXT_PUBLIC_ENABLE_PPTX_AI_CLASSROOM === 'true';
+const PPTX_AI_CLASSROOM_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_PPTX_AI_CLASSROOM === 'true';
 
 interface FormState {
   pdfFiles: File[];
@@ -258,6 +257,7 @@ export function HomePage() {
             sourceId: source.sourceId,
             courseId,
             sourceRevision: 1,
+            teachingRequirement: form.requirement.trim(),
             interactionIntensity: 'standard',
             enableTTS: true,
           }),
@@ -484,6 +484,7 @@ export function HomePage() {
   };
 
   const canGenerate = !!form.requirement.trim() && hasUsableProvider && !isPreparingGeneration;
+  const canStartPptxCreation = !!form.requirement.trim() && !pptxImporting;
 
   const selectCreateMode = (mode: 'ai' | 'pptx' | 'course') => {
     setCreateMode(mode);
@@ -495,6 +496,10 @@ export function HomePage() {
   };
 
   const openDroppedFile = (mode: 'pptx' | 'course', file: File) => {
+    if (mode === 'pptx' && !form.requirement.trim()) {
+      toast.error('请先描述教学需求，再上传 PPTX');
+      return;
+    }
     const input = mode === 'pptx' ? pptxFileInputRef.current : fileInputRef.current;
     if (!input) return;
     const transfer = new DataTransfer();
@@ -768,6 +773,15 @@ export function HomePage() {
                   transition={{ duration: 0.2 }}
                   className="flex min-h-[344px] flex-col p-5 md:p-7"
                 >
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <GreetingBar />
+                    <div className="flex w-full min-w-0 items-center gap-2 md:w-auto">
+                      <span className="hidden text-xs font-medium text-slate-500 lg:inline">
+                        课堂角色与音色
+                      </span>
+                      <AgentBar />
+                    </div>
+                  </div>
                   <label
                     className="mb-2 flex items-center justify-between text-sm font-semibold"
                     htmlFor="course-requirement"
@@ -781,91 +795,98 @@ export function HomePage() {
                     id="course-requirement"
                     ref={textareaRef}
                     maxLength={300}
-                    placeholder="例如：为初中生设计一节 45 分钟的光合作用课程，包含导入、实验演示与课堂练习。"
+                    placeholder={t('upload.requirementPlaceholder')}
                     className="min-h-[138px] w-full resize-y rounded-lg border border-slate-300 bg-white/80 px-4 py-3.5 text-[15px] leading-7 text-slate-800 shadow-inner outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white"
                     value={form.requirement}
                     onChange={(e) => updateForm('requirement', e.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={4}
                   />
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <GenerationToolbar
-                      webSearch={form.webSearch}
-                      onWebSearchChange={(v) => updateForm('webSearch', v)}
-                      onSettingsOpen={(section) => {
-                        setSettingsSection(section);
-                        setSettingsOpen(true);
-                      }}
-                      pdfFiles={form.pdfFiles}
-                      onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
-                      onPdfError={setError}
-                    />
+                  <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <GenerationToolbar
+                        webSearch={form.webSearch}
+                        onWebSearchChange={(v) => updateForm('webSearch', v)}
+                        onSettingsOpen={(section) => {
+                          setSettingsSection(section);
+                          setSettingsOpen(true);
+                        }}
+                        pdfFiles={form.pdfFiles}
+                        onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
+                        onPdfError={setError}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={form.interactiveMode}
+                            onClick={() => updateForm('interactiveMode', !form.interactiveMode)}
+                            className={cn(
+                              'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
+                              form.interactiveMode
+                                ? 'border-cyan-500 bg-cyan-100 text-cyan-800'
+                                : 'border-cyan-300 bg-white/55 text-cyan-700 hover:bg-cyan-50',
+                            )}
+                          >
+                            <Atom className="size-3.5" />
+                            {t('toolbar.interactiveModeLabel')}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('toolbar.interactiveModeHint')}</TooltipContent>
+                      </Tooltip>
+                      <SpeechButton
+                        size="md"
+                        onTranscription={(text) => {
+                          setForm((prev) => {
+                            const next = `${prev.requirement}${prev.requirement ? ' ' : ''}${text}`;
+                            updateRequirementCache(next);
+                            return { ...prev, requirement: next };
+                          });
+                        }}
+                      />
+                      {showVocationalTestUi && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={form.vocationalTestMode}
+                          onClick={() => updateForm('vocationalTestMode', !form.vocationalTestMode)}
+                          className={cn(
+                            'h-8 rounded-full border px-3 text-xs font-medium',
+                            form.vocationalTestMode
+                              ? 'border-violet-500 bg-violet-100 text-violet-800'
+                              : 'border-slate-300 bg-white/55 text-slate-600',
+                          )}
+                        >
+                          职教任务
+                        </button>
+                      )}
+                    </div>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          role="switch"
-                          aria-checked={form.interactiveMode}
-                          onClick={() => updateForm('interactiveMode', !form.interactiveMode)}
+                          aria-label={isPreparingGeneration ? '正在创建课程' : '生成课程'}
+                          onClick={handleGenerate}
+                          disabled={!canGenerate}
                           className={cn(
-                            'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
-                            form.interactiveMode
-                              ? 'border-cyan-500 bg-cyan-100 text-cyan-800'
-                              : 'border-cyan-300 bg-white/55 text-cyan-700 hover:bg-cyan-50',
+                            'grid size-11 shrink-0 place-items-center rounded-xl border transition',
+                            canGenerate
+                              ? 'border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_10px_22px_-12px_rgba(16,120,72,.85)] hover:-translate-y-px hover:brightness-105'
+                              : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400',
                           )}
                         >
-                          <Atom className="size-3.5" />
-                          {t('toolbar.interactiveModeLabel')}
+                          {isPreparingGeneration ? (
+                            <LoaderCircle className="size-5 animate-spin" />
+                          ) : (
+                            <ArrowUp className="size-5" />
+                          )}
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent>{t('toolbar.interactiveModeHint')}</TooltipContent>
+                      <TooltipContent>
+                        {isPreparingGeneration ? '正在创建课程…' : '生成课程'}
+                      </TooltipContent>
                     </Tooltip>
-                    <SpeechButton
-                      size="md"
-                      onTranscription={(text) => {
-                        setForm((prev) => {
-                          const next = `${prev.requirement}${prev.requirement ? ' ' : ''}${text}`;
-                          updateRequirementCache(next);
-                          return { ...prev, requirement: next };
-                        });
-                      }}
-                    />
-                    {showVocationalTestUi && (
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={form.vocationalTestMode}
-                        onClick={() => updateForm('vocationalTestMode', !form.vocationalTestMode)}
-                        className={cn(
-                          'h-8 rounded-full border px-3 text-xs font-medium',
-                          form.vocationalTestMode
-                            ? 'border-violet-500 bg-violet-100 text-violet-800'
-                            : 'border-slate-300 bg-white/55 text-slate-600',
-                        )}
-                      >
-                        职教任务
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-auto pt-5">
-                    <button
-                      onClick={handleGenerate}
-                      disabled={!canGenerate}
-                      className={cn(
-                        'flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border text-[15px] font-semibold transition',
-                        canGenerate
-                          ? 'border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_12px_28px_-14px_rgba(16,120,72,.75)] hover:-translate-y-px hover:brightness-105'
-                          : 'cursor-not-allowed border-emerald-200 bg-emerald-100/70 text-emerald-800/55',
-                      )}
-                    >
-                      {isPreparingGeneration && <LoaderCircle className="size-4 animate-spin" />}
-                      {isPreparingGeneration ? '正在创建课程…' : '生成课程'}
-                    </button>
-                    <p className="mt-2.5 text-center text-xs text-slate-600">
-                      {form.requirement.trim()
-                        ? '已准备就绪，点击即可生成课程框架'
-                        : '请先描述教学需求'}
-                    </p>
                   </div>
                 </motion.div>
               ) : (
@@ -929,6 +950,31 @@ export function HomePage() {
                           : 'border-slate-300 bg-white/30 hover:border-emerald-500/70 hover:bg-white/50 dark:border-slate-700 dark:bg-slate-950/20',
                       )}
                     >
+                      {createMode === 'pptx' && (
+                        <div className="mb-5 w-full max-w-xl text-left">
+                          <label
+                            htmlFor="pptx-teaching-requirement"
+                            className="mb-2 flex items-center justify-between text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <span>教学需求</span>
+                            <span className="font-mono text-xs font-medium text-slate-500">
+                              {form.requirement.length}/300
+                            </span>
+                          </label>
+                          <textarea
+                            id="pptx-teaching-requirement"
+                            maxLength={300}
+                            rows={3}
+                            value={form.requirement}
+                            onChange={(event) => updateForm('requirement', event.target.value)}
+                            placeholder="例如：面向新员工讲解本课件，突出业务价值，每 3 页安排一次轻量理解检查。"
+                            className="w-full resize-y rounded-lg border border-slate-300 bg-white/80 px-3 py-2.5 text-sm leading-6 text-slate-800 shadow-inner outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white"
+                          />
+                          <p className="mt-1.5 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                            PPT 保留原有内容和版式；教学需求将决定讲解、角色和互动方式。
+                          </p>
+                        </div>
+                      )}
                       <span
                         className={cn(
                           'grid h-16 w-20 place-items-center rounded-xl shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_10px_24px_-14px_rgba(15,70,55,.5)]',
@@ -965,6 +1011,7 @@ export function HomePage() {
                       <button
                         type="button"
                         onClick={createMode === 'pptx' ? triggerPptxFileSelect : triggerFileSelect}
+                        disabled={createMode === 'pptx' && !canStartPptxCreation}
                         className="mt-4 inline-flex h-11 items-center gap-2 rounded-lg border border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 px-5 text-sm font-semibold text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_10px_24px_-14px_rgba(16,120,72,.75)] hover:-translate-y-px hover:brightness-105"
                       >
                         <Upload className="size-4" />
@@ -972,7 +1019,9 @@ export function HomePage() {
                       </button>
                       <p className="mt-3 font-mono text-xs text-slate-500">
                         {createMode === 'pptx'
-                          ? '.pptx · 单个文件最大 100MB'
+                          ? form.requirement.trim()
+                            ? '.pptx · 单个文件最大 100MB'
+                            : '请先描述教学需求'
                           : '.zip 压缩课程包 · 单个文件最大 200MB'}
                       </p>
                     </div>
@@ -994,16 +1043,6 @@ export function HomePage() {
               </motion.div>
             )}
           </AnimatePresence>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-slate-600 dark:text-slate-300">
-            <span className="inline-flex items-center gap-1.5">
-              <Check className="size-3.5 text-emerald-700" />
-              生成后支持随时编辑
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Check className="size-3.5 text-emerald-700" />
-              编辑过程自动保存
-            </span>
-          </div>
         </section>
 
         {/* ═══ Recent classrooms — collapsible ═══ */}
