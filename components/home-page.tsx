@@ -793,10 +793,10 @@ export function HomePage() {
               <button
                 onClick={triggerPptxFileSelect}
                 disabled={pptxImporting}
-                className="flex items-center gap-1.5 text-[12px] text-muted-foreground/40 hover:text-foreground/60 transition-colors"
+                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-[13px] font-medium text-primary shadow-sm transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
               >
-                <Presentation className="size-3.5" />
-                <span>{t('import.pptx')}</span>
+                <Presentation className="size-4" />
+                <span>{pptxImporting ? '正在导入 PPTX…' : t('import.pptx')}</span>
               </button>
             )}
           </div>

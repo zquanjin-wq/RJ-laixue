@@ -18,6 +18,13 @@ RUN pnpm install --frozen-lockfile
 # ---- Stage 3: Builder ----
 FROM base AS builder
 
+# Next.js inlines NEXT_PUBLIC_* values during `pnpm build`; runtime env_file
+# values alone cannot make public feature entries appear in the browser.
+ARG NEXT_PUBLIC_ENABLE_PPTX_IMPORT=false
+ARG NEXT_PUBLIC_ENABLE_DURABLE_GENERATION=false
+ENV NEXT_PUBLIC_ENABLE_PPTX_IMPORT=$NEXT_PUBLIC_ENABLE_PPTX_IMPORT
+ENV NEXT_PUBLIC_ENABLE_DURABLE_GENERATION=$NEXT_PUBLIC_ENABLE_DURABLE_GENERATION
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 COPY . .

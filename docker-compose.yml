@@ -15,7 +15,11 @@ services:
     restart: unless-stopped
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_ENABLE_PPTX_IMPORT: ${NEXT_PUBLIC_ENABLE_PPTX_IMPORT:-false}
+        NEXT_PUBLIC_ENABLE_DURABLE_GENERATION: ${NEXT_PUBLIC_ENABLE_DURABLE_GENERATION:-false}
     env_file:
       - .env.production
     environment:
