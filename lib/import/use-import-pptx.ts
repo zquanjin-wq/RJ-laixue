@@ -27,7 +27,7 @@ export interface UseImportPptxOptions {
    * Called with the fully-converted canvas `Slide[]` after upload settles.
    * Until a caller wires this, the hook just logs the slides for inspection.
    */
-  onImported?: (slides: Slide[]) => void;
+  onImported?: (slides: Slide[], sourceFile: File) => void | Promise<void>;
 }
 
 /**
@@ -86,7 +86,7 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
 
         log.info('pptx imported', { slideCount: slides.length });
 
-        onImported?.(slides);
+        await onImported?.(slides, file);
 
         toast.success(t('import.pptxSuccess', { count: slides.length }), { id: toastId });
       } catch (error) {

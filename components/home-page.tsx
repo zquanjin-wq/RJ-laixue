@@ -39,7 +39,8 @@ import { AgentBar } from '@/components/agent/agent-bar';
 import { useTheme } from '@/lib/hooks/use-theme';
 import { nanoid } from 'nanoid';
 import { normalizeDocumentMimeType } from '@/lib/document/mime';
-import { uploadCourseMaterial } from '@/lib/course-assets/client';
+import { uploadCourseMaterial, uploadPptxGenerationSource } from '@/lib/course-assets/client';
+import { createPptxCourseDraft } from '@/lib/import/pptx-course-draft';
 import type { UserRequirements } from '@/lib/types/generation';
 import { useSettingsStore } from '@/lib/store/settings';
 import { hasUsableLLMProvider } from '@/lib/store/settings-validation';
@@ -222,7 +223,26 @@ export function HomePage() {
     fileInputRef: pptxFileInputRef,
     triggerFileSelect: triggerPptxFileSelect,
     handleFileChange: handlePptxFileChange,
-  } = useImportPptx();
+  } = useImportPptx({
+    onImported: async (slides, file) => {
+      const source = await uploadPptxGenerationSource(file);
+      const courseId = nanoid();
+      const draft = createPptxCourseDraft({
+        courseId,
+        fileName: file.name,
+        slides,
+        sourceId: source.sourceId,
+      });
+      const response = await fetch('/api/courses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: courseId, title: draft.title, data: draft, saveState: 'draft' }),
+      });
+      const saved = await response.json().catch(() => null);
+      if (!response.ok || !saved?.success) throw new Error(saved?.error || '导入课程保存失败');
+      router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
+    },
+  });
 
   useEffect(() => {
     // Clear stale media store to prevent cross-course thumbnail contamination.
