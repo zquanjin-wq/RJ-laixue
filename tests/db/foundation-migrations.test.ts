@@ -14,6 +14,7 @@ import { CourseRepository } from '@/lib/server/db/course-repository';
 import { CourseVideoExportRepository } from '@/lib/server/db/course-video-export-repository';
 import { AccessRepository } from '@/lib/server/db/access-repository';
 import { JobRepository } from '@/lib/server/db/job-repository';
+import { PptxSourceRepository } from '@/lib/server/db/pptx-source-repository';
 import {
   ClassroomGenerationRepository,
   GenerationIdempotencyConflict,
@@ -116,6 +117,7 @@ describe('P1 PostgreSQL foundation', () => {
       '0008_learning_analytics_and_revoice.sql',
       '0009_course_video_exports.sql',
       '0010_classroom_generation_jobs.sql',
+      '0011_classroom_generation_sources.sql',
     ]);
     expect(second.skipped).toEqual(first.applied);
 
@@ -193,6 +195,45 @@ describe('P1 PostgreSQL foundation', () => {
       GenerationLeaseLost,
     );
     expect(await jobs.claimNext('worker-d')).toBeNull();
+  });
+
+  it('registers only a confirmed, owned PPTX material as a reusable source', async () => {
+    const courses = new CourseRepository(pool);
+    const sources = new PptxSourceRepository(pool);
+    const asset = await courses.createAsset({
+      ownerUserId: 'user-1',
+      kind: 'material',
+      objectKey: 'pending/user-1/material/source.pptx',
+      contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      sizeBytes: 1024,
+    });
+    await expect(
+      sources.register({
+        ownerUserId: 'user-1',
+        assetId: asset.id,
+        originalFilename: '源课件.pptx',
+      }),
+    ).rejects.toThrow('not confirmed');
+    await courses.markAssetReady(asset.objectKey, 'user-1');
+    const first = await sources.register({
+      ownerUserId: 'user-1',
+      assetId: asset.id,
+      originalFilename: '源课件.pptx',
+    });
+    const repeated = await sources.register({
+      ownerUserId: 'user-1',
+      assetId: asset.id,
+      originalFilename: '源课件.pptx',
+    });
+    expect(repeated.id).toBe(first.id);
+    expect((await sources.getOwned(first.id, 'user-1'))?.status).toBe('uploaded');
+    await expect(
+      sources.register({
+        ownerUserId: 'other-user',
+        assetId: asset.id,
+        originalFilename: '源课件.pptx',
+      }),
+    ).rejects.toThrow('not owned');
   });
 
   it('backs off transient generation failures and terminates exhausted leases', async () => {

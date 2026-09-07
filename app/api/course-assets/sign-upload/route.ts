@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
     }
 
     const objectKey = `${prefix}/${randomUUID()}.${extension}`;
-    await courses.createAsset({
+    const asset = await courses.createAsset({
       ownerUserId: guard.user.id,
       courseId: boundCourseId,
       kind: databaseKinds[kind],
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
     const assetUrl = `/api/course-assets/object?key=${encodeURIComponent(objectKey)}`;
     return NextResponse.json({
       success: true,
-      data: { path: objectKey, uploadUrl, publicUrl: assetUrl },
+      data: { assetId: asset.id, path: objectKey, uploadUrl, publicUrl: assetUrl },
     });
   } catch (error) {
     return NextResponse.json(

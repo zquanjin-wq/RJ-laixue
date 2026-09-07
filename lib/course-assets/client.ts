@@ -57,6 +57,7 @@ export interface SignedUploadRequest {
 }
 
 export interface SignedUploadResponse {
+  assetId?: string;
   path: string;
   uploadUrl: string;
   publicUrl: string;
@@ -164,6 +165,28 @@ export async function uploadCourseMaterial(
   if (!upload.ok) throw new Error(`课程材料直传失败(HTTP ${upload.status})`);
   await confirmCourseUpload(signed.path);
   return { path: signed.path, size: file.size };
+}
+
+/** Upload a PPTX as an immutable generation source; parsing is scheduled separately. */
+export async function uploadPptxGenerationSource(file: File | Blob & { name?: string }): Promise<{ sourceId: string; path: string }> {
+  const fileName = file instanceof File ? file.name : file.name || 'courseware.pptx';
+  if (!/\.pptx$/i.test(fileName)) throw new Error('请选择 .pptx 课件');
+  const contentType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  const signed = await requestSignedUpload({
+    courseId: `pending-${crypto.randomUUID()}`,
+    kind: 'material', contentType, size: file.size, extension: 'pptx',
+  });
+  if (!signed.assetId) throw new Error('上传服务未返回资产标识');
+  const upload = await fetch(signed.uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: file });
+  if (!upload.ok) throw new Error(`PPTX 直传失败(HTTP ${upload.status})`);
+  await confirmCourseUpload(signed.path);
+  const sourceResponse = await fetch('/api/generation-sources/pptx', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assetId: signed.assetId, fileName }),
+  });
+  const source = await sourceResponse.json().catch(() => null);
+  if (!sourceResponse.ok || !source?.sourceId) throw new Error('PPTX 源文件登记失败');
+  return { sourceId: source.sourceId, path: signed.path };
 }
 
 /**
