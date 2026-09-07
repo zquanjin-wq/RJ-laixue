@@ -76,6 +76,8 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 // The durable server-side path is released independently from the legacy browser pipeline.
 // It currently accepts text-only drafts; materials and optional enrichment retain their existing flow.
 const DURABLE_GENERATION_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DURABLE_GENERATION === 'true';
+const PPTX_AI_CLASSROOM_UI_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_PPTX_AI_CLASSROOM === 'true';
 
 interface FormState {
   pdfFiles: File[];
@@ -231,7 +233,10 @@ export function HomePage() {
   } = useImportPptx({
     onImported: async (slides, file) => {
       const source = await uploadPptxGenerationSource(file);
-      const courseId = nanoid();
+      // The durable PPTX pipeline uses the formal UUID course identifier as
+      // both its revision anchor and asset namespace; do not create a second
+      // course once enrichment begins.
+      const courseId = crypto.randomUUID();
       const draft = createPptxCourseDraft({
         courseId,
         fileName: file.name,
@@ -245,6 +250,38 @@ export function HomePage() {
       });
       const saved = await response.json().catch(() => null);
       if (!response.ok || !saved?.success) throw new Error(saved?.error || '导入课程保存失败');
+      if (PPTX_AI_CLASSROOM_UI_ENABLED) {
+        const submission = await fetch('/api/generation-jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify({
+            sourceId: source.sourceId,
+            courseId,
+            sourceRevision: 1,
+            interactionIntensity: 'standard',
+            enableTTS: true,
+          }),
+        });
+        const created = await submission.json().catch(() => null);
+        if (!submission.ok || !created?.jobId || !created?.pollUrl) {
+          throw new Error(created?.error || 'AI 课堂任务创建失败');
+        }
+        const deadline = Date.now() + 45 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, created.pollIntervalMs ?? 5000));
+          const poll = await fetch(created.pollUrl, { cache: 'no-store' });
+          const job = await poll.json().catch(() => null);
+          if (!poll.ok || !job) throw new Error('AI 课堂生成状态读取失败');
+          if (job.status === 'succeeded') {
+            router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
+            return;
+          }
+          if (['failed', 'cancelled', 'conflict'].includes(job.status)) {
+            throw new Error('AI 课堂生成未完成，请稍后重试。');
+          }
+        }
+        throw new Error('AI 课堂生成等待超时，请稍后在课程列表中查看结果。');
+      }
       router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
     },
   });
