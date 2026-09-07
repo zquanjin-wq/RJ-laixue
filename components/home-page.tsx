@@ -484,7 +484,6 @@ export function HomePage() {
   };
 
   const canGenerate = !!form.requirement.trim() && hasUsableProvider && !isPreparingGeneration;
-  const canStartPptxCreation = !!form.requirement.trim() && !pptxImporting;
 
   const selectCreateMode = (mode: 'ai' | 'pptx' | 'course') => {
     setCreateMode(mode);
@@ -496,10 +495,6 @@ export function HomePage() {
   };
 
   const openDroppedFile = (mode: 'pptx' | 'course', file: File) => {
-    if (mode === 'pptx' && !form.requirement.trim()) {
-      toast.error('请先描述教学需求，再上传 PPTX');
-      return;
-    }
     const input = mode === 'pptx' ? pptxFileInputRef.current : fileInputRef.current;
     if (!input) return;
     const transfer = new DataTransfer();
@@ -1011,7 +1006,6 @@ export function HomePage() {
                       <button
                         type="button"
                         onClick={createMode === 'pptx' ? triggerPptxFileSelect : triggerFileSelect}
-                        disabled={createMode === 'pptx' && !canStartPptxCreation}
                         className="mt-4 inline-flex h-11 items-center gap-2 rounded-lg border border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 px-5 text-sm font-semibold text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_10px_24px_-14px_rgba(16,120,72,.75)] hover:-translate-y-px hover:brightness-105"
                       >
                         <Upload className="size-4" />
@@ -1019,9 +1013,7 @@ export function HomePage() {
                       </button>
                       <p className="mt-3 font-mono text-xs text-slate-500">
                         {createMode === 'pptx'
-                          ? form.requirement.trim()
-                            ? '.pptx · 单个文件最大 100MB'
-                            : '请先描述教学需求'
+                          ? '.pptx · 单个文件最大 100MB'
                           : '.zip 压缩课程包 · 单个文件最大 200MB'}
                       </p>
                     </div>
