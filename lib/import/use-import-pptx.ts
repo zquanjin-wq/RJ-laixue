@@ -55,6 +55,7 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
       setImporting(true);
       const toastId = toast.loading(t('import.parsingPptx'));
 
+      let slides: Slide[];
       try {
         // Static URL → bundler never sees the import target.
         // `scripts/sync-maic-importer.mjs` copies the prebuilt dist into
@@ -82,13 +83,9 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
           url
         )) as typeof MaicImport;
 
-        const slides = (await mod.importPptx(file, { upload })) as Slide[];
+        slides = (await mod.importPptx(file, { upload })) as Slide[];
 
         log.info('pptx imported', { slideCount: slides.length });
-
-        await onImported?.(slides, file);
-
-        toast.success(t('import.pptxSuccess', { count: slides.length }), { id: toastId });
       } catch (error) {
         log.error('PPTX import failed:', error);
         const notDeployed =
@@ -97,6 +94,21 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
           t(notDeployed ? 'import.error.parserUnavailable' : 'import.error.invalidPptx'),
           { id: toastId },
         );
+        return;
+      }
+
+      try {
+        await onImported?.(slides, file);
+        toast.success(t('import.pptxSuccess', { count: slides.length }), { id: toastId });
+      } catch (error) {
+        // Importing the file, uploading its immutable source, and creating the
+        // editable course are distinct operations. Do not mislabel a storage
+        // or persistence error as a malformed PPTX.
+        log.error('PPTX imported but course creation failed:', error);
+        const reason = error instanceof Error && error.message ? `：${error.message}` : '';
+        toast.error(`PPTX 已解析（${slides.length} 页），但课程保存失败${reason}`, {
+          id: toastId,
+        });
       } finally {
         setImporting(false);
       }

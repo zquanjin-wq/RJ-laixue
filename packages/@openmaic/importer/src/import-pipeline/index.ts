@@ -32,6 +32,13 @@ import { createMockImportContext } from './mockContext';
  * at 1280 and a 4:3 deck at 960 without any caller override.
  */
 const FALLBACK_VIEWPORT_SIZE = 1280;
+// Browser parsing keeps a decoded copy of each embedded file and may briefly
+// retain additional Blob/base64 representations. Large videos therefore make
+// an otherwise valid deck fail before its text, images, and notes are usable.
+// Skip only oversized video entries; all slide structure and ordinary media
+// remains importable and editable.
+const MAX_BROWSER_EMBEDDED_VIDEO_BYTES = 25 * 1024 * 1024;
+const VIDEO_EXTENSION = /\.(?:mp4|mov|m4v|avi|wmv|webm)$/i;
 
 export type OssUpload = (blob: Blob, filename: string, dir?: string) => Promise<string>;
 
@@ -125,7 +132,10 @@ export async function importPptx(
   options: ImportPptxOptions = {},
 ): Promise<Slide[]> {
   const buffer = await toArrayBuffer(input);
-  const files = await parseZip(buffer);
+  const files = await parseZip(buffer, {
+    shouldSkipMedia: (path, size) =>
+      VIDEO_EXTENSION.test(path) && (size === undefined || size > MAX_BROWSER_EMBEDDED_VIDEO_BYTES),
+  });
   const presentation = buildPresentation(files);
   const json = await toPptxtojsonFormat(presentation, files, 'base64');
   return parsedToSlides(json, options);

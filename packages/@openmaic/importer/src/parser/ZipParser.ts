@@ -38,6 +38,12 @@ export interface ZipParseLimits {
   maxMediaBytes?: number;
   /** Maximum concurrent zip entry reads during parsing. */
   maxConcurrency?: number;
+  /**
+   * Return true to leave an embedded media entry unread. This lets browser
+   * callers preserve the editable slides when a deck contains a video too
+   * large to safely inflate into browser memory.
+   */
+  shouldSkipMedia?: (path: string, uncompressedBytes?: number) => boolean;
 }
 
 function throwZipLimitExceeded(reason: string): never {
@@ -177,6 +183,10 @@ export async function parseZip(
 
     // --- Media (binary) ---
     if (normalizedPath.startsWith('ppt/media/')) {
+      if (limits.shouldSkipMedia?.(normalizedPath, knownSizeByPath.get(normalizedPath))) {
+        console.warn(`[@openmaic/importer] skipped embedded media: ${normalizedPath}`);
+        return;
+      }
       const bytes = await file.async('uint8array');
       if (!knownSizeByPath.has(normalizedPath)) {
         const size = bytes.byteLength;
