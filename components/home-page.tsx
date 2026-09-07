@@ -76,7 +76,6 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 // The durable server-side path is released independently from the legacy browser pipeline.
 // It currently accepts text-only drafts; materials and optional enrichment retain their existing flow.
 const DURABLE_GENERATION_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DURABLE_GENERATION === 'true';
-const PPTX_AI_CLASSROOM_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_PPTX_AI_CLASSROOM === 'true';
 
 interface FormState {
   pdfFiles: File[];
@@ -261,7 +260,12 @@ export function HomePage() {
       });
       const saved = await response.json().catch(() => null);
       if (!response.ok || !saved?.success) throw new Error(saved?.error || '导入课程保存失败');
-      if (PPTX_AI_CLASSROOM_UI_ENABLED) {
+      // PPTX import must always continue through the durable generation path.
+      // A client-side release fallback silently created mute, non-interactive
+      // courses whenever an older browser bundle evaluated its build-time flag.
+      // The server is the authoritative release gate and returns a clear error
+      // when this capability is unavailable.
+      {
         setPptxProgress({ summary: '正在根据教学需求配置 AI 课堂…', events: [] });
         const submission = await fetch('/api/generation-jobs', {
           method: 'POST',
@@ -309,7 +313,6 @@ export function HomePage() {
         }
         throw new Error('AI 课堂生成等待超时，请稍后在课程列表中查看结果。');
       }
-      router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
     },
   });
 
