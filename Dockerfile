@@ -1,7 +1,8 @@
 # ---- Stage 1: Base ----
 FROM node:22-alpine AS base
 
-RUN apk add --no-cache libc6-compat
+RUN sed -i 's|https://dl-cdn.alpinelinux.org|https://mirrors.tencent.com|g' /etc/apk/repositories \
+  && apk add --no-cache libc6-compat
 RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 
 WORKDIR /app
@@ -45,7 +46,8 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
-RUN apk add --no-cache libc6-compat
+RUN sed -i 's|https://dl-cdn.alpinelinux.org|https://mirrors.tencent.com|g' /etc/apk/repositories \
+  && apk add --no-cache libc6-compat
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
