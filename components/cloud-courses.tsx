@@ -141,11 +141,22 @@ export default function CloudCourses() {
     if (showLoading) setLoading(true);
     try {
       const rows = profile.role === 'admin' ? await listCloudCourses() : await listMyCourses();
-      const videoResults = await Promise.all(rows.map((course) => loadVideoExports(course.id)));
       setCourses(rows);
-      setVideoExports(Object.fromEntries(rows.map((course, index) => [course.id, videoResults[index].exports])));
-      setVideoCapability(videoResults.map((result) => result.capability).find((capability) => capability !== null) ?? null);
       setError(null);
+      // Course management must remain usable even when the optional video
+      // export service is slow or unavailable. Previously this awaited one
+      // request per course before clearing the full-page loading state.
+      if (showLoading) setLoading(false);
+      const settled = await Promise.allSettled(rows.map((course) => loadVideoExports(course.id)));
+      const exportsByCourse: Record<string, VideoExport[]> = {};
+      const capabilities: Array<VideoExportCapability | null> = [];
+      settled.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        exportsByCourse[rows[index].id] = result.value.exports;
+        capabilities.push(result.value.capability);
+      });
+      setVideoExports(exportsByCourse);
+      setVideoCapability(capabilities.find((capability) => capability !== null) ?? null);
     } catch (fetchError) {
       if (showLoading) setError(getErrorMessage(fetchError, '获取云端课程失败。'));
     } finally {
