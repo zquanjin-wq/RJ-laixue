@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   resolveModel: vi.fn(),
   limit: vi.fn(),
+  getSource: vi.fn(),
+  getCourse: vi.fn(),
 }));
 
 vi.mock('@/lib/server/auth-context', () => ({ getCurrentActor: mocks.actor }));
@@ -19,8 +21,19 @@ vi.mock('@/lib/server/db/classroom-generation-repository', () => ({
   },
   GenerationIdempotencyConflict: class GenerationIdempotencyConflict extends Error {},
 }));
+vi.mock('@/lib/server/db/pptx-source-repository', () => ({
+  PptxSourceRepository: class {
+    getOwned = mocks.getSource;
+  },
+}));
+vi.mock('@/lib/server/db/course-repository', () => ({
+  CourseRepository: class {
+    getCourse = mocks.getCourse;
+  },
+}));
 
 const enabledBefore = process.env.CLASSROOM_GENERATION_ENABLED;
+const pptxEnabledBefore = process.env.PPTX_AI_CLASSROOM_ENABLED;
 
 function request(body: unknown, key?: string) {
   return new NextRequest('http://localhost/api/generation-jobs', {
@@ -33,6 +46,7 @@ function request(body: unknown, key?: string) {
 describe('durable generation job submission', () => {
   beforeEach(() => {
     process.env.CLASSROOM_GENERATION_ENABLED = 'true';
+    process.env.PPTX_AI_CLASSROOM_ENABLED = 'true';
     mocks.actor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
     mocks.limit.mockReturnValue({ ok: true });
     mocks.resolveModel.mockResolvedValue({
@@ -44,12 +58,20 @@ describe('durable generation job submission', () => {
       courseId: 'course-1',
       reused: false,
     });
+    mocks.getSource.mockResolvedValue({ id: '64fd0314-2f09-497d-bc0b-d7f6771b04bd' });
+    mocks.getCourse.mockResolvedValue({
+      ownerUserId: 'teacher-1',
+      contentRevision: 3,
+      content: { stage: { pptxSource: { sourceId: '64fd0314-2f09-497d-bc0b-d7f6771b04bd' } } },
+    });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     if (enabledBefore === undefined) delete process.env.CLASSROOM_GENERATION_ENABLED;
     else process.env.CLASSROOM_GENERATION_ENABLED = enabledBefore;
+    if (pptxEnabledBefore === undefined) delete process.env.PPTX_AI_CLASSROOM_ENABLED;
+    else process.env.PPTX_AI_CLASSROOM_ENABLED = pptxEnabledBefore;
   });
 
   it('stays unavailable until the operator enables the new path', async () => {
@@ -86,5 +108,32 @@ describe('durable generation job submission', () => {
       }),
     );
     expect(await response.json()).toMatchObject({ courseId: 'course-1', reused: false });
+  });
+
+  it('queues PPT AI classroom enhancement against the existing source revision', async () => {
+    const { POST } = await import('@/app/api/generation-jobs/route');
+    const response = await POST(
+      request(
+        {
+          sourceId: '64fd0314-2f09-497d-bc0b-d7f6771b04bd',
+          courseId: '6c2195f4-d03c-4cf3-9cb9-dabc17d7d343',
+          sourceRevision: 3,
+          interactionIntensity: 'light',
+          enableTTS: true,
+        },
+        'pptx-key-1',
+      ),
+    );
+    expect(response.status).toBe(202);
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'enhance',
+        inputKind: 'pptx',
+        pipelineKind: 'pptx_ai_classroom',
+        courseId: '6c2195f4-d03c-4cf3-9cb9-dabc17d7d343',
+        sourceRevision: 3,
+        payload: expect.objectContaining({ interactionIntensity: 'light', enableTTS: true }),
+      }),
+    );
   });
 });

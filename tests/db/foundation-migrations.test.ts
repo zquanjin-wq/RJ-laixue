@@ -118,6 +118,8 @@ describe('P1 PostgreSQL foundation', () => {
       '0009_course_video_exports.sql',
       '0010_classroom_generation_jobs.sql',
       '0011_classroom_generation_sources.sql',
+      '0012_pptx_ai_classroom_pipeline.sql',
+      '0013_classroom_generation_events.sql',
     ]);
     expect(second.skipped).toEqual(first.applied);
 

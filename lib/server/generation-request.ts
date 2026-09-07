@@ -9,3 +9,23 @@ export const generationRequestSchema = z
   .strict();
 
 export const TEXT_GENERATION_PIPELINE_VERSION = 1;
+
+/**
+ * Enhancement input for the visible "通过 PPT 创建" flow. The imported course
+ * already exists; this job enriches that exact revision instead of creating a
+ * second course from the same upload.
+ */
+export const pptxAiClassroomRequestSchema = z
+  .object({
+    sourceId: z.string().uuid(),
+    courseId: z.string().uuid(),
+    sourceRevision: z.number().int().positive(),
+    languageDirective: z.string().trim().min(1).max(80).default('zh-CN'),
+    interactionIntensity: z.enum(['light', 'standard', 'rich']).default('standard'),
+    enableTTS: z.boolean().default(true),
+    applySafeRepairs: z.boolean().default(true),
+  })
+  .strict();
+
+export const PPTX_AI_CLASSROOM_PIPELINE_VERSION = 1;
+export type PptxAiClassroomRequest = z.infer<typeof pptxAiClassroomRequestSchema>;

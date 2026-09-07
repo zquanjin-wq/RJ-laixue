@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 type Context = { params: Promise<{ jobId: string }> };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function handle(context: Context, cancel: boolean) {
+async function handle(request: NextRequest, context: Context, cancel: boolean) {
   const actor = await getCurrentActor();
   if (!actor) return NextResponse.json({ errorCode: 'UNAUTHENTICATED' }, { status: 401 });
   const { jobId } = await context.params;
@@ -19,12 +19,14 @@ async function handle(context: Context, cancel: boolean) {
     await jobs.cancel(jobId, actor.userId);
     return NextResponse.json(await jobs.getOwned(jobId, actor.userId));
   }
-  return NextResponse.json(job);
+  const after = Number(new URL(request.url).searchParams.get('after') ?? '0');
+  const events = await jobs.listOwnedEvents(jobId, actor.userId, Number.isSafeInteger(after) ? after : 0);
+  return NextResponse.json({ ...job, events, nextEventId: events.at(-1)?.id ?? after });
 }
 
 export async function GET(_request: NextRequest, context: Context) {
-  return handle(context, false);
+  return handle(_request, context, false);
 }
 export async function DELETE(_request: NextRequest, context: Context) {
-  return handle(context, true);
+  return handle(_request, context, true);
 }

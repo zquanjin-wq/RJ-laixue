@@ -25,6 +25,9 @@ import {
   Atom,
   X,
   Presentation,
+  PackageOpen,
+  FileText,
+  LoaderCircle,
 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { LanguageSwitcher } from '@/components/language-switcher';
@@ -70,11 +73,6 @@ const WEB_SEARCH_STORAGE_KEY = 'webSearchEnabled';
 const RECENT_OPEN_STORAGE_KEY = 'recentClassroomsOpen';
 const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 
-// PPTX import is still scaffolding: `useImportPptx` has no `onImported` consumer
-// yet, so the flow only logs the parsed slides. Hide the entry point behind a
-// flag until it's wired end-to-end, so the UI doesn't expose a no-op button.
-// Enable with NEXT_PUBLIC_ENABLE_PPTX_IMPORT=true.
-const PPTX_IMPORT_ENABLED = process.env.NEXT_PUBLIC_ENABLE_PPTX_IMPORT === 'true';
 // The durable server-side path is released independently from the legacy browser pipeline.
 // It currently accepts text-only drafts; materials and optional enrichment retain their existing flow.
 const DURABLE_GENERATION_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DURABLE_GENERATION === 'true';
@@ -101,6 +99,8 @@ export function HomePage() {
   const showVocationalTestUi = shouldShowVocationalTestUi();
   const [form, setForm] = useState<FormState>(initialFormState);
   const [isPreparingGeneration, setIsPreparingGeneration] = useState(false);
+  const [createMode, setCreateMode] = useState<'ai' | 'pptx' | 'course'>('ai');
+  const [dragMode, setDragMode] = useState<'pptx' | 'course' | null>(null);
   const isPreparingGenerationRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
@@ -138,9 +138,13 @@ export function HomePage() {
     try {
       const savedWebSearch = localStorage.getItem(WEB_SEARCH_STORAGE_KEY);
       const savedInteractiveMode = localStorage.getItem(INTERACTIVE_MODE_STORAGE_KEY);
+      const savedCreateMode = localStorage.getItem('laixue-create-mode');
       const updates: Partial<FormState> = {};
       if (savedWebSearch === 'true') updates.webSearch = true;
       if (savedInteractiveMode === 'true') updates.interactiveMode = true;
+      if (savedCreateMode === 'pptx' || savedCreateMode === 'course') {
+        setCreateMode(savedCreateMode);
+      }
       if (Object.keys(updates).length > 0) {
         setForm((prev) => ({ ...prev, ...updates }));
       }
@@ -213,8 +217,9 @@ export function HomePage() {
   };
 
   const { importing, fileInputRef, triggerFileSelect, handleFileChange } = useImportClassroom(
-    () => {
+    (stageId) => {
       loadClassrooms();
+      router.push(`/classroom/${encodeURIComponent(stageId)}?editor=1`);
     },
   );
 
@@ -443,6 +448,41 @@ export function HomePage() {
 
   const canGenerate = !!form.requirement.trim() && hasUsableProvider && !isPreparingGeneration;
 
+  const selectCreateMode = (mode: 'ai' | 'pptx' | 'course') => {
+    setCreateMode(mode);
+    try {
+      localStorage.setItem('laixue-create-mode', mode);
+    } catch {
+      /* localStorage unavailable */
+    }
+  };
+
+  const openDroppedFile = (mode: 'pptx' | 'course', file: File) => {
+    const input = mode === 'pptx' ? pptxFileInputRef.current : fileInputRef.current;
+    if (!input) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const handleCreateDrop = (mode: 'pptx' | 'course', event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragMode(null);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    const extension = file.name.toLowerCase();
+    if (mode === 'pptx' && !extension.endsWith('.pptx')) {
+      toast.error('请选择 PPTX 文件');
+      return;
+    }
+    if (mode === 'course' && !extension.endsWith('.zip')) {
+      toast.error('请选择 ZIP 课程包');
+      return;
+    }
+    openDroppedFile(mode, file);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -451,7 +491,7 @@ export function HomePage() {
   };
 
   return (
-    <div className="min-h-[100dvh] w-full bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex flex-col items-center p-4 pt-16 md:p-8 md:pt-16 overflow-x-hidden">
+    <div className="relative min-h-[100dvh] w-full overflow-x-hidden bg-[#f4f8f6] px-4 pb-16 pt-20 text-slate-800 dark:bg-slate-950 dark:text-slate-100 md:px-8 md:pt-24">
       <input
         ref={fileInputRef}
         type="file"
@@ -459,15 +499,13 @@ export function HomePage() {
         onChange={handleFileChange}
         className="hidden"
       />
-      {PPTX_IMPORT_ENABLED && (
-        <input
-          ref={pptxFileInputRef}
-          type="file"
-          accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          onChange={handlePptxFileChange}
-          className="hidden"
-        />
-      )}
+      <input
+        ref={pptxFileInputRef}
+        type="file"
+        accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        onChange={handlePptxFileChange}
+        className="hidden"
+      />
       {/* ═══ Top-right pill (unchanged) ═══ */}
       <div
         ref={toolbarRef}
@@ -559,370 +597,497 @@ export function HomePage() {
         initialSection={settingsSection}
       />
 
-      {/* ═══ Background Decor ═══ */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div
-          className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"
-          style={{ animationDuration: '4s' }}
-        />
-        <div
-          className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse"
-          style={{ animationDuration: '6s' }}
-        />
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+        <div className="absolute -left-48 -top-44 size-[560px] rounded-full bg-sky-300/35 blur-[90px] dark:bg-sky-700/10" />
+        <div className="absolute -right-52 -top-24 size-[660px] rounded-full bg-emerald-300/30 blur-[100px] dark:bg-emerald-700/10" />
+        <div className="absolute -bottom-72 left-1/3 size-[560px] rounded-full bg-violet-300/25 blur-[95px] dark:bg-violet-700/10" />
       </div>
 
-      {/* ═══ Hero section: title + input (centered, wider) ═══ */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
+      <motion.main
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className={cn(
-          'relative z-20 w-full max-w-[800px] flex flex-col items-center',
-          classrooms.length === 0 ? 'justify-center min-h-[calc(100dvh-8rem)]' : 'mt-[10vh]',
-        )}
+        transition={{ duration: 0.45, ease: 'easeOut' }}
+        className="relative z-10 mx-auto w-full max-w-[1080px]"
       >
-        {/* ── Logo ── */}
-        <motion.img
-          src="/logo-horizontal.png"
-          alt="OpenMAIC"
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{
-            delay: 0.1,
-            type: 'spring',
-            stiffness: 200,
-            damping: 20,
-          }}
-          className="h-12 md:h-16 mb-2 -ml-2 md:-ml-3"
-        />
+        <header className="mb-5">
+          <h1 className="text-[28px] font-semibold tracking-tight text-slate-800 dark:text-white md:text-[32px]">
+            创建一门课程
+          </h1>
+          <p className="mt-2 text-sm leading-7 text-slate-600 dark:text-slate-300 md:text-[15px]">
+            从教学需求开始生成，或基于已有 PPT、交互课程继续创作。
+          </p>
+        </header>
 
-        {/* ── Slogan ── */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.25 }}
-          className="text-sm text-muted-foreground/60 mb-8"
-        >
-          {t('home.slogan')}
-        </motion.p>
-
-        {/* ── Unified input area ── */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.97 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.35 }}
-          className="w-full"
-        >
-          <div className="w-full rounded-2xl border border-border/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-xl shadow-black/[0.03] dark:shadow-black/20 transition-shadow focus-within:shadow-2xl focus-within:shadow-violet-500/[0.06]">
-            {/* ── Greeting + Profile + Agents ── */}
-            <div className="relative z-20 flex items-start justify-between">
-              <GreetingBar />
-              <div className="pr-3 pt-3.5 shrink-0">
-                <AgentBar />
-              </div>
-            </div>
-
-            {/* Textarea */}
-            <textarea
-              ref={textareaRef}
-              placeholder={t('upload.requirementPlaceholder')}
-              className="w-full resize-none border-0 bg-transparent px-4 pt-1 pb-2 text-[13px] leading-relaxed placeholder:text-muted-foreground/40 focus:outline-none min-h-[140px] max-h-[300px]"
-              value={form.requirement}
-              onChange={(e) => updateForm('requirement', e.target.value)}
-              onKeyDown={handleKeyDown}
-              rows={4}
-            />
-
-            {/* Toolbar row */}
-            <div className="px-3 pb-3 flex items-end gap-2">
-              <div className="flex-1 min-w-0">
-                <GenerationToolbar
-                  webSearch={form.webSearch}
-                  onWebSearchChange={(v) => updateForm('webSearch', v)}
-                  onSettingsOpen={(section) => {
-                    setSettingsSection(section);
-                    setSettingsOpen(true);
-                  }}
-                  pdfFiles={form.pdfFiles}
-                  onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
-                  onPdfError={setError}
-                />
-              </div>
-
-              {/* Interactive mode toggle */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 17 }}
-                    onClick={() => updateForm('interactiveMode', !form.interactiveMode)}
-                    className={cn(
-                      'relative inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all cursor-pointer select-none whitespace-nowrap border shrink-0 h-8',
-                      form.interactiveMode
-                        ? 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border-cyan-500 shadow-[0_0_12px_rgba(6,182,212,0.35)] dark:shadow-[0_0_12px_rgba(6,182,212,0.25)]'
-                        : 'border-cyan-300/60 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-50 dark:hover:bg-cyan-900/20',
-                    )}
-                  >
-                    {form.interactiveMode && (
-                      <span
-                        className="absolute inset-[-4px] rounded-full border border-cyan-400/40 dark:border-cyan-400/25"
-                        style={{
-                          animation: 'interactive-mode-breathe 2s ease-in-out infinite',
-                        }}
-                      />
-                    )}
-                    <Atom className="size-3.5 relative z-10 animate-[spin_3s_linear_infinite]" />
-                    <span className="relative z-10">{t('toolbar.interactiveModeLabel')}</span>
-                  </motion.button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  {t('toolbar.interactiveModeHint')}
-                </TooltipContent>
-              </Tooltip>
-
-              {/* Voice input */}
-              <SpeechButton
-                size="md"
-                onTranscription={(text) => {
-                  setForm((prev) => {
-                    const next = prev.requirement + (prev.requirement ? ' ' : '') + text;
-                    updateRequirementCache(next);
-                    return { ...prev, requirement: next };
-                  });
-                }}
-              />
-
-              {/* Send button */}
-              <button
-                onClick={handleGenerate}
-                disabled={!canGenerate}
-                className={cn(
-                  'shrink-0 min-h-11 rounded-lg flex items-center justify-center gap-1.5 transition-all px-4',
-                  canGenerate
-                    ? 'bg-primary text-primary-foreground hover:opacity-90 shadow-sm cursor-pointer'
-                    : 'bg-muted text-muted-foreground/40 cursor-not-allowed',
-                )}
-              >
-                <span className="text-xs font-medium">
-                  {isPreparingGeneration
-                    ? form.pdfFiles.length > 0
-                      ? '正在上传素材…'
-                      : '正在进入课堂…'
-                    : t('toolbar.enterClassroom')}
-                </span>
-                <ArrowUp className="size-3.5" />
-              </button>
-            </div>
-          </div>
-        </motion.div>
-
-        {showVocationalTestUi && (
-          <motion.div
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="mt-2 flex w-full justify-start px-1"
+        <section className="relative">
+          <div
+            role="tablist"
+            aria-label="课程创建方式"
+            className="mb-3 flex snap-x gap-3 overflow-x-auto rounded-xl border border-white/80 bg-white/35 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.8),0_18px_38px_-28px_rgba(15,70,55,.35)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/40 md:grid md:grid-cols-3"
           >
-            <Tooltip>
-              <TooltipTrigger asChild>
+            {(
+              [
+                {
+                  id: 'ai',
+                  title: 'AI 创建课程',
+                  desc: '描述教学目标，从零生成',
+                  icon: Sparkles,
+                  tone: 'emerald',
+                },
+                {
+                  id: 'pptx',
+                  title: '通过 PPT 创建',
+                  desc: '上传课件，转换为可编辑课程',
+                  icon: Presentation,
+                  tone: 'orange',
+                },
+                {
+                  id: 'course',
+                  title: '导入已有交互课程',
+                  desc: '迁移完整课程与互动配置',
+                  icon: PackageOpen,
+                  tone: 'cyan',
+                },
+              ] as const
+            ).map((item) => {
+              const Icon = item.icon;
+              const selected = createMode === item.id;
+              return (
                 <button
+                  key={item.id}
+                  data-create-mode={item.id}
                   type="button"
-                  role="switch"
-                  aria-checked={form.vocationalTestMode}
-                  onClick={() => updateForm('vocationalTestMode', !form.vocationalTestMode)}
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => selectCreateMode(item.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                    event.preventDefault();
+                    const modes = ['ai', 'pptx', 'course'] as const;
+                    const current = modes.indexOf(item.id);
+                    const direction = event.key === 'ArrowRight' ? 1 : -1;
+                    const next = modes[(current + direction + modes.length) % modes.length];
+                    selectCreateMode(next);
+                    requestAnimationFrame(() => {
+                      document
+                        .querySelector<HTMLButtonElement>(`[data-create-mode="${next}"]`)
+                        ?.focus();
+                    });
+                  }}
                   className={cn(
-                    'inline-flex h-7 items-center gap-2 rounded-full border px-2.5 text-[11px] font-medium transition-colors',
-                    form.vocationalTestMode
-                      ? 'border-cyan-400/70 bg-cyan-50 text-cyan-700 shadow-[0_0_10px_rgba(6,182,212,0.16)] dark:bg-cyan-950/40 dark:text-cyan-300'
-                      : 'border-border/70 bg-background/70 text-muted-foreground hover:border-cyan-300/60 hover:text-cyan-700 dark:hover:text-cyan-300',
+                    'flex min-w-[265px] snap-center items-start gap-3 rounded-lg border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-w-0',
+                    selected
+                      ? 'translate-y-[-1px] border-white bg-white/90 shadow-[0_14px_30px_-18px_rgba(23,110,72,.6),0_0_0_1px_rgba(20,132,78,.55)] dark:border-white/20 dark:bg-slate-900/90'
+                      : 'border-white/60 bg-white/25 hover:-translate-y-px hover:bg-white/55 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10',
                   )}
                 >
-                  <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-normal text-cyan-700 dark:bg-cyan-900/45 dark:text-cyan-300">
-                    测试功能
-                  </span>
-                  <Sparkles className="size-3.5" />
-                  <span>职教任务</span>
                   <span
                     className={cn(
-                      'relative h-3.5 w-6 rounded-full transition-colors',
-                      form.vocationalTestMode ? 'bg-cyan-500' : 'bg-muted-foreground/25',
+                      'grid size-9 shrink-0 place-items-center rounded-lg border shadow-[inset_0_1px_0_rgba(255,255,255,.8)]',
+                      item.tone === 'emerald' &&
+                        'border-emerald-200 bg-gradient-to-br from-emerald-50 to-violet-50 text-emerald-700',
+                      item.tone === 'orange' &&
+                        'border-orange-200 bg-gradient-to-br from-amber-50 to-orange-100 text-orange-700',
+                      item.tone === 'cyan' &&
+                        'border-cyan-200 bg-gradient-to-br from-cyan-50 to-emerald-100 text-cyan-700',
                     )}
                   >
+                    <Icon className="size-5" />
+                  </span>
+                  <span className="min-w-0">
                     <span
                       className={cn(
-                        'absolute top-0.5 size-2.5 rounded-full bg-white transition-transform',
-                        form.vocationalTestMode ? 'translate-x-3' : 'translate-x-0.5',
-                      )}
-                    />
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">
-                从当前输入框提交职教实操训练测试
-              </TooltipContent>
-            </Tooltip>
-          </motion.div>
-        )}
-
-        {/* ── Error ── */}
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mt-3 w-full p-3 bg-destructive/10 border border-destructive/20 rounded-lg"
-            >
-              <p className="text-sm text-destructive">{error}</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── Import buttons (empty state) ── */}
-        {classrooms.length === 0 && (
-          <div className="relative z-10 mt-4 flex items-center gap-4">
-            <button
-              onClick={triggerFileSelect}
-              disabled={importing}
-              className="flex items-center gap-1.5 text-[12px] text-muted-foreground/40 hover:text-foreground/60 transition-colors"
-            >
-              <Upload className="size-3.5" />
-              <span>{t('import.classroom')}</span>
-            </button>
-            {PPTX_IMPORT_ENABLED && (
-              <button
-                onClick={triggerPptxFileSelect}
-                disabled={pptxImporting}
-                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-[13px] font-medium text-primary shadow-sm transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
-              >
-                <Presentation className="size-4" />
-                <span>{pptxImporting ? '正在导入 PPTX…' : t('import.pptx')}</span>
-              </button>
-            )}
-          </div>
-        )}
-      </motion.div>
-
-      {/* ═══ Recent classrooms — collapsible ═══ */}
-      {classrooms.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="relative z-10 mt-10 w-full max-w-6xl flex flex-col items-center"
-        >
-          {/* Trigger — divider-line with centered text */}
-          <div className="group w-full flex items-center gap-4 py-2">
-            <div className="flex-1 h-px bg-border/40 group-hover:bg-border/70 transition-colors" />
-            <div className="shrink-0 flex items-center gap-3 text-[13px] text-muted-foreground/60 select-none">
-              <button
-                onClick={() => persistRecentOpen(!recentOpen)}
-                className="flex items-center gap-2 hover:text-foreground/70 transition-colors cursor-pointer"
-              >
-                <Clock className="size-3.5" />
-                {t('classroom.recentClassrooms')}
-                <span className="text-[11px] tabular-nums opacity-60">{classrooms.length}</span>
-                <motion.div
-                  animate={{ rotate: recentOpen ? 180 : 0 }}
-                  transition={{ duration: 0.3, ease: 'easeInOut' }}
-                >
-                  <ChevronDown className="size-3.5" />
-                </motion.div>
-              </button>
-
-              {/* Search toggle — icon that expands into an input in place */}
-              <AnimatePresence initial={false}>
-                {!searchOpen ? (
-                  <motion.button
-                    key="search-icon"
-                    ref={searchButtonRef}
-                    type="button"
-                    aria-label={t('classroom.searchAriaLabel')}
-                    onClick={() => {
-                      setSearchOpen(true);
-                      if (!recentOpen) persistRecentOpen(true);
-                      requestAnimationFrame(() => searchInputRef.current?.focus());
-                    }}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.12, ease: 'easeOut' }}
-                    className="flex items-center justify-center size-6 rounded-full text-muted-foreground/50 hover:text-foreground/70 hover:bg-muted/50 transition-colors cursor-pointer"
-                  >
-                    <Search className="size-3.5" />
-                  </motion.button>
-                ) : (
-                  <motion.div
-                    key="search-input"
-                    initial={{ opacity: 0, width: 0 }}
-                    animate={{ opacity: 1, width: 200 }}
-                    exit={{ opacity: 0, width: 0 }}
-                    transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
-                    className="overflow-hidden"
-                  >
-                    <InputGroup
-                      className={cn(
-                        'h-7 text-[12px] rounded-full bg-muted/40 border-transparent shadow-none',
-                        'transition-colors',
-                        'hover:bg-muted/60',
-                        'has-[[data-slot=input-group-control]:focus-visible]:bg-muted/60',
-                        'has-[[data-slot=input-group-control]:focus-visible]:border-transparent',
-                        'has-[[data-slot=input-group-control]:focus-visible]:ring-0',
+                        'block text-sm font-semibold md:text-[15px]',
+                        selected && 'text-emerald-800 dark:text-emerald-300',
                       )}
                     >
-                      <InputGroupInput
-                        ref={searchInputRef}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') {
-                            e.preventDefault();
-                            if (searchQuery) {
-                              setSearchQuery('');
-                            } else {
-                              setSearchOpen(false);
-                              requestAnimationFrame(() => searchButtonRef.current?.focus());
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          if (!searchQuery) {
-                            setSearchOpen(false);
-                          }
-                        }}
-                        placeholder={t('classroom.searchPlaceholder')}
-                        aria-label={t('classroom.searchAriaLabel')}
-                        className="h-7 pl-3 placeholder:text-muted-foreground/50"
-                      />
-                      {searchQuery && (
-                        <InputGroupButton
-                          size="icon-xs"
-                          aria-label={t('classroom.clearSearch')}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setSearchQuery('');
-                            searchInputRef.current?.focus();
-                          }}
-                        >
-                          <X />
-                        </InputGroupButton>
-                      )}
-                    </InputGroup>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                      {item.title}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-slate-600 dark:text-slate-300 md:text-[13px]">
+                      {item.desc}
+                    </span>
+                  </span>
+                  {selected && <Check className="ml-auto size-4 shrink-0 text-emerald-700" />}
+                </button>
+              );
+            })}
+          </div>
 
-              <button
-                onClick={triggerFileSelect}
-                disabled={importing}
-                className="group/import grid grid-cols-[auto_0fr] hover:grid-cols-[auto_1fr] items-center gap-1 rounded-full px-1.5 py-0.5 text-[12px] text-muted-foreground/35 hover:text-muted-foreground/70 hover:bg-muted/50 transition-all duration-200 cursor-pointer"
+          <div className="relative overflow-hidden rounded-2xl border border-white/90 bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,.9),0_28px_64px_-30px_rgba(23,75,60,.42)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/65">
+            <div
+              className={cn(
+                'absolute inset-x-6 top-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-500 to-transparent',
+                createMode === 'pptx' && 'via-orange-500',
+                createMode === 'course' && 'via-cyan-600',
+              )}
+            />
+            <AnimatePresence mode="wait">
+              {createMode === 'ai' ? (
+                <motion.div
+                  key="ai"
+                  role="tabpanel"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="flex min-h-[344px] flex-col p-5 md:p-7"
+                >
+                  <label
+                    className="mb-2 flex items-center justify-between text-sm font-semibold"
+                    htmlFor="course-requirement"
+                  >
+                    <span>课程主题 / 教学需求</span>
+                    <span className="font-mono text-xs font-medium text-slate-500">
+                      {form.requirement.length}/300
+                    </span>
+                  </label>
+                  <textarea
+                    id="course-requirement"
+                    ref={textareaRef}
+                    maxLength={300}
+                    placeholder="例如：为初中生设计一节 45 分钟的光合作用课程，包含导入、实验演示与课堂练习。"
+                    className="min-h-[138px] w-full resize-y rounded-lg border border-slate-300 bg-white/80 px-4 py-3.5 text-[15px] leading-7 text-slate-800 shadow-inner outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white"
+                    value={form.requirement}
+                    onChange={(e) => updateForm('requirement', e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    rows={4}
+                  />
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <GenerationToolbar
+                      webSearch={form.webSearch}
+                      onWebSearchChange={(v) => updateForm('webSearch', v)}
+                      onSettingsOpen={(section) => {
+                        setSettingsSection(section);
+                        setSettingsOpen(true);
+                      }}
+                      pdfFiles={form.pdfFiles}
+                      onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
+                      onPdfError={setError}
+                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={form.interactiveMode}
+                          onClick={() => updateForm('interactiveMode', !form.interactiveMode)}
+                          className={cn(
+                            'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
+                            form.interactiveMode
+                              ? 'border-cyan-500 bg-cyan-100 text-cyan-800'
+                              : 'border-cyan-300 bg-white/55 text-cyan-700 hover:bg-cyan-50',
+                          )}
+                        >
+                          <Atom className="size-3.5" />
+                          {t('toolbar.interactiveModeLabel')}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('toolbar.interactiveModeHint')}</TooltipContent>
+                    </Tooltip>
+                    <SpeechButton
+                      size="md"
+                      onTranscription={(text) => {
+                        setForm((prev) => {
+                          const next = `${prev.requirement}${prev.requirement ? ' ' : ''}${text}`;
+                          updateRequirementCache(next);
+                          return { ...prev, requirement: next };
+                        });
+                      }}
+                    />
+                    {showVocationalTestUi && (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={form.vocationalTestMode}
+                        onClick={() => updateForm('vocationalTestMode', !form.vocationalTestMode)}
+                        className={cn(
+                          'h-8 rounded-full border px-3 text-xs font-medium',
+                          form.vocationalTestMode
+                            ? 'border-violet-500 bg-violet-100 text-violet-800'
+                            : 'border-slate-300 bg-white/55 text-slate-600',
+                        )}
+                      >
+                        职教任务
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-auto pt-5">
+                    <button
+                      onClick={handleGenerate}
+                      disabled={!canGenerate}
+                      className={cn(
+                        'flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border text-[15px] font-semibold transition',
+                        canGenerate
+                          ? 'border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_12px_28px_-14px_rgba(16,120,72,.75)] hover:-translate-y-px hover:brightness-105'
+                          : 'cursor-not-allowed border-emerald-200 bg-emerald-100/70 text-emerald-800/55',
+                      )}
+                    >
+                      {isPreparingGeneration && <LoaderCircle className="size-4 animate-spin" />}
+                      {isPreparingGeneration ? '正在创建课程…' : '生成课程'}
+                    </button>
+                    <p className="mt-2.5 text-center text-xs text-slate-600">
+                      {form.requirement.trim()
+                        ? '已准备就绪，点击即可生成课程框架'
+                        : '请先描述教学需求'}
+                    </p>
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key={createMode}
+                  role="tabpanel"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="min-h-[344px] p-5 md:p-7"
+                >
+                  {(createMode === 'pptx' && pptxImporting) ||
+                  (createMode === 'course' && importing) ? (
+                    <div className="flex min-h-[290px] flex-col justify-center rounded-xl border border-white/90 bg-white/55 p-6 shadow-inner dark:border-white/10 dark:bg-slate-950/30">
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            'grid size-12 place-items-center rounded-lg',
+                            createMode === 'pptx'
+                              ? 'bg-orange-100 text-orange-700'
+                              : 'bg-cyan-100 text-cyan-700',
+                          )}
+                        >
+                          {createMode === 'pptx' ? (
+                            <FileText className="size-6" />
+                          ) : (
+                            <PackageOpen className="size-6" />
+                          )}
+                        </span>
+                        <div>
+                          <p className="font-semibold">正在处理所选文件</p>
+                          <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
+                            {createMode === 'pptx'
+                              ? '正在解析页面与讲师备注…'
+                              : '正在解析课程内容与互动配置…'}
+                          </p>
+                        </div>
+                        <LoaderCircle className="ml-auto size-5 animate-spin text-emerald-700" />
+                      </div>
+                      <div className="mt-6 h-2 overflow-hidden rounded-full bg-slate-200/80">
+                        <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" />
+                      </div>
+                      <p className="mt-2 text-right font-mono text-xs text-slate-500">处理中</p>
+                    </div>
+                  ) : (
+                    <div
+                      onDragEnter={(e) => {
+                        e.preventDefault();
+                        setDragMode(createMode);
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragMode(null);
+                      }}
+                      onDrop={(e) => handleCreateDrop(createMode, e)}
+                      className={cn(
+                        'flex min-h-[290px] flex-col items-center justify-center rounded-xl border-2 border-dashed px-5 py-7 text-center transition',
+                        dragMode === createMode
+                          ? 'border-emerald-500 bg-emerald-50/75 shadow-[0_0_0_6px_rgba(16,185,129,.1)]'
+                          : 'border-slate-300 bg-white/30 hover:border-emerald-500/70 hover:bg-white/50 dark:border-slate-700 dark:bg-slate-950/20',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'grid h-16 w-20 place-items-center rounded-xl shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_10px_24px_-14px_rgba(15,70,55,.5)]',
+                          createMode === 'pptx'
+                            ? 'bg-gradient-to-br from-amber-50 to-orange-100 text-orange-700'
+                            : 'bg-gradient-to-br from-cyan-50 to-emerald-100 text-cyan-700',
+                        )}
+                      >
+                        {createMode === 'pptx' ? (
+                          <Presentation className="size-8" />
+                        ) : (
+                          <PackageOpen className="size-8" />
+                        )}
+                      </span>
+                      <h2
+                        className={cn(
+                          'mt-4 text-base font-semibold',
+                          dragMode === createMode && 'text-emerald-800',
+                        )}
+                      >
+                        {dragMode === createMode
+                          ? createMode === 'pptx'
+                            ? '松开以上传 PPTX'
+                            : '松开以上传课程包'
+                          : createMode === 'pptx'
+                            ? '将 PPTX 拖到此处，或选择文件'
+                            : '将课程包拖到此处，或选择文件'}
+                      </h2>
+                      <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+                        {createMode === 'pptx'
+                          ? '保留页面顺序与讲师备注，转换后可编辑。'
+                          : '导入已完成的交互课程，保留内容、结构与互动配置。'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={createMode === 'pptx' ? triggerPptxFileSelect : triggerFileSelect}
+                        className="mt-4 inline-flex h-11 items-center gap-2 rounded-lg border border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 px-5 text-sm font-semibold text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_10px_24px_-14px_rgba(16,120,72,.75)] hover:-translate-y-px hover:brightness-105"
+                      >
+                        <Upload className="size-4" />
+                        {createMode === 'pptx' ? '选择 PPTX 文件' : '选择课程包文件'}
+                      </button>
+                      <p className="mt-3 font-mono text-xs text-slate-500">
+                        {createMode === 'pptx'
+                          ? '.pptx · 单个文件最大 100MB'
+                          : '.zip 压缩课程包 · 单个文件最大 200MB'}
+                      </p>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-3 rounded-lg border border-red-300 bg-red-50/80 p-3 text-sm text-red-700"
               >
-                <Upload className="size-3" />
-                <span className="overflow-hidden opacity-0 group-hover/import:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  {t('import.classroom')}
-                </span>
-              </button>
-              {PPTX_IMPORT_ENABLED && (
+                {error}
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-slate-600 dark:text-slate-300">
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="size-3.5 text-emerald-700" />
+              生成后支持随时编辑
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="size-3.5 text-emerald-700" />
+              编辑过程自动保存
+            </span>
+          </div>
+        </section>
+
+        {/* ═══ Recent classrooms — collapsible ═══ */}
+        {classrooms.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            className="relative z-10 mt-10 w-full max-w-6xl flex flex-col items-center"
+          >
+            {/* Trigger — divider-line with centered text */}
+            <div className="group w-full flex items-center gap-4 py-2">
+              <div className="flex-1 h-px bg-border/40 group-hover:bg-border/70 transition-colors" />
+              <div className="shrink-0 flex items-center gap-3 text-[13px] text-muted-foreground/60 select-none">
+                <button
+                  onClick={() => persistRecentOpen(!recentOpen)}
+                  className="flex items-center gap-2 hover:text-foreground/70 transition-colors cursor-pointer"
+                >
+                  <Clock className="size-3.5" />
+                  {t('classroom.recentClassrooms')}
+                  <span className="text-[11px] tabular-nums opacity-60">{classrooms.length}</span>
+                  <motion.div
+                    animate={{ rotate: recentOpen ? 180 : 0 }}
+                    transition={{ duration: 0.3, ease: 'easeInOut' }}
+                  >
+                    <ChevronDown className="size-3.5" />
+                  </motion.div>
+                </button>
+
+                {/* Search toggle — icon that expands into an input in place */}
+                <AnimatePresence initial={false}>
+                  {!searchOpen ? (
+                    <motion.button
+                      key="search-icon"
+                      ref={searchButtonRef}
+                      type="button"
+                      aria-label={t('classroom.searchAriaLabel')}
+                      onClick={() => {
+                        setSearchOpen(true);
+                        if (!recentOpen) persistRecentOpen(true);
+                        requestAnimationFrame(() => searchInputRef.current?.focus());
+                      }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.12, ease: 'easeOut' }}
+                      className="flex items-center justify-center size-6 rounded-full text-muted-foreground/50 hover:text-foreground/70 hover:bg-muted/50 transition-colors cursor-pointer"
+                    >
+                      <Search className="size-3.5" />
+                    </motion.button>
+                  ) : (
+                    <motion.div
+                      key="search-input"
+                      initial={{ opacity: 0, width: 0 }}
+                      animate={{ opacity: 1, width: 200 }}
+                      exit={{ opacity: 0, width: 0 }}
+                      transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <InputGroup
+                        className={cn(
+                          'h-7 text-[12px] rounded-full bg-muted/40 border-transparent shadow-none',
+                          'transition-colors',
+                          'hover:bg-muted/60',
+                          'has-[[data-slot=input-group-control]:focus-visible]:bg-muted/60',
+                          'has-[[data-slot=input-group-control]:focus-visible]:border-transparent',
+                          'has-[[data-slot=input-group-control]:focus-visible]:ring-0',
+                        )}
+                      >
+                        <InputGroupInput
+                          ref={searchInputRef}
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              if (searchQuery) {
+                                setSearchQuery('');
+                              } else {
+                                setSearchOpen(false);
+                                requestAnimationFrame(() => searchButtonRef.current?.focus());
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            if (!searchQuery) {
+                              setSearchOpen(false);
+                            }
+                          }}
+                          placeholder={t('classroom.searchPlaceholder')}
+                          aria-label={t('classroom.searchAriaLabel')}
+                          className="h-7 pl-3 placeholder:text-muted-foreground/50"
+                        />
+                        {searchQuery && (
+                          <InputGroupButton
+                            size="icon-xs"
+                            aria-label={t('classroom.clearSearch')}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setSearchQuery('');
+                              searchInputRef.current?.focus();
+                            }}
+                          >
+                            <X />
+                          </InputGroupButton>
+                        )}
+                      </InputGroup>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <button
+                  onClick={triggerFileSelect}
+                  disabled={importing}
+                  className="group/import grid grid-cols-[auto_0fr] hover:grid-cols-[auto_1fr] items-center gap-1 rounded-full px-1.5 py-0.5 text-[12px] text-muted-foreground/35 hover:text-muted-foreground/70 hover:bg-muted/50 transition-all duration-200 cursor-pointer"
+                >
+                  <Upload className="size-3" />
+                  <span className="overflow-hidden opacity-0 group-hover/import:opacity-100 transition-opacity duration-200 whitespace-nowrap">
+                    {t('import.classroom')}
+                  </span>
+                </button>
                 <button
                   onClick={triggerPptxFileSelect}
                   disabled={pptxImporting}
@@ -933,58 +1098,58 @@ export function HomePage() {
                     {t('import.pptx')}
                   </span>
                 </button>
-              )}
+              </div>
+              <div className="flex-1 h-px bg-border/40 group-hover:bg-border/70 transition-colors" />
             </div>
-            <div className="flex-1 h-px bg-border/40 group-hover:bg-border/70 transition-colors" />
-          </div>
 
-          {/* Expandable content */}
-          <AnimatePresence>
-            {recentOpen && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-                className="w-full overflow-hidden"
-              >
-                {searchQuery.trim() && filteredClassrooms.length === 0 ? (
-                  <div className="pt-8 pb-2 text-center text-[13px] text-muted-foreground/60">
-                    {t('classroom.searchEmpty')}
-                  </div>
-                ) : (
-                  <div className="pt-8 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8">
-                    {filteredClassrooms.map((classroom, i) => (
-                      <motion.div
-                        key={classroom.id}
-                        initial={{ opacity: 0, y: 16 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          delay: i * 0.04,
-                          duration: 0.35,
-                          ease: 'easeOut',
-                        }}
-                      >
-                        <ClassroomCard
-                          classroom={classroom}
-                          slide={thumbnails[classroom.id]}
-                          formatDate={formatDate}
-                          onDelete={handleDelete}
-                          onRename={handleRename}
-                          confirmingDelete={pendingDeleteId === classroom.id}
-                          onConfirmDelete={() => confirmDelete(classroom.id)}
-                          onCancelDelete={() => setPendingDeleteId(null)}
-                          onClick={() => router.push(`/classroom/${classroom.id}`)}
-                        />
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      )}
+            {/* Expandable content */}
+            <AnimatePresence>
+              {recentOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+                  className="w-full overflow-hidden"
+                >
+                  {searchQuery.trim() && filteredClassrooms.length === 0 ? (
+                    <div className="pt-8 pb-2 text-center text-[13px] text-muted-foreground/60">
+                      {t('classroom.searchEmpty')}
+                    </div>
+                  ) : (
+                    <div className="pt-8 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8">
+                      {filteredClassrooms.map((classroom, i) => (
+                        <motion.div
+                          key={classroom.id}
+                          initial={{ opacity: 0, y: 16 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{
+                            delay: i * 0.04,
+                            duration: 0.35,
+                            ease: 'easeOut',
+                          }}
+                        >
+                          <ClassroomCard
+                            classroom={classroom}
+                            slide={thumbnails[classroom.id]}
+                            formatDate={formatDate}
+                            onDelete={handleDelete}
+                            onRename={handleRename}
+                            confirmingDelete={pendingDeleteId === classroom.id}
+                            onConfirmDelete={() => confirmDelete(classroom.id)}
+                            onCancelDelete={() => setPendingDeleteId(null)}
+                            onClick={() => router.push(`/classroom/${classroom.id}`)}
+                          />
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </motion.main>
     </div>
   );
 }

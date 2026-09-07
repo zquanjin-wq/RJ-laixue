@@ -49,6 +49,7 @@ export interface ClaimedGeneration extends GenerationLease {
   payload: unknown;
   courseId: string;
   operation: 'create' | 'enhance';
+  pipelineKind: 'text_classroom' | 'pptx_ai_classroom';
   sourceRevision: number | null;
   configSnapshot: unknown;
   attempts: number;
@@ -63,6 +64,7 @@ export class ClassroomGenerationRepository {
     operation: 'create' | 'enhance';
     channel: 'web' | 'skill';
     inputKind: 'text' | 'pptx';
+    pipelineKind?: 'text_classroom' | 'pptx_ai_classroom';
     idempotencyKey: string;
     /** Validated, normalized input only; credentials must never be persisted here. */
     payload: unknown;
@@ -107,8 +109,8 @@ export class ClassroomGenerationRepository {
       );
       const inserted = await client.query(
         `INSERT INTO app.classroom_generation_jobs
-          (job_id,owner_user_id,operation,channel,input_kind,idempotency_key,request_hash,course_id,source_revision,config_snapshot)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+          (job_id,owner_user_id,operation,channel,input_kind,pipeline_kind,idempotency_key,request_hash,course_id,source_revision,config_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
          ON CONFLICT (owner_user_id,operation,idempotency_key) DO NOTHING`,
         [
           id,
@@ -116,6 +118,7 @@ export class ClassroomGenerationRepository {
           input.operation,
           input.channel,
           input.inputKind,
+          input.pipelineKind ?? 'text_classroom',
           input.idempotencyKey,
           requestHash,
           courseId,
@@ -169,7 +172,7 @@ export class ClassroomGenerationRepository {
          FROM candidate c WHERE j.id=c.id RETURNING j.*
        ) SELECT c.id,c.locked_by AS "workerId",c.execution_epoch AS epoch,
          c.owner_user_id AS "ownerUserId",c.payload,c.attempts,g.course_id AS "courseId",
-         g.operation,g.source_revision AS "sourceRevision",g.config_snapshot AS "configSnapshot"
+         g.operation,g.pipeline_kind AS "pipelineKind",g.source_revision AS "sourceRevision",g.config_snapshot AS "configSnapshot"
          FROM claimed c JOIN app.classroom_generation_jobs g ON g.job_id=c.id`,
       [workerId, JOB_TYPE],
     );
@@ -211,6 +214,28 @@ export class ClassroomGenerationRepository {
         `UPDATE app.background_jobs SET locked_until=clock_timestamp()+interval '5 minutes',
          progress=$2::jsonb,updated_at=now() WHERE id=$1`,
         [lease.id, JSON.stringify(progress)],
+      );
+    });
+  }
+
+  async appendEvent(
+    lease: GenerationLease,
+    event: {
+      kind: 'thinking' | 'tool' | 'result' | 'warning' | 'error';
+      phase: string;
+      page?: number;
+      summary: string;
+      details?: unknown;
+    },
+  ): Promise<void> {
+    const summary = event.summary.trim();
+    if (!summary || summary.length > 2000) throw new Error('Invalid generation event summary');
+    await this.withLease(lease, async (client) => {
+      await client.query(
+        `INSERT INTO app.classroom_generation_events
+          (job_id,execution_epoch,kind,phase,page,summary,details)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+        [lease.id, lease.epoch, event.kind, event.phase, event.page ?? null, summary, JSON.stringify(event.details ?? {})],
       );
     });
   }
@@ -288,6 +313,26 @@ export class ClassroomGenerationRepository {
       [id, ownerUserId, JOB_TYPE],
     );
     return result.rows[0] ?? null;
+  }
+
+  async listOwnedEvents(id: string, ownerUserId: string, afterId = 0) {
+    const result = await this.pool.query<{
+      id: string;
+      kind: 'thinking' | 'tool' | 'result' | 'warning' | 'error';
+      phase: string;
+      page: number | null;
+      summary: string;
+      details: unknown;
+      createdAt: Date;
+    }>(
+      `SELECT e.id,e.kind,e.phase,e.page,e.summary,e.details,e.created_at AS "createdAt"
+       FROM app.classroom_generation_events e
+       JOIN app.classroom_generation_jobs g ON g.job_id=e.job_id
+       WHERE e.job_id=$1 AND g.owner_user_id=$2 AND e.id>$3
+       ORDER BY e.id ASC LIMIT 200`,
+      [id, ownerUserId, Math.max(0, afterId)],
+    );
+    return result.rows;
   }
 
   /** Course write and terminal job result share one transaction; no JSON dual write. */

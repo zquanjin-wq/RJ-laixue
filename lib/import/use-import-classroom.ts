@@ -20,7 +20,7 @@ export type ImportPhase =
   | 'writingCourse'
   | 'done';
 
-export function useImportClassroom(onSuccess?: () => void) {
+export function useImportClassroom(onSuccess?: (stageId: string) => void) {
   const [importing, setImporting] = useState(false);
   const [phase, setPhase] = useState<ImportPhase>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,10 +43,11 @@ export function useImportClassroom(onSuccess?: () => void) {
       const toastId = toast.loading(t('import.parsing'));
 
       try {
-        // 0. Size check — warn for files over 200MB
+        // 0. Size check
         const MAX_SAFE_SIZE = 200 * 1024 * 1024;
         if (file.size > MAX_SAFE_SIZE) {
-          log.warn(`Large ZIP file: ${(file.size / 1024 / 1024).toFixed(0)}MB`);
+          toast.error('课程包不能超过 200MB', { id: toastId });
+          return;
         }
 
         // 1. Parse ZIP
@@ -249,7 +250,7 @@ export function useImportClassroom(onSuccess?: () => void) {
         // 6. Done
         setPhase('done');
         toast.success(t('import.success'), { id: toastId });
-        onSuccess?.();
+        onSuccess?.(newStageId);
       } catch (error) {
         log.error('Classroom ZIP import failed:', error);
         const isQuotaError = error instanceof DOMException && error.name === 'QuotaExceededError';

@@ -52,6 +52,11 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
 
       e.target.value = '';
 
+      if (file.size > 100 * 1024 * 1024) {
+        toast.error('PPTX 文件不能超过 100MB');
+        return;
+      }
+
       setImporting(true);
       const toastId = toast.loading(t('import.parsingPptx'));
 
