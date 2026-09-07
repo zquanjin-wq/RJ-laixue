@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   limit: vi.fn(),
   getSource: vi.fn(),
   getCourse: vi.fn(),
+  retry: vi.fn(),
+  getOwned: vi.fn(),
 }));
 
 vi.mock('@/lib/server/auth-context', () => ({ getCurrentActor: mocks.actor }));
@@ -18,6 +20,8 @@ vi.mock('@/lib/server/resolve-model', () => ({ resolveModel: mocks.resolveModel 
 vi.mock('@/lib/server/db/classroom-generation-repository', () => ({
   ClassroomGenerationRepository: class {
     enqueue = mocks.enqueue;
+    retry = mocks.retry;
+    getOwned = mocks.getOwned;
   },
   GenerationIdempotencyConflict: class GenerationIdempotencyConflict extends Error {},
 }));
@@ -63,6 +67,11 @@ describe('durable generation job submission', () => {
       ownerUserId: 'teacher-1',
       contentRevision: 3,
       content: { stage: { pptxSource: { sourceId: '64fd0314-2f09-497d-bc0b-d7f6771b04bd' } } },
+    });
+    mocks.getOwned.mockResolvedValue({
+      id: 'd8db3a3f-6db5-4e6a-a8d6-b586270219d4',
+      status: 'queued',
+      courseId: '6c2195f4-d03c-4cf3-9cb9-dabc17d7d343',
     });
   });
 
@@ -118,6 +127,7 @@ describe('durable generation job submission', () => {
           sourceId: '64fd0314-2f09-497d-bc0b-d7f6771b04bd',
           courseId: '6c2195f4-d03c-4cf3-9cb9-dabc17d7d343',
           sourceRevision: 3,
+          teachingRequirement: '向一线销售讲清 AI Learning 的价值，并设置轻量互动。',
           interactionIntensity: 'light',
           enableTTS: true,
         },
@@ -132,8 +142,26 @@ describe('durable generation job submission', () => {
         pipelineKind: 'pptx_ai_classroom',
         courseId: '6c2195f4-d03c-4cf3-9cb9-dabc17d7d343',
         sourceRevision: 3,
-        payload: expect.objectContaining({ interactionIntensity: 'light', enableTTS: true }),
+        payload: expect.objectContaining({
+          teachingRequirement: '向一线销售讲清 AI Learning 的价值，并设置轻量互动。',
+          interactionIntensity: 'light',
+          enableTTS: true,
+        }),
       }),
     );
+  });
+
+  it('requeues a terminal job through the owner-bound retry endpoint', async () => {
+    mocks.getOwned.mockResolvedValueOnce({
+      id: 'd8db3a3f-6db5-4e6a-a8d6-b586270219d4', status: 'failed', courseId: 'course-1',
+    });
+    mocks.retry.mockResolvedValue(true);
+    const { POST } = await import('@/app/api/generation-jobs/[jobId]/route');
+    const response = await POST(
+      new NextRequest('http://localhost/api/generation-jobs/d8db3a3f-6db5-4e6a-a8d6-b586270219d4', { method: 'POST' }),
+      { params: Promise.resolve({ jobId: 'd8db3a3f-6db5-4e6a-a8d6-b586270219d4' }) },
+    );
+    expect(response.status).toBe(202);
+    expect(mocks.retry).toHaveBeenCalledWith('d8db3a3f-6db5-4e6a-a8d6-b586270219d4', 'teacher-1');
   });
 });

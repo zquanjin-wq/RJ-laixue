@@ -36,6 +36,7 @@ function fallbackRoster(languageDirective: string): PptxClassroomRosterMember[] 
 
 export async function generatePptxRoster(input: {
   courseTitle: string;
+  teachingRequirement: string;
   languageDirective: string;
   pages: PptxPageInspection[];
   aiCall: AICallFn;
@@ -44,7 +45,7 @@ export async function generatePptxRoster(input: {
   try {
     const raw = await input.aiCall(
       'You design a small, practical roster for an interactive course. Return only JSON.',
-      `Course: ${input.courseTitle}\nLanguage: ${input.languageDirective}\nPages:\n${pageSummary}\n\nReturn exactly one teacher and one student companion as {"agents":[{"name":"","role":"teacher|student","persona":"","voiceDesign":{"identity":"","texture":"","delivery":""}}]}.`,
+      `Course: ${input.courseTitle}\nTeaching requirement: ${input.teachingRequirement}\nLanguage: ${input.languageDirective}\nPages:\n${pageSummary}\n\nReturn exactly one teacher and one student companion as {"agents":[{"name":"","role":"teacher|student","persona":"","voiceDesign":{"identity":"","texture":"","delivery":""}}]}.`,
     );
     const parsed = parseJson(raw) as { agents?: Array<Record<string, unknown>> };
     const agents = parsed.agents ?? [];
@@ -71,17 +72,22 @@ export async function generatePptxPageScript(input: {
   page: PptxPageInspection;
   previousTitle?: string;
   courseTitle: string;
+  teachingRequirement: string;
   languageDirective: string;
   aiCall: AICallFn;
 }): Promise<PptxPageScript | null> {
-  if (input.page.speakerNotes?.trim()) {
-    return { sceneId: input.page.sceneId, text: input.page.speakerNotes.trim(), sourceKind: 'speaker_notes' };
-  }
-  if (!input.page.visibleText.length) return null;
+  const speakerNotes = input.page.speakerNotes?.trim();
+  if (!speakerNotes && !input.page.visibleText.length) return null;
   const raw = await input.aiCall(
-    'You write concise spoken classroom narration. Return plain text only. Never invent facts beyond the slide.',
-    `Course: ${input.courseTitle}\nLanguage: ${input.languageDirective}\nPrevious page: ${input.previousTitle ?? 'none'}\nCurrent page title: ${input.page.title}\nVisible slide text:\n${input.page.visibleText.join('\n')}\n\nWrite a 45-90 second spoken explanation with a natural transition.`,
+    'You write concise spoken classroom narration. Return plain text only. Never invent facts beyond the slide or its speaker notes. Speaker notes are a draft, not text to recite: preserve their intent while rewriting them into a natural explanation with a transition. Do not mention that you are reading slides or notes.',
+    `Course: ${input.courseTitle}\nTeaching requirement: ${input.teachingRequirement}\nLanguage: ${input.languageDirective}\nPrevious page: ${input.previousTitle ?? 'none'}\nCurrent page title: ${input.page.title}\nVisible slide text:\n${input.page.visibleText.join('\n') || '(none)'}\nSpeaker notes draft:\n${speakerNotes ?? '(none)'}\n\nWrite a 45-90 second spoken explanation with a natural transition.`,
   );
   const text = raw.trim();
-  return text ? { sceneId: input.page.sceneId, text, sourceKind: 'ai_generated' } : null;
+  return text
+    ? {
+        sceneId: input.page.sceneId,
+        text,
+        sourceKind: speakerNotes ? 'speaker_notes_rewritten' : 'ai_generated',
+      }
+    : null;
 }

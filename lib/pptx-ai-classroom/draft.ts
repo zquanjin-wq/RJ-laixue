@@ -11,13 +11,15 @@ export interface PptxClassroomRosterMember {
   avatar: string;
   color: string;
   priority: number;
+  voiceConfig?: { providerId: string; modelId?: string; voiceId: string };
   voiceDesign?: { identity: string; texture: string; delivery: string };
 }
 
 export interface PptxPageScript {
   sceneId: string;
   text: string;
-  sourceKind: 'speaker_notes' | 'ai_generated';
+  /** Speaker notes remain traceable, but are rewritten into teachable speech before TTS. */
+  sourceKind: 'speaker_notes_rewritten' | 'ai_generated';
 }
 
 function stableId(prefix: string, value: string): string {
@@ -41,7 +43,7 @@ export function applyPptxScriptsToScenes(
     const action: Action = {
       id: stableId('pptx-speech', `${scene.id}:${script.text}`),
       type: 'speech',
-      title: script.sourceKind === 'speaker_notes' ? '讲者备注' : 'AI 讲解',
+      title: script.sourceKind === 'speaker_notes_rewritten' ? '基于讲者备注的讲解' : 'AI 讲解',
       text: script.text,
     };
     const actions: Action[] = [];
@@ -83,6 +85,11 @@ export function applyPptxRoster(
   return {
     ...stage,
     generatedAgentConfigs: roster,
+    // Keep the player/editor's roster pointer in sync with the formal
+    // configuration. This mirrors upstream `set_roster`: persisting configs
+    // without agentIds leaves the cast invisible to consumers that resolve
+    // the active roster through the ids first.
+    agentIds: roster.map((member) => member.id),
     updatedAt: Date.now(),
   };
 }
@@ -90,6 +97,8 @@ export function applyPptxRoster(
 export function scriptsFromSpeakerNotes(inspections: PptxPageInspection[]): PptxPageScript[] {
   return inspections.flatMap((page) => {
     const text = page.speakerNotes?.trim();
-    return text ? [{ sceneId: page.sceneId, text, sourceKind: 'speaker_notes' as const }] : [];
+    return text
+      ? [{ sceneId: page.sceneId, text, sourceKind: 'speaker_notes_rewritten' as const }]
+      : [];
   });
 }

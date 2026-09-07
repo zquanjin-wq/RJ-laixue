@@ -295,6 +295,22 @@ export class ClassroomGenerationRepository {
     return result.rowCount === 1;
   }
 
+  /**
+   * Restart a terminal generation against the same immutable request. Completed
+   * checkpoints remain available, so a retry resumes from the first missing or
+   * invalidated step instead of re-parsing the PPTX or re-synthesizing audio.
+   */
+  async retry(id: string, ownerUserId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE app.background_jobs SET status='queued',attempts=0,run_after=now(),
+        started_at=NULL,completed_at=NULL,error_code=NULL,error_message=NULL,
+        result=NULL,locked_by=NULL,locked_until=NULL,updated_at=now()
+       WHERE id=$1 AND owner_user_id=$2 AND type=$3 AND status IN ('failed','cancelled','conflict')`,
+      [id, ownerUserId, JOB_TYPE],
+    );
+    return result.rowCount === 1;
+  }
+
   async getOwned(id: string, ownerUserId: string) {
     const result = await this.pool.query<{
       id: string;

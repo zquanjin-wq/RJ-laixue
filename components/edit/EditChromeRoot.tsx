@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CloudUpload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -50,12 +50,62 @@ interface EditChromeRootProps {
 export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChromeRootProps) {
   const searchParams = useSearchParams();
   const stage = useStageStore((state) => state.stage);
+  const scenes = useStageStore((state) => state.scenes);
   const { profile } = useAuth();
   const [savingToCloud, setSavingToCloud] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const initialAutoSaveSignature = useRef<{ stageId: string; signature: string } | null>(null);
+  const autoSaveInFlight = useRef(false);
   const editorAutoOpen = searchParams?.get('editor') === '1';
   const canSaveToCloud =
     Boolean(stage) &&
     (editorAutoOpen || profile?.role === 'admin' || profile?.role === 'teacher');
+  const autoSaveSignature = useMemo(
+    () =>
+      stage
+        ? `${stage.id}:${stage.updatedAt}:${scenes
+            .map((item) => `${item.id}:${item.updatedAt}:${item.actions?.length ?? 0}`)
+            .join('|')}`
+        : '',
+    [stage, scenes],
+  );
+
+  // The stage store already writes to IndexedDB with a short debounce. Cloud
+  // persistence trails edits by two seconds, first forcing that local write so
+  // the sync service reads the same snapshot the editor is showing. The initial
+  // mount is deliberately ignored: opening an older local cache must not
+  // overwrite the server before the teacher has made an edit.
+  useEffect(() => {
+    if (!canSaveToCloud || !stage?.id || !autoSaveSignature) return;
+    if (initialAutoSaveSignature.current?.stageId !== stage.id) {
+      initialAutoSaveSignature.current = { stageId: stage.id, signature: autoSaveSignature };
+      return;
+    }
+    if (initialAutoSaveSignature.current.signature === autoSaveSignature) return;
+    const stageId = stage.id;
+    const timer = window.setTimeout(() => {
+      if (autoSaveInFlight.current) return;
+      autoSaveInFlight.current = true;
+      setAutoSaveStatus('saving');
+      void useStageStore
+        .getState()
+        .saveToStorage()
+        .then((saved) => {
+          if (!saved) throw new Error('本地草稿保存失败');
+          return saveStageToCloud(stageId);
+        })
+        .then(() => setAutoSaveStatus('saved'))
+        .catch((error: unknown) => {
+          setAutoSaveStatus('failed');
+          const message = error instanceof Error ? error.message : '未知错误';
+          toast.warning(`自动保存失败：${message}`);
+        })
+        .finally(() => {
+          autoSaveInFlight.current = false;
+        });
+    }, 2_000);
+    return () => window.clearTimeout(timer);
+  }, [autoSaveSignature, canSaveToCloud, stage?.id]);
 
   // Mark the body while edit mode is mounted, so the editor-scoped CSS
   // rule in globals.css that pins `body.padding-right` to 0 only fires
@@ -104,6 +154,17 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
 
   const headerControls = (
     <>
+      {canSaveToCloud && (
+        <span className="hidden text-xs text-muted-foreground md:inline" aria-live="polite">
+          {autoSaveStatus === 'saving'
+            ? '自动保存中'
+            : autoSaveStatus === 'saved'
+              ? '已自动保存'
+              : autoSaveStatus === 'failed'
+                ? '自动保存失败'
+                : ''}
+        </span>
+      )}
       {canSaveToCloud && (
         <button
           type="button"

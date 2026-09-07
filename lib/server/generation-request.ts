@@ -20,6 +20,9 @@ export const pptxAiClassroomRequestSchema = z
     sourceId: z.string().uuid(),
     courseId: z.string().uuid(),
     sourceRevision: z.number().int().positive(),
+    // The PPT supplies visual/source material; this requirement supplies the
+    // teacher's intent that governs narration, classroom roles and interaction.
+    teachingRequirement: z.string().trim().min(1).max(12_000),
     languageDirective: z.string().trim().min(1).max(80).default('zh-CN'),
     interactionIntensity: z.enum(['light', 'standard', 'rich']).default('standard'),
     enableTTS: z.boolean().default(true),

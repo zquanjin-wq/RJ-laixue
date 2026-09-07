@@ -85,6 +85,13 @@ interface FormState {
   interactiveMode: boolean;
   vocationalTestMode: boolean;
 }
+
+interface PptxGenerationEventView {
+  id: number;
+  kind: 'thinking' | 'tool' | 'result' | 'warning' | 'error';
+  phase: string;
+  summary: string;
+}
 const initialFormState: FormState = {
   pdfFiles: [],
   requirement: '',
@@ -101,6 +108,10 @@ export function HomePage() {
   const [form, setForm] = useState<FormState>(initialFormState);
   const [isPreparingGeneration, setIsPreparingGeneration] = useState(false);
   const [createMode, setCreateMode] = useState<'ai' | 'pptx' | 'course'>('ai');
+  const [pptxProgress, setPptxProgress] = useState<{
+    summary: string;
+    events: PptxGenerationEventView[];
+  } | null>(null);
   const [dragMode, setDragMode] = useState<'pptx' | 'course' | null>(null);
   const isPreparingGenerationRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -231,6 +242,7 @@ export function HomePage() {
     handleFileChange: handlePptxFileChange,
   } = useImportPptx({
     onImported: async (slides, file) => {
+      setPptxProgress({ summary: '正在登记 PPTX 来源并创建可编辑课程…', events: [] });
       const source = await uploadPptxGenerationSource(file);
       // The durable PPTX pipeline uses the formal UUID course identifier as
       // both its revision anchor and asset namespace; do not create a second
@@ -250,6 +262,7 @@ export function HomePage() {
       const saved = await response.json().catch(() => null);
       if (!response.ok || !saved?.success) throw new Error(saved?.error || '导入课程保存失败');
       if (PPTX_AI_CLASSROOM_UI_ENABLED) {
+        setPptxProgress({ summary: '正在根据教学需求配置 AI 课堂…', events: [] });
         const submission = await fetch('/api/generation-jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
@@ -272,7 +285,21 @@ export function HomePage() {
           const poll = await fetch(created.pollUrl, { cache: 'no-store' });
           const job = await poll.json().catch(() => null);
           if (!poll.ok || !job) throw new Error('AI 课堂生成状态读取失败');
+          const events = Array.isArray(job.events)
+            ? job.events
+                .filter(
+                  (event: unknown): event is PptxGenerationEventView =>
+                    !!event &&
+                    typeof event === 'object' &&
+                    typeof (event as PptxGenerationEventView).id === 'number' &&
+                    typeof (event as PptxGenerationEventView).summary === 'string',
+                )
+                .slice(-4)
+            : [];
+          const latest = events.at(-1);
+          if (latest) setPptxProgress({ summary: latest.summary, events });
           if (job.status === 'succeeded') {
+            setPptxProgress({ summary: 'AI 课堂已生成，正在进入编辑器…', events });
             router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
             return;
           }
@@ -916,7 +943,7 @@ export function HomePage() {
                           <p className="font-semibold">正在处理所选文件</p>
                           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
                             {createMode === 'pptx'
-                              ? '正在解析页面与讲师备注…'
+                              ? pptxProgress?.summary || '正在解析页面与讲师备注…'
                               : '正在解析课程内容与互动配置…'}
                           </p>
                         </div>
@@ -926,6 +953,16 @@ export function HomePage() {
                         <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" />
                       </div>
                       <p className="mt-2 text-right font-mono text-xs text-slate-500">处理中</p>
+                      {createMode === 'pptx' && pptxProgress?.events.length ? (
+                        <div className="mt-4 space-y-1.5 rounded-lg border border-slate-200 bg-white/55 p-3 text-left text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950/30 dark:text-slate-300">
+                          {pptxProgress.events.map((event) => (
+                            <p key={event.id} className="truncate">
+                              <span className="mr-2 text-emerald-700">{event.kind === 'warning' ? '提示' : '进行中'}</span>
+                              {event.summary}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div

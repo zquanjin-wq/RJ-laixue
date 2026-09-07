@@ -29,20 +29,34 @@ export async function synthesizePptxSpeech(input: {
   ownerUserId: string;
   target: PptxSpeechTarget;
   courses: CourseRepository;
+  /** The roster-selected teacher voice. Omit only when the roster has no binding. */
+  voiceConfig?: { providerId: string; modelId?: string; voiceId: string };
 }): Promise<{ audioId: string; audioUrl: string; assetId: string }> {
   const providers = Object.entries(getServerTTSProviders())
     .filter(([id, info]) => id !== 'browser-native-tts' && !info.disabled)
     .map(([id]) => id as TTSProviderId);
-  const providerId = providers[0];
+  const requestedProvider = input.voiceConfig?.providerId as TTSProviderId | undefined;
+  // A roster binding is honored only when that provider is served by this
+  // deployment. This is the server-side counterpart to upstream list_voices /
+  // set_roster validation; never send an LLM-invented provider to TTS.
+  const providerId = requestedProvider && providers.includes(requestedProvider)
+    ? requestedProvider
+    : providers[0];
   if (!providerId) throw new Error('No server TTS provider is configured');
   const provider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
   const apiKey = resolveTTSApiKey(providerId);
   if (provider?.requiresApiKey && !apiKey) throw new Error('Server TTS credentials are unavailable');
+  const requestedVoice = input.voiceConfig?.providerId === providerId ? input.voiceConfig.voiceId : undefined;
+  const voice = requestedVoice && provider?.voices.some((item) => item.id === requestedVoice)
+    ? requestedVoice
+    : DEFAULT_TTS_VOICES[providerId as keyof typeof DEFAULT_TTS_VOICES] || 'default';
   const result = await generateTTS(
     {
       providerId,
-      modelId: DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '',
-      voice: DEFAULT_TTS_VOICES[providerId as keyof typeof DEFAULT_TTS_VOICES] || 'default',
+      modelId: input.voiceConfig?.providerId === providerId
+        ? input.voiceConfig.modelId || DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || ''
+        : DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '',
+      voice,
       apiKey,
       baseUrl: resolveTTSBaseUrl(providerId) || provider?.defaultBaseUrl,
     },

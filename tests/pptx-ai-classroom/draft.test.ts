@@ -9,14 +9,14 @@ describe('PPTX AI classroom draft assembly', () => {
     ]);
     const first = applyPptxScriptsToScenes([scene], scripts);
     const second = applyPptxScriptsToScenes([scene], scripts);
-    expect(first[0].content).toEqual(scene.content);
-    expect(first[0].actions.find((action: any) => action.type === 'speech')).toMatchObject({
+    expect(first[0]!.content).toEqual(scene.content);
+    expect(first[0]!.actions.find((action: any) => action.type === 'speech')).toMatchObject({
       type: 'speech',
       text: '欢迎大家。',
-      title: '讲者备注',
+      title: '基于讲者备注的讲解',
     });
-    expect(first[0].actions.find((action: any) => action.type === 'speech')?.id).toBe(
-      second[0].actions.find((action: any) => action.type === 'speech')?.id,
+    expect(first[0]!.actions.find((action: any) => action.type === 'speech')?.id).toBe(
+      second[0]!.actions.find((action: any) => action.type === 'speech')?.id,
     );
   });
 
@@ -32,8 +32,8 @@ describe('PPTX AI classroom draft assembly', () => {
       pages.map((page) => ({ sceneId: page.id, text: '讲解', sourceKind: 'ai_generated' as const })),
       { interactionIntensity: 'standard', companionId: 'student-1' },
     );
-    expect(result[0].actions[0]).toMatchObject({ type: 'spotlight', elementId: 'text-1' });
-    expect(result[2].actions.at(-1)).toMatchObject({ type: 'discussion', agentId: 'student-1' });
+    expect(result[0]!.actions[0]).toMatchObject({ type: 'spotlight', elementId: 'text-1' });
+    expect(result[2]!.actions.at(-1)).toMatchObject({ type: 'discussion', agentId: 'student-1' });
   });
 
   it('requires exactly one AI teacher in the persisted roster', () => {
@@ -44,5 +44,6 @@ describe('PPTX AI classroom draft assembly', () => {
       { id: 'student-1', name: '陈同学', role: 'student', persona: '主动提问', avatar: 'b', color: '#111', priority: 5 },
     ]);
     expect(updated.generatedAgentConfigs).toHaveLength(2);
+    expect(updated.agentIds).toEqual(['teacher-1', 'student-1']);
   });
 });

@@ -19,10 +19,11 @@ import { PptxSourceRepository } from './db/pptx-source-repository';
 import { inspectImportedPptxPages, applyPptxSafeTitleRepairs } from '@/lib/pptx-ai-classroom/inspection';
 import {
   applyPptxRoster,
-  applyPptxScriptsToScenes,
   type PptxPageScript,
 } from '@/lib/pptx-ai-classroom/draft';
 import { generatePptxPageScript, generatePptxRoster } from '@/lib/pptx-ai-classroom/generation';
+import { generatePptxPageActions } from '@/lib/pptx-ai-classroom/actions';
+import { validatePptxAiClassroom } from '@/lib/pptx-ai-classroom/quality';
 import {
   applyPptxSpeechAudio,
   listPptxSpeechTargets,
@@ -169,29 +170,84 @@ async function runPptxAiClassroomJob(input: {
     (await callLLM({ model: model.model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], maxOutputTokens: model.modelInfo?.outputWindow, maxRetries: 0 }, 'generate-classroom', undefined, model.thinkingConfig)).text;
   await input.onProgress({ step: 'generating_outlines', progress: 20, message: '正在配置 AI 教师与伴学', scenesGenerated: 0, totalScenes: scenes.length });
   const roster = await checkpoints.run('roster', { title: content.stage.name, language: request.languageDirective, inspections }, () =>
-    generatePptxRoster({ courseTitle: content.stage!.name, languageDirective: request.languageDirective, pages: inspections, aiCall }),
+    generatePptxRoster({
+      courseTitle: content.stage!.name,
+      teachingRequirement: request.teachingRequirement,
+      languageDirective: request.languageDirective,
+      pages: inspections,
+      aiCall,
+    }),
   );
   const scripts: PptxPageScript[] = [];
   for (const [index, page] of inspections.entries()) {
     await input.onProgress({ step: 'generating_scenes', progress: 25 + Math.round((index / Math.max(inspections.length, 1)) * 65), message: `正在生成第 ${page.page} 页讲稿`, scenesGenerated: scripts.length, totalScenes: scenes.length });
     const script = await checkpoints.run(`script/${page.page}`, { page, previousTitle: inspections[index - 1]?.title }, () =>
-      generatePptxPageScript({ page, previousTitle: inspections[index - 1]?.title, courseTitle: content.stage!.name, languageDirective: request.languageDirective, aiCall }),
+      generatePptxPageScript({
+        page,
+        previousTitle: inspections[index - 1]?.title,
+        courseTitle: content.stage!.name,
+        teachingRequirement: request.teachingRequirement,
+        languageDirective: request.languageDirective,
+        aiCall,
+      }),
     );
     if (script) scripts.push(script);
   }
   if (scripts.length === 0) throw new Error('No teachable PPTX pages produced narration');
-  let voicedScenes = applyPptxScriptsToScenes(scenes, scripts, {
-    interactionIntensity: request.interactionIntensity,
-    companionId: roster.find((agent) => agent.role !== 'teacher')?.id,
+  const actionsBySceneId = new Map<string, import('@/lib/types/action').Action[]>();
+  const allTitles = inspections.map((page) => page.title);
+  for (const [index, script] of scripts.entries()) {
+    const page = inspections.find((candidate) => candidate.sceneId === script.sceneId);
+    const scene = scenes.find((candidate) => candidate.id === script.sceneId);
+    if (!page || !scene) continue;
+    await input.onProgress({
+      step: 'generating_scenes',
+      progress: 78 + Math.round((index / Math.max(scripts.length, 1)) * 10),
+      message: `正在生成第 ${page.page} 页讲解动作`,
+      scenesGenerated: scripts.length,
+      totalScenes: scenes.length,
+    });
+    const actions = await checkpoints.run(
+      `actions/${page.page}`,
+      { page, script, interactionIntensity: request.interactionIntensity },
+      () =>
+        generatePptxPageActions({
+          scene,
+          inspection: page,
+          script,
+          pageIndex: page.page - 1,
+          allTitles,
+          previousSpeeches: scripts
+            .filter((candidate) => candidate.sceneId !== script.sceneId)
+            .slice(Math.max(0, index - 1), index)
+            .map((candidate) => candidate.text),
+          roster,
+          languageDirective: request.languageDirective,
+          interactionIntensity: request.interactionIntensity,
+          aiCall,
+        }),
+    );
+    actionsBySceneId.set(script.sceneId, actions);
+  }
+  let voicedScenes = scenes.map((scene) => {
+    const actions = actionsBySceneId.get(scene.id);
+    return actions ? { ...scene, actions, updatedAt: Date.now() } : scene;
   });
   const assetIds: string[] = [];
   if (request.enableTTS) {
+    const teacherVoice = roster.find((agent) => agent.role === 'teacher')?.voiceConfig;
     const audio = new Map<string, { audioId: string; audioUrl: string }>();
     const targets = listPptxSpeechTargets(voicedScenes);
     for (const [index, target] of targets.entries()) {
       await input.onProgress({ step: 'generating_tts', progress: 90 + Math.round((index / Math.max(targets.length, 1)) * 4), message: `正在生成第 ${index + 1}/${targets.length} 段配音`, scenesGenerated: scripts.length, totalScenes: scenes.length });
       const generated = await checkpoints.run(`tts/${target.sceneId}/${target.actionId}`, target, () =>
-        synthesizePptxSpeech({ courseId: input.lease.courseId, ownerUserId: input.lease.ownerUserId, target, courses }),
+        synthesizePptxSpeech({
+          courseId: input.lease.courseId,
+          ownerUserId: input.lease.ownerUserId,
+          target,
+          courses,
+          voiceConfig: teacherVoice,
+        }),
       );
       audio.set(`${target.sceneId}:${target.actionId}`, generated);
       assetIds.push(generated.assetId);
@@ -202,11 +258,30 @@ async function runPptxAiClassroomJob(input: {
     stage: applyPptxRoster({ ...content.stage, languageDirective: request.languageDirective }, roster),
     scenes: voicedScenes,
     outlines: content.outlines ?? [],
-    warnings: inspections.flatMap((page) => page.warnings),
     assetIds,
   };
+  const quality = validatePptxAiClassroom({
+    stage: draft.stage,
+    scenes: draft.scenes,
+    requireAudio: request.enableTTS,
+  });
+  const blocking = quality.issues.filter((issue) => issue.severity === 'error');
+  if (blocking.length) {
+    throw new Error(`PPTX AI classroom quality validation failed: ${blocking.map((issue) => issue.code).join(', ')}`);
+  }
+  const warnings = [
+    ...inspections.flatMap((page) => page.warnings),
+    ...quality.issues.filter((issue) => issue.severity === 'warning').map((issue) => issue.message),
+  ];
+  await input.onProgress({
+    step: 'persisting',
+    progress: 94,
+    message: `课堂校验完成：${quality.speechPages} 页讲解，${quality.audioCoverage.ready}/${quality.audioCoverage.required} 段配音就绪`,
+    scenesGenerated: scripts.length,
+    totalScenes: scenes.length,
+  });
   await input.onProgress({ step: 'persisting', progress: 95, message: '正在保存 AI 课堂草稿', scenesGenerated: scripts.length, totalScenes: scenes.length });
-  const committed = await input.jobs.commitCourse(input.lease, draft);
+  const committed = await input.jobs.commitCourse(input.lease, { ...draft, warnings });
   if (committed.status === 'conflict') throw new Error('PPTX AI classroom revision conflict');
   await input.onProgress({ step: 'completed', progress: 100, message: 'PPTX AI 课堂已生成', scenesGenerated: scripts.length, totalScenes: scenes.length });
   void input.baseUrl;
