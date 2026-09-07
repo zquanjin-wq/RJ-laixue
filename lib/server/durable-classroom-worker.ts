@@ -112,6 +112,12 @@ export async function runDurableClassroomOnce(
       },
     });
   } catch (error) {
+    console.error('[durable-classroom-worker] generation failed', {
+      jobId: lease.id,
+      pipelineKind: lease.pipelineKind,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     if (!finished && !(error instanceof GenerationLeaseLost)) {
       try {
         await jobs.fail(
