@@ -65,7 +65,10 @@ export async function POST(request: NextRequest) {
     }
 
     const courses = new CourseRepository(getDatabasePool());
-    const temporary = /^pending-[a-zA-Z0-9_-]{1,32}$/.test(courseId);
+    // Browser clients use `pending-${crypto.randomUUID()}` before a formal
+    // course exists. A UUID alone is 36 chars, so the former 32-char cap
+    // misclassified valid pending uploads as missing course IDs.
+    const temporary = /^pending-[a-zA-Z0-9_-]{1,64}$/.test(courseId);
     let boundCourseId: string | null = null;
     let prefix: string;
 
