@@ -53,7 +53,7 @@ export async function generatePptxRoster(input: {
     const agents = parsed.agents ?? [];
     if (agents.filter((agent) => agent.role === 'teacher').length !== 1 || agents.length < 2)
       return fallbackRoster(input.languageDirective);
-    const roster = agents.slice(0, Math.max(2, 1 + (input.companionCount ?? 1))).map((agent, index) => ({
+    const roster: PptxClassroomRosterMember[] = agents.slice(0, Math.max(2, 1 + (input.companionCount ?? 1))).map((agent, index): PptxClassroomRosterMember => ({
       id: `pptx-agent-${nanoid(8)}`,
       name: typeof agent.name === 'string' && agent.name.trim() ? agent.name.trim() : `Agent ${index + 1}`,
       role: agent.role === 'teacher' ? 'teacher' : agent.role === 'assistant' ? 'assistant' : 'student',
