@@ -64,7 +64,7 @@ export function CommandBar({ title, onTitleChange, history, commands, trailing }
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {/* Back-to-home — mirrors playback Header's leftmost button so the
             user has the same global-out affordance across modes. */}
-        <IconButton title={t('generation.backToHome')} onClick={() => router.push('/')}>
+        <IconButton title={t('generation.backToHome')} onClick={() => router.push('/courses')}>
           <ArrowLeft className="h-4 w-4" />
         </IconButton>
         {history && (

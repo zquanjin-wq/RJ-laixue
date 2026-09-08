@@ -32,7 +32,7 @@ export function Header({
         <div className="flex items-center gap-3 min-w-0 flex-1">
           {!hideBackButton && (
             <button
-              onClick={() => router.push('/')}
+              onClick={() => router.push('/courses')}
               className="shrink-0 p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
               title={t('generation.backToHome')}
             >
