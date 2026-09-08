@@ -267,7 +267,12 @@ export function HomePage() {
       // when this capability is unavailable.
       {
         setPptxProgress({ summary: '正在根据教学需求配置 AI 课堂…', events: [] });
-        const submission = await fetch('/api/generation-jobs', {
+      const audioSettings = useSettingsStore.getState();
+      const selectedProvider = audioSettings.ttsProvidersConfig[audioSettings.ttsProviderId];
+      const teacherVoice = audioSettings.ttsProviderId && audioSettings.ttsVoice && audioSettings.ttsVoice !== 'default'
+        ? { providerId: audioSettings.ttsProviderId, voiceId: audioSettings.ttsVoice, modelId: selectedProvider?.modelId }
+        : undefined;
+      const submission = await fetch('/api/generation-jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
           body: JSON.stringify({
@@ -277,6 +282,7 @@ export function HomePage() {
             teachingRequirement: form.requirement.trim(),
             interactionIntensity: 'standard',
             enableTTS: true,
+            ...(teacherVoice ? { teacherVoice } : {}),
           }),
         });
         const created = await submission.json().catch(() => null);
