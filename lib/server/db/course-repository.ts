@@ -15,6 +15,13 @@ export interface CourseRecord {
   updatedAt: Date;
 }
 
+/**
+ * Course management only needs this metadata. Keeping `content` out of list
+ * queries avoids detoasting and serializing complete slide decks (including
+ * page images and generated audio references) before the list can render.
+ */
+export type CourseListRecord = Omit<CourseRecord, 'content'>;
+
 export interface CourseAssetRecord {
   id: string;
   courseId: string | null;
@@ -43,6 +50,17 @@ const courseColumns = `
   title,
   topic,
   content,
+  save_state AS "saveState",
+  content_revision::integer AS "contentRevision",
+  created_at AS "createdAt",
+  updated_at AS "updatedAt"
+`;
+
+const courseListColumns = `
+  id,
+  owner_user_id AS "ownerUserId",
+  title,
+  topic,
   save_state AS "saveState",
   content_revision::integer AS "contentRevision",
   created_at AS "createdAt",
@@ -90,9 +108,9 @@ export class CourseRepository {
     return result.rows[0] ?? null;
   }
 
-  async listOwnedCourses(ownerUserId: string): Promise<CourseRecord[]> {
-    const result = await this.pool.query<CourseRecord>(
-      `SELECT ${courseColumns}
+  async listOwnedCourses(ownerUserId: string): Promise<CourseListRecord[]> {
+    const result = await this.pool.query<CourseListRecord>(
+      `SELECT ${courseListColumns}
        FROM app.courses
        WHERE owner_user_id = $1 AND deleted_at IS NULL
        ORDER BY updated_at DESC, id`,
@@ -101,9 +119,9 @@ export class CourseRepository {
     return result.rows;
   }
 
-  async listCourses(): Promise<CourseRecord[]> {
-    const result = await this.pool.query<CourseRecord>(
-      `SELECT ${courseColumns}
+  async listCourses(): Promise<CourseListRecord[]> {
+    const result = await this.pool.query<CourseListRecord>(
+      `SELECT ${courseListColumns}
        FROM app.courses
        WHERE deleted_at IS NULL
        ORDER BY updated_at DESC, id`,

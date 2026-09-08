@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentActor } from '@/lib/server/auth-context';
-import { CourseRepository, type CourseRecord } from '@/lib/server/db/course-repository';
+import { CourseRepository, type CourseListRecord } from '@/lib/server/db/course-repository';
 import { getDatabasePool } from '@/lib/server/db/pool';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-function courseResponse(course: CourseRecord) {
+function courseListResponse(course: CourseListRecord) {
   return {
     id: course.id,
     title: course.title,
     topic: course.topic,
-    data: course.content,
     save_state: course.saveState,
     content_revision: course.contentRevision,
     created_by: course.ownerUserId,
@@ -36,7 +35,7 @@ export async function GET(request: NextRequest) {
     const courses = new CourseRepository(getDatabasePool());
     const rows =
       scope === 'all' ? await courses.listCourses() : await courses.listOwnedCourses(actor.userId);
-    return NextResponse.json({ success: true, data: rows.map(courseResponse) });
+    return NextResponse.json({ success: true, data: rows.map(courseListResponse) });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Failed to list courses' },

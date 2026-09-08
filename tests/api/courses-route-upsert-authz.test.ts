@@ -72,10 +72,12 @@ describe('GET /api/courses', () => {
     expect(response.status).toBe(200);
     expect(listOwnedCourses).toHaveBeenCalledWith('teacher-1');
     expect(listCourses).not.toHaveBeenCalled();
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = await response.json();
+    expect(payload).toMatchObject({
       success: true,
       data: [expect.objectContaining({ id: 'course-1', save_state: 'ready', created_by: 'teacher-1' })],
     });
+    expect(payload.data[0]).not.toHaveProperty('data');
   });
 
   it('lets administrators view every course', async () => {

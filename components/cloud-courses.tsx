@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Eye, Loader2, MoreHorizontal, Pencil, Search, Share2, Trash2 } from 'lucide-react';
 import { deleteCloudCourse, listCloudCourses, listMyCourses } from '@/lib/utils/cloud-sync';
-import { useAuth } from '@/lib/auth/use-auth';
+import { useAuthenticatedStaff } from '@/components/auth-gate';
 
 type CourseSaveState = 'draft' | 'ready' | 'failed';
 type CourseFilter = 'all' | CourseSaveState;
@@ -107,7 +107,9 @@ async function loadVideoExports(courseId: string) {
 }
 
 export default function CloudCourses() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const staff = useAuthenticatedStaff();
+  const user = staff?.user ?? null;
+  const profile = staff?.profile ?? null;
   const [courses, setCourses] = useState<CloudCourse[]>([]);
   const [videoExports, setVideoExports] = useState<Record<string, VideoExport[]>>({});
   const [videoCapability, setVideoCapability] = useState<VideoExportCapability | null>(null);
@@ -137,7 +139,10 @@ export default function CloudCourses() {
   }, []);
 
   const fetchCourses = useCallback(async (showLoading = false) => {
-    if (!profile) return;
+    if (!profile) {
+      if (showLoading) setLoading(false);
+      return;
+    }
     if (showLoading) setLoading(true);
     try {
       const rows = profile.role === 'admin' ? await listCloudCourses() : await listMyCourses();
@@ -230,7 +235,7 @@ export default function CloudCourses() {
     }
   };
 
-  if (authLoading || loading) return <div className="mt-8 flex justify-center py-12 text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />正在加载课程…</div>;
+  if (loading) return <div className="mt-8 flex justify-center py-12 text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />正在加载课程…</div>;
   if (error) return <div className="mt-8 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">课程暂不可用：{error}</div>;
 
   const isAdmin = profile?.role === 'admin';

@@ -1,15 +1,27 @@
 'use client';
 
-import { useEffect } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth/use-auth';
 
+type AuthenticatedStaff = {
+  user: NonNullable<ReturnType<typeof useAuth>['user']>;
+  profile: NonNullable<ReturnType<typeof useAuth>['profile']>;
+};
+
+const staffContext = createContext<AuthenticatedStaff | null>(null);
+
+/** Shares the already-verified staff identity with pages beneath AdminGate. */
+export function useAuthenticatedStaff() {
+  return useContext(staffContext);
+}
+
 export function AdminGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { profile, loading, signOut } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
 
   useEffect(() => {
     if (!loading && !profile) {
@@ -51,5 +63,5 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  return <staffContext.Provider value={{ user, profile }}>{children}</staffContext.Provider>;
 }
