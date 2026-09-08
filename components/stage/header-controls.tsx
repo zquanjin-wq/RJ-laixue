@@ -5,6 +5,7 @@ import { CloudUpload, Film, Download, FileDown, Loader2, Package, Pencil } from 
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
+import { useCourseCloudSaveStore } from '@/lib/store/course-cloud-save';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useExportCourseVideo } from '@/lib/export/use-export-course-video';
 import { cn } from '@/lib/utils';
@@ -28,6 +29,7 @@ interface HeaderControlsProps {
   readonly canEdit?: boolean;
   readonly onToggleEditMode?: () => void;
   readonly hideProMode?: boolean;
+  readonly canAuthor?: boolean;
   /**
    * `default` — the chunky h-9 pill used in the playback Stage Header.
    * `compact` — slightly tighter padding for embedding in CommandBar's
@@ -52,11 +54,15 @@ export function HeaderControls({
   canEdit,
   onToggleEditMode,
   hideProMode = false,
+  canAuthor = false,
   variant = 'default',
 }: HeaderControlsProps) {
   const { t } = useI18n();
   const router = useRouter();
   const [savingToCloud, setSavingToCloud] = useState(false);
+  const cloudSaveStatus = useCourseCloudSaveStore((state) => state.status);
+  const selectCloudCourse = useCourseCloudSaveStore((state) => state.selectCourse);
+  const setCloudSaveStatus = useCourseCloudSaveStore((state) => state.setStatus);
 
   // Export plumbing — uses the stage / media task stores to check
   // readiness, then hands off to the export hooks. Available in both
@@ -124,25 +130,27 @@ export function HeaderControls({
   }, [exportMenuOpen, handleClickOutside]);
 
   const compact = variant === 'compact';
-  // The parent hides these controls for read-only classroom entries. Avoid a
-  // second independently-hydrated auth request in the top chrome: it raced
-  // the course loader and caused an uncaught client exception on editor open.
-  const canAuthor = !hideProMode;
+  useEffect(() => {
+    selectCloudCourse(courseId ?? null);
+  }, [courseId, selectCloudCourse]);
 
   const saveCourse = useCallback(async () => {
     if (!courseId || savingToCloud) return;
     setSavingToCloud(true);
+    setCloudSaveStatus(courseId, 'saving');
     try {
       const { saveStageToCloud } = await import('@/lib/utils/cloud-sync');
       await saveStageToCloud(courseId);
+      setCloudSaveStatus(courseId, 'saved');
       toast.success('课程已保存到云端');
     } catch (error) {
+      setCloudSaveStatus(courseId, 'failed');
       const message = error instanceof Error ? error.message : '未知错误';
       toast.error(`保存到云端失败：${message}`);
     } finally {
       setSavingToCloud(false);
     }
-  }, [courseId, savingToCloud]);
+  }, [courseId, savingToCloud, setCloudSaveStatus]);
 
   const openEditor = useCallback(() => {
     if (!courseId) return;
@@ -155,6 +163,14 @@ export function HeaderControls({
 
   const openExportMenu = useCallback(async () => {
     if (!courseId || checkingCloudSave) return;
+    if (cloudSaveStatus === 'dirty' || cloudSaveStatus === 'saving') {
+      toast.warning('课程还有未保存的修改，请先保存到云端。');
+      return;
+    }
+    if (cloudSaveStatus === 'failed') {
+      toast.warning('课程最近一次保存失败，请重新保存到云端。');
+      return;
+    }
     setCheckingCloudSave(true);
     try {
       const response = await fetch(`/api/courses/${encodeURIComponent(courseId)}`, {
@@ -174,7 +190,7 @@ export function HeaderControls({
     } finally {
       setCheckingCloudSave(false);
     }
-  }, [checkingCloudSave, courseId]);
+  }, [checkingCloudSave, cloudSaveStatus, courseId]);
 
   // Self-contained spacing so the control cluster is identical regardless of
   // host. The playback Header (`gap-4`) and the edit CommandBar's trailing

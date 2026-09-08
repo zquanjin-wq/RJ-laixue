@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { useStageStore } from '@/lib/store/stage';
+import { useCourseCloudSaveStore } from '@/lib/store/course-cloud-save';
 import { compileBrowserCourseVideo } from '@/lib/video-export/compile-browser-course-video';
 import { planCourseVideoExport } from '@/lib/video-export/course-video-source';
 import { useExportClassroom } from './use-export-classroom';
@@ -46,12 +47,19 @@ export function useExportCourseVideo() {
   const courseId = useStageStore((state) => state.stage?.id);
   const { exportClassroomZip } = useExportClassroom();
   const [preparing, setPreparing] = useState(false);
+  const cloudSaveStatus = useCourseCloudSaveStore((state) => state.status);
 
   const start = useCallback(async () => {
     if (!courseId || preparing) return;
     setPreparing(true);
     const toastId = toast.loading('正在准备课程视频…');
     try {
+      if (cloudSaveStatus === 'dirty' || cloudSaveStatus === 'saving') {
+        throw new Error('课程还有未保存的修改，请先保存到云端后再生成视频。');
+      }
+      if (cloudSaveStatus === 'failed') {
+        throw new Error('课程最近一次保存失败，请重新保存到云端后再生成视频。');
+      }
       // Video tasks render from a durable cloud snapshot. Do not quietly save
       // a local draft here: saving can publish narration and is an authoring
       // decision the user must make explicitly through the primary Save action.
@@ -118,7 +126,7 @@ export function useExportCourseVideo() {
     } finally {
       setPreparing(false);
     }
-  }, [courseId, exportClassroomZip, preparing]);
+  }, [cloudSaveStatus, courseId, exportClassroomZip, preparing]);
 
   return { preparing, start };
 }

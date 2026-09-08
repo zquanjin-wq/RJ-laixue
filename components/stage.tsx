@@ -34,9 +34,11 @@ import { preloadEditor } from '@/lib/edit/preload-editor';
 export function Stage({
   onRetryOutline,
   readOnlyShare = false,
+  canAuthor = false,
 }: {
   onRetryOutline?: (outlineId: string) => Promise<void>;
   readOnlyShare?: boolean;
+  canAuthor?: boolean;
 }) {
   const { mode, setMode, scenes, currentSceneId, generatingOutlines, stage } = useStageStore();
   const currentScene = useStageStore((s) => s.getCurrentScene());
@@ -46,6 +48,7 @@ export function Stage({
   // auto-exit effect below; keeping them in lock-step prevents an
   // edit-mode entry that would immediately auto-exit.
   const isEditable =
+    canAuthor &&
     !readOnlyShare &&
     isCurrentSceneEditable({
       currentSceneId,
@@ -158,6 +161,7 @@ export function Stage({
               scene={currentScene}
               isEditable={isEditable}
               onToggleEditMode={toggleHandler}
+              canAuthor={canAuthor}
             />
           </motion.div>
         ) : (
@@ -175,6 +179,7 @@ export function Stage({
               canEnterProMode={isEditable}
               onEnterProMode={toggleHandler}
               readOnlyShare={readOnlyShare}
+              canAuthor={canAuthor}
             />
           </motion.div>
         )}

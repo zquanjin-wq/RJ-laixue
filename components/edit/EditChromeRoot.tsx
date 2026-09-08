@@ -11,18 +11,19 @@ import { useAgentRuntime } from '@/lib/agent/client/use-agent-runtime';
 import { useStageStore } from '@/lib/store';
 import { renameStage } from '@/lib/utils/stage-storage';
 import { saveStageToCloud } from '@/lib/utils/cloud-sync';
-import { useAuth } from '@/lib/auth/use-auth';
 import { isMaicEditorEnabled } from '@/lib/config/feature-flags';
 import { preloadEditor } from '@/lib/edit/preload-editor';
 import { sceneEditorRegistry } from '@/lib/edit/scene-editor-registry';
 import { supportsNarrationTimeline } from './scene-timeline';
 import type { Scene } from '@/lib/types/stage';
 import { RightRailTabs } from '@/components/edit/RightRailTabs';
+import { useCourseCloudSaveStore } from '@/lib/store/course-cloud-save';
 
 interface EditChromeRootProps {
   readonly scene: Scene;
   readonly isEditable: boolean;
   readonly onToggleEditMode?: () => void;
+  readonly canAuthor?: boolean;
 }
 
 /**
@@ -46,19 +47,23 @@ interface EditChromeRootProps {
  * `scene` is required (non-null). The parent gates mounting on
  * `mode === 'edit' && currentScene` to satisfy this contract.
  */
-export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChromeRootProps) {
+export function EditChromeRoot({
+  scene,
+  isEditable,
+  onToggleEditMode,
+  canAuthor = false,
+}: EditChromeRootProps) {
   const searchParams = useSearchParams();
   const stage = useStageStore((state) => state.stage);
   const scenes = useStageStore((state) => state.scenes);
-  const { profile } = useAuth();
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>(
     'idle',
   );
+  const setCloudSaveStatus = useCourseCloudSaveStore((state) => state.setStatus);
   const initialAutoSaveSignature = useRef<{ stageId: string; signature: string } | null>(null);
   const autoSaveInFlight = useRef(false);
   const editorAutoOpen = searchParams?.get('editor') === '1';
-  const canSaveToCloud =
-    Boolean(stage) && (editorAutoOpen || profile?.role === 'admin' || profile?.role === 'teacher');
+  const canSaveToCloud = Boolean(stage) && canAuthor;
   const autoSaveSignature = useMemo(
     () =>
       stage
@@ -82,10 +87,12 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
     }
     if (initialAutoSaveSignature.current.signature === autoSaveSignature) return;
     const stageId = stage.id;
+    setCloudSaveStatus(stageId, 'dirty');
     const timer = window.setTimeout(() => {
       if (autoSaveInFlight.current) return;
       autoSaveInFlight.current = true;
       setAutoSaveStatus('saving');
+      setCloudSaveStatus(stageId, 'saving');
       void useStageStore
         .getState()
         .saveToStorage()
@@ -93,9 +100,13 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
           if (!saved) throw new Error('本地草稿保存失败');
           return saveStageToCloud(stageId);
         })
-        .then(() => setAutoSaveStatus('saved'))
+        .then(() => {
+          setAutoSaveStatus('saved');
+          setCloudSaveStatus(stageId, 'saved');
+        })
         .catch((error: unknown) => {
           setAutoSaveStatus('failed');
+          setCloudSaveStatus(stageId, 'failed');
           const message = error instanceof Error ? error.message : '未知错误';
           toast.warning(`自动保存失败：${message}`);
         })
@@ -104,7 +115,7 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
         });
     }, 2_000);
     return () => window.clearTimeout(timer);
-  }, [autoSaveSignature, canSaveToCloud, stage?.id]);
+  }, [autoSaveSignature, canSaveToCloud, setCloudSaveStatus, stage?.id]);
 
   // Mark the body while edit mode is mounted, so the editor-scoped CSS
   // rule in globals.css that pins `body.padding-right` to 0 only fires
@@ -170,6 +181,7 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
         // Same URL-only gate as components/stage.tsx — the MAIC Editor
         // exit button only appears while ?editor=1 is on the URL.
         onToggleEditMode={editorAutoOpen ? onToggleEditMode : undefined}
+        canAuthor={canAuthor}
       />
     </>
   );

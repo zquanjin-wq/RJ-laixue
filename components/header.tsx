@@ -13,6 +13,7 @@ interface HeaderProps {
   readonly onToggleEditMode?: () => void;
   readonly hideBackButton?: boolean;
   readonly hideProMode?: boolean;
+  readonly canAuthor?: boolean;
 }
 
 export function Header({
@@ -22,6 +23,7 @@ export function Header({
   onToggleEditMode,
   hideBackButton = false,
   hideProMode = false,
+  canAuthor = false,
 }: HeaderProps) {
   const { t } = useI18n();
   const router = useRouter();
@@ -68,6 +70,7 @@ export function Header({
           canEdit={canEdit}
           onToggleEditMode={onToggleEditMode}
           hideProMode={hideProMode}
+          canAuthor={canAuthor}
         />
       </header>
     </>

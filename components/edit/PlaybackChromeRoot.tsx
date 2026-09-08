@@ -40,9 +40,16 @@ import {
 // R2.1 A2：影子写接线（双开关自门禁——子开关关闭时调用为零副作用）
 import {
   reportPlaybackSuperseded,
-  shadowPlaybackProgress,   // R2 回退路径
+  shadowPlaybackProgress, // R2 回退路径
 } from '@/lib/runtime/shadow-writer';
-import { shadowPlaybackProgressViaOutbox, shadowPlaybackProgressVisit, drainPlaybackOutbox, isOutboxReady, onPlaybackOutboxStartup, schedulePlaybackOutboxDrain } from '@/lib/runtime/playback-outbox';
+import {
+  shadowPlaybackProgressViaOutbox,
+  shadowPlaybackProgressVisit,
+  drainPlaybackOutbox,
+  isOutboxReady,
+  onPlaybackOutboxStartup,
+  schedulePlaybackOutboxDrain,
+} from '@/lib/runtime/playback-outbox';
 import {
   flushOnEngineMode,
   flushOnTeardown,
@@ -83,6 +90,7 @@ interface PlaybackChromeRootProps {
   /** Pro Switch click handler — parent coordinates editLock + teardown. */
   readonly onEnterProMode?: () => void;
   readonly readOnlyShare?: boolean;
+  readonly canAuthor?: boolean;
 }
 
 /**
@@ -94,7 +102,7 @@ interface PlaybackChromeRootProps {
  */
 export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackChromeRootProps>(
   function PlaybackChromeRoot(
-    { onRetryOutline, canEnterProMode, onEnterProMode, readOnlyShare = false },
+    { onRetryOutline, canEnterProMode, onEnterProMode, readOnlyShare = false, canAuthor = false },
     ref,
   ) {
     const { t } = useI18n();
@@ -120,13 +128,6 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         modelId?: string;
       };
     };
-    // ─── [VOICE DEBUG] dump the stage's teacherVoiceConfig so we can tell
-    // whether the course-design pick survived IndexedDB load and into playback. ───
-    console.log(
-      `[VOICE DEBUG][Stage TeacherVoiceConfig Loaded] stageId="${stage?.id ?? 'null'}" ` +
-        `stageTeacherVoiceConfig=${JSON.stringify(stage?.teacherVoiceConfig ?? null)} ` +
-        `rawStageKeys=${JSON.stringify(rawStage ? Object.keys(rawStage) : null)}`,
-    );
     const generationComplete = useStageStore.use.generationComplete();
 
     const currentScene = getCurrentScene();
@@ -209,11 +210,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     // respect the user's choice — manually collapsing again won't be undone.
     const sidebarAutoExpandedRef = useRef(false);
     useEffect(() => {
-      if (
-        !generationComplete &&
-        sidebarCollapsed &&
-        !sidebarAutoExpandedRef.current
-      ) {
+      if (!generationComplete && sidebarCollapsed && !sidebarAutoExpandedRef.current) {
         sidebarAutoExpandedRef.current = true;
         setSidebarCollapsed(false);
       }
@@ -256,16 +253,11 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
         voiceId: string;
         modelId?: string;
       } = {
-        providerId: stage.teacherVoiceConfig.providerId as import('@/lib/audio/types').TTSProviderId,
+        providerId: stage.teacherVoiceConfig
+          .providerId as import('@/lib/audio/types').TTSProviderId,
         voiceId: stage.teacherVoiceConfig.voiceId,
-        ...(stage.teacherVoiceConfig.modelId
-          ? { modelId: stage.teacherVoiceConfig.modelId }
-          : {}),
+        ...(stage.teacherVoiceConfig.modelId ? { modelId: stage.teacherVoiceConfig.modelId } : {}),
       };
-      console.log(
-        `[VOICE DEBUG][Teacher VoiceConfig For Discussion] teacherAgentId="(stage-source)" ` +
-          `teacherVoiceConfig=${JSON.stringify(cfg)} sourcePath="stage.teacherVoiceConfig"`,
-      );
       return cfg;
     }, [stage?.teacherVoiceConfig]);
 
@@ -701,9 +693,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
             const st = useStageStore.getState();
             const idx = st.scenes.findIndex((s) => s.id === st.currentSceneId);
             const isCourseEnd =
-              idx >= 0 &&
-              idx === st.scenes.length - 1 &&
-              st.generatingOutlines.length === 0;
+              idx >= 0 && idx === st.scenes.length - 1 && st.generatingOutlines.length === 0;
             const finalSnap = engine.getSnapshot();
             if (isCourseEnd) {
               void persistenceRef.current?.complete({
@@ -817,7 +807,9 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     const stageId = stage?.id;
 
     // R3.1：启动回收 + 一次性迁移 + drain 存量 outbox
-    useEffect(() => { void onPlaybackOutboxStartup(); }, []);
+    useEffect(() => {
+      void onPlaybackOutboxStartup();
+    }, []);
     useEffect(() => {
       if (!stageId) return;
       const p = createPlaybackPersistence({
@@ -1318,6 +1310,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
               onToggleEditMode={onEnterProMode}
               hideBackButton={readOnlyShare}
               hideProMode={readOnlyShare}
+              canAuthor={canAuthor}
             />
           )}
 

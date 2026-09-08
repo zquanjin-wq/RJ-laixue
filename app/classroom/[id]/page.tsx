@@ -1017,7 +1017,11 @@ export default function ClassroomDetailPage() {
             </div>
           ) : (
             <>
-              <Stage onRetryOutline={retrySingleOutline} readOnlyShare={readOnlyShare} />
+              <Stage
+                onRetryOutline={retrySingleOutline}
+                readOnlyShare={readOnlyShare}
+                canAuthor={canSave}
+              />
               {taskId && readOnlyShare && (
                 <div className="fixed right-60 top-6 z-50 flex items-center gap-2">
                   {taskToken && (
