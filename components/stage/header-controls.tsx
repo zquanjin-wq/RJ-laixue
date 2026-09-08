@@ -30,6 +30,17 @@ import {
 import { cn } from '@/lib/utils';
 import type { StageMode } from '@/lib/types/stage';
 
+type CourseVideoExport = {
+  id: string;
+  status: 'queued' | 'rendering' | 'completed' | 'failed' | 'cancelled';
+  downloadUrl: string | null;
+};
+
+type CourseVideoExportsResponse = {
+  success?: boolean;
+  exports?: CourseVideoExport[];
+};
+
 interface HeaderControlsProps {
   readonly mode?: StageMode;
   readonly canEdit?: boolean;
@@ -74,13 +85,41 @@ export function HeaderControls({
   // across mode swaps (was previously in `Header` only, missing from
   // CommandBar's right cluster).
   const scenes = useStageStore((s) => s.scenes);
+  const courseId = useStageStore((s) => s.stage?.id);
   const generatingOutlines = useStageStore((s) => s.generatingOutlines);
   const failedOutlines = useStageStore((s) => s.failedOutlines);
   const mediaTasks = useMediaGenerationStore((s) => s.tasks);
   const { exporting: isExporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const { preparing: isPreparingVideo, start: exportCourseVideo } = useExportCourseVideo();
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [latestVideoExport, setLatestVideoExport] = useState<CourseVideoExport | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
+
+  const refreshVideoExport = useCallback(async () => {
+    if (!courseId) {
+      setLatestVideoExport(null);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/courses/${encodeURIComponent(courseId)}/video-exports`, {
+        cache: 'no-store',
+      });
+      const payload = (await response.json().catch(() => null)) as CourseVideoExportsResponse | null;
+      setLatestVideoExport(response.ok && payload?.success ? payload.exports?.[0] ?? null : null);
+    } catch {
+      setLatestVideoExport(null);
+    }
+  }, [courseId]);
+
+  useEffect(() => {
+    void refreshVideoExport();
+  }, [refreshVideoExport]);
+
+  useEffect(() => {
+    if (latestVideoExport?.status !== 'queued' && latestVideoExport?.status !== 'rendering') return;
+    const timer = window.setInterval(() => void refreshVideoExport(), 5_000);
+    return () => window.clearInterval(timer);
+  }, [latestVideoExport?.status, refreshVideoExport]);
 
   const canExport =
     scenes.length > 0 &&
@@ -295,22 +334,40 @@ export function HeaderControls({
                 </div>
               </div>
             </button>
+            {latestVideoExport?.status === 'completed' && latestVideoExport.downloadUrl ? (
+              <a
+                href={latestVideoExport.downloadUrl}
+                onClick={() => setExportMenuOpen(false)}
+                className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
+              >
+                <Download className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div>
+                  <div>下载课程视频</div>
+                  <div className="text-[11px] text-gray-400 dark:text-gray-500">MP4 视频已生成</div>
+                </div>
+              </a>
+            ) : (
             <button
               onClick={() => {
                 setExportMenuOpen(false);
-                void exportCourseVideo();
+                void exportCourseVideo().finally(() => window.setTimeout(() => void refreshVideoExport(), 1_000));
               }}
-              disabled={isPreparingVideo}
+              disabled={isPreparingVideo || latestVideoExport?.status === 'queued' || latestVideoExport?.status === 'rendering'}
               className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
             >
               <Film className="w-4 h-4 text-gray-400 shrink-0" />
               <div>
-                <div>生成课程视频</div>
+                <div>
+                  {latestVideoExport?.status === 'queued' || latestVideoExport?.status === 'rendering'
+                    ? '课程视频生成中'
+                    : '生成课程视频'}
+                </div>
                 <div className="text-[11px] text-gray-400 dark:text-gray-500">
                   生成包含配音的 MP4 视频
                 </div>
               </div>
             </button>
+            )}
           </div>
         )}
       </div>
