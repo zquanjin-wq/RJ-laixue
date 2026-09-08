@@ -21,6 +21,7 @@ import type { Scene } from '@/lib/types/stage';
 import type { StageOutlinesRecord } from '@/lib/utils/database';
 import { inspectOrderField } from '@/lib/utils/scene-order';
 import { recordTaskLearningEvent } from '@/lib/utils/task-learning-events';
+import { preloadEditor } from '@/lib/edit/preload-editor';
 
 const log = createLogger('Classroom');
 
@@ -125,15 +126,14 @@ export default function ClassroomDetailPage() {
     taskToken,
   ]);
 
-  // When the URL says ?editor=1, flip the stage store into 'edit'
-  // (MAIC Editor / Pro mode) so the admin / teacher lands directly
-  // in the editing surface instead of the playback surface. The
-  // MAIC Editor flag (NEXT_PUBLIC_MAIC_EDITOR_ENABLED) still gates
-  // whether the EditChromeRoot renders the toggle, so this is a
-  // no-op when the feature flag is off.
+  // Start loading the editor bundle as soon as the URL intent is known. Do not
+  // flip mode here: course hydration resets it to playback, and entering edit
+  // before the surface registry is populated lets EditShell first render the
+  // zero-hook NOOP surface and later swap to the real hookful surface under the
+  // same component identity.
   useEffect(() => {
     if (editorAutoOpen) {
-      useStageStore.setState({ mode: 'edit' });
+      void preloadEditor();
     }
   }, [editorAutoOpen]);
 
@@ -704,6 +704,7 @@ export default function ClassroomDetailPage() {
       // intent only after that asynchronous work has settled; doing it in an
       // earlier effect races with hydration and leaves ?editor=1 in playback.
       if (editorAutoOpen && useStageStore.getState().stage?.id === classroomId) {
+        await preloadEditor();
         useStageStore.setState({ mode: 'edit' });
       }
       setLoading(false);

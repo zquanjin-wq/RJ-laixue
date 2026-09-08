@@ -84,24 +84,21 @@ export function EditShell({
   bottomRail,
 }: EditShellProps) {
   const surface = sceneEditorRegistry.resolve(scene.type) ?? NOOP_SURFACE;
-  // Surface state is published from a child runner (keyed by sceneType so it
-  // remounts when the surface identity changes — that's the boundary at which
-  // rules-of-hooks naturally allows a different hook signature). The chrome
+  const surfaceKey =
+    surface === NOOP_SURFACE ? `noop:${scene.type}` : `registered:${surface.sceneType}`;
+  // Surface state is published from a child runner (keyed by resolved surface
+  // identity so it remounts whenever the hook implementation changes). The chrome
   // around it stays mounted and consumes state via these props.
   const [state, setState] = useState<SurfaceState | null>(null);
   const SurfaceComponent = surface.SurfaceComponent;
 
   return (
     <>
-      {/* `key={scene.type}` is the remount boundary. We can't use
-          `surface.sceneType` here because NOOP_SURFACE deliberately reuses
-          'slide' as a placeholder (the SceneType union is closed and NOOP
-          isn't a real type). The scene's own `type` is the actual signal
-          that the hook signature inside `useSurfaceState` is about to
-          change — so we remount the runner exactly when it does, keeping
-          rules-of-hooks happy across the slide ↔ read-only surface swap
-          while the rest of the chrome stays mounted. */}
-      <SurfaceStateRunner key={scene.type} surface={surface} onChange={setState} />
+      {/* The key includes both scene type and resolved-surface state. Besides
+          scene-type changes, this remounts when a late editor preload replaces
+          NOOP_SURFACE with a registered surface. Those two surfaces have
+          different hook signatures and must never share one runner instance. */}
+      <SurfaceStateRunner key={surfaceKey} surface={surface} onChange={setState} />
       <Frame
         title={courseTitle}
         onTitleChange={onCourseTitleChange}
@@ -124,8 +121,8 @@ export function EditShell({
 }
 
 /**
- * Hidden runner that owns the surface state hook. `key={surface.sceneType}`
- * ensures it remounts when the surface itself changes (slide → noop) — the
+ * Hidden runner that owns the surface state hook. Its caller keys it by the
+ * resolved surface identity so it remounts when the surface changes — the
  * only point at which the hook call signature can vary. Within a single mount
  * the hook signature is fixed (the surface object is constant), so React's
  * rules-of-hooks are respected.
