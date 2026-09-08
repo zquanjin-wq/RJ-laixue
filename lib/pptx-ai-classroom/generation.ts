@@ -64,14 +64,13 @@ export async function generatePptxRoster(input: {
       ...(agent.voiceDesign && typeof agent.voiceDesign === 'object'
         ? { voiceDesign: agent.voiceDesign as PptxClassroomRosterMember['voiceDesign'] }
         : {}),
+      ...(agent.role === 'teacher' && input.teacherVoice ? { voiceConfig: input.teacherVoice } : {}),
     }));
-    const teacher = roster.find((agent) => agent.role === 'teacher');
-    if (teacher && input.teacherVoice) teacher.voiceConfig = input.teacherVoice;
     return roster;
   } catch {
-    const roster = fallbackRoster(input.languageDirective);
-    if (input.teacherVoice) roster[0].voiceConfig = input.teacherVoice;
-    return roster;
+    return fallbackRoster(input.languageDirective).map((agent, index) =>
+      index === 0 && input.teacherVoice ? { ...agent, voiceConfig: input.teacherVoice } : agent,
+    );
   }
 }
 
