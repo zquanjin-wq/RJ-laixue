@@ -704,9 +704,16 @@ export default function ClassroomDetailPage() {
       log.error('Failed to load classroom:', error);
       setError(error instanceof Error ? error.message : 'Failed to load classroom');
     } finally {
+      // loadFromStorage and every cloud hydration path deliberately reset the
+      // transient mode to playback.  Apply the explicit management-entry
+      // intent only after that asynchronous work has settled; doing it in an
+      // earlier effect races with hydration and leaves ?editor=1 in playback.
+      if (editorAutoOpen && useStageStore.getState().stage?.id === classroomId) {
+        useStageStore.setState({ mode: 'edit' });
+      }
       setLoading(false);
     }
-  }, [classroomId, loadFromStorage, authReady]);
+  }, [classroomId, loadFromStorage, authReady, editorAutoOpen]);
 
   useEffect(() => {
     // Reset loading state on course switch to unmount Stage during transition,

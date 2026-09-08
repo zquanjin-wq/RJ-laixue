@@ -5,6 +5,12 @@ export const generationRequestSchema = z
   .object({
     requirement: z.string().trim().min(1).max(12_000),
     agentMode: z.enum(['default', 'generate']).default('default'),
+    // A completed AI course must be immediately playable.  The durable text
+    // pipeline is the only creator that previously omitted this flag, which
+    // silently skipped its TTS phase and left the first cloud save to create
+    // the audio instead.  Keep this opt-out for API callers, but make sound
+    // part of the default course-completion contract.
+    enableTTS: z.boolean().default(true),
   })
   .strict();
 

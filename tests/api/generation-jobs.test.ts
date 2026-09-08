@@ -109,7 +109,7 @@ describe('durable generation job submission', () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         ownerUserId: 'teacher-1',
-        payload: { requirement: '新员工入职', agentMode: 'default' },
+        payload: { requirement: '新员工入职', agentMode: 'default', enableTTS: true },
         configSnapshot: {
           pipelineVersion: 1,
           model: { modelString: 'openai/gpt-test', thinkingConfig: { enabled: true } },
