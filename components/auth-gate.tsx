@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/lib/auth/use-auth';
 
 type AuthenticatedStaff = {
-  user: NonNullable<ReturnType<typeof useAuth>['user']>;
-  profile: NonNullable<ReturnType<typeof useAuth>['profile']>;
+  user: ReturnType<typeof useAuth>['user'];
+  profile: ReturnType<typeof useAuth>['profile'];
 };
 
 const staffContext = createContext<AuthenticatedStaff | null>(null);
