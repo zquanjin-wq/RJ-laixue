@@ -9,10 +9,8 @@ import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useExportCourseVideo } from '@/lib/export/use-export-course-video';
 import { cn } from '@/lib/utils';
 import type { StageMode } from '@/lib/types/stage';
-import { useAuth } from '@/lib/auth/use-auth';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { saveStageToCloud } from '@/lib/utils/cloud-sync';
 
 type CourseVideoExport = {
   id: string;
@@ -58,7 +56,6 @@ export function HeaderControls({
 }: HeaderControlsProps) {
   const { t } = useI18n();
   const router = useRouter();
-  const { profile } = useAuth();
   const [savingToCloud, setSavingToCloud] = useState(false);
 
   // Export plumbing — uses the stage / media task stores to check
@@ -127,12 +124,16 @@ export function HeaderControls({
   }, [exportMenuOpen, handleClickOutside]);
 
   const compact = variant === 'compact';
-  const canAuthor = profile?.role === 'admin' || profile?.role === 'teacher';
+  // The parent hides these controls for read-only classroom entries. Avoid a
+  // second independently-hydrated auth request in the top chrome: it raced
+  // the course loader and caused an uncaught client exception on editor open.
+  const canAuthor = !hideProMode;
 
   const saveCourse = useCallback(async () => {
     if (!courseId || savingToCloud) return;
     setSavingToCloud(true);
     try {
+      const { saveStageToCloud } = await import('@/lib/utils/cloud-sync');
       await saveStageToCloud(courseId);
       toast.success('课程已保存到云端');
     } catch (error) {
