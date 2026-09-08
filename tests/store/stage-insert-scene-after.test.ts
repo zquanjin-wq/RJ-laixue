@@ -95,3 +95,18 @@ describe('insertSceneAfter', () => {
     expect(useStageStore.getState().currentSceneId).toBe('a');
   });
 });
+
+describe('deleteScene navigation', () => {
+  it('selects the next scene after deleting the current first scene', () => {
+    useStageStore.getState().deleteScene('a');
+    expect(useStageStore.getState().scenes.map((scene) => scene.id)).toEqual(['b', 'c']);
+    expect(useStageStore.getState().currentSceneId).toBe('b');
+  });
+
+  it('selects the previous scene after deleting the current last scene', () => {
+    useStageStore.setState({ currentSceneId: 'c' });
+    useStageStore.getState().deleteScene('c');
+    expect(useStageStore.getState().scenes.map((scene) => scene.id)).toEqual(['a', 'b']);
+    expect(useStageStore.getState().currentSceneId).toBe('b');
+  });
+});

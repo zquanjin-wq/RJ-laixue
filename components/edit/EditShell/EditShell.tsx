@@ -7,6 +7,7 @@ import { sceneEditorRegistry } from '@/lib/edit/scene-editor-registry';
 import { NOOP_SURFACE } from '@/lib/edit/noop-surface';
 import type { Scene } from '@/lib/types/stage';
 import { CHROME_DURATION, CHROME_EASE, CHROME_STAGGER } from '@/lib/edit/transitions';
+import { surfaceRunnerKey } from '@/lib/edit/surface-runner-key';
 import { StageGrid } from '@/components/edit/StageGrid';
 import { CommandBar } from './CommandBar';
 import { FloatingInsertToolbar } from './FloatingInsertToolbar';
@@ -84,8 +85,10 @@ export function EditShell({
   bottomRail,
 }: EditShellProps) {
   const surface = sceneEditorRegistry.resolve(scene.type) ?? NOOP_SURFACE;
-  const surfaceKey =
-    surface === NOOP_SURFACE ? `noop:${scene.type}` : `registered:${surface.sceneType}`;
+  const surfaceKey = surfaceRunnerKey(
+    scene.type,
+    surface === NOOP_SURFACE ? null : surface.sceneType,
+  );
   // Surface state is published from a child runner (keyed by resolved surface
   // identity so it remounts whenever the hook implementation changes). The chrome
   // around it stays mounted and consumes state via these props.
