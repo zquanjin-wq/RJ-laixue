@@ -11,6 +11,7 @@ import { I18nProvider } from '@/lib/hooks/use-i18n';
 import { Toaster } from '@/components/ui/sonner';
 import { ServerProvidersInit } from '@/components/server-providers-init';
 import { AccessCodeGuard } from '@/components/access-code-guard';
+import { ClientExceptionReporter } from '@/components/client-exception-reporter';
 
 const inter = localFont({
   src: '../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2',
@@ -42,6 +43,7 @@ export default function RootLayout({
         <ThemeProvider>
           <I18nProvider>
             <ServerProvidersInit />
+            <ClientExceptionReporter />
             <AccessCodeGuard>{children}</AccessCodeGuard>
             <footer className="flex flex-wrap justify-center gap-x-4 gap-y-1 px-4 py-4 text-center text-xs text-muted-foreground/60">
               <a

@@ -57,6 +57,9 @@ const PARITY_ERROR_NAMES = new Set([
   'Other',
 ]);
 
+const MAX_EXCEPTION_MESSAGE_LENGTH = 800;
+const MAX_EXCEPTION_STACK_LENGTH = 2_000;
+
 /** Best-effort observability for client-only document bridge outcomes. */
 export async function POST(request: NextRequest) {
   const guard = await requireAuthOrTeacher(['admin', 'teacher', 'learner']);
@@ -66,6 +69,30 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
+    if (body?.event === 'client_exception') {
+      if (
+        typeof body.pathname !== 'string' ||
+        typeof body.message !== 'string' ||
+        body.pathname.length > 300 ||
+        body.message.length > MAX_EXCEPTION_MESSAGE_LENGTH ||
+        (body.search !== undefined && (typeof body.search !== 'string' || body.search.length > 200)) ||
+        (body.stack !== undefined &&
+          (typeof body.stack !== 'string' || body.stack.length > MAX_EXCEPTION_STACK_LENGTH))
+      ) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid client exception diagnostic payload' },
+          { status: 400 },
+        );
+      }
+      log.error('client_exception', {
+        userId: guard.user.id,
+        pathname: body.pathname,
+        ...(body.search ? { search: body.search } : {}),
+        message: body.message,
+        ...(body.stack ? { stack: body.stack } : {}),
+      });
+      return NextResponse.json({ success: true });
+    }
     if (body?.event === 'document_parity') {
       if (
         !PARITY_OUTCOMES.has(body.outcome) ||
