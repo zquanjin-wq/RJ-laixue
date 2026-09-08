@@ -1,34 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Film,
-  Download,
-  FileDown,
-  Loader2,
-  Monitor,
-  Moon,
-  Package,
-  Settings,
-  Sun,
-} from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
+import { CloudUpload, Film, Download, FileDown, Loader2, Package, Pencil } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
-import { useTheme } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
 import { useExportCourseVideo } from '@/lib/export/use-export-course-video';
-import { LanguageSwitcher } from '../language-switcher';
-import { SettingsDialog } from '../settings';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { StageMode } from '@/lib/types/stage';
+import { useAuth } from '@/lib/auth/use-auth';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { saveStageToCloud } from '@/lib/utils/cloud-sync';
 
 type CourseVideoExport = {
   id: string;
@@ -56,12 +40,9 @@ interface HeaderControlsProps {
 }
 
 /**
- * Stage-level global controls: language picker, theme picker, settings
- * modal trigger, and the Pro Switch. Extracted out of `Header` so the
- * Pro mode CommandBar can absorb the same affordances and the playback
- * Header doesn't need to stay mounted just to host them — Pro mode
- * therefore lands on a single top-chrome bar instead of stacking the
- * Stage Header above the EditShell CommandBar.
+ * Stage-level authoring controls. Course actions intentionally own the
+ * primary slot: save, edit, and export/video are actionable on every course,
+ * while display preferences belong in the ordinary product settings surface.
  *
  * Only one instance is ever mounted at a time (Stage renders Header
  * for playback and EditShell.CommandBar's trailing slot for edit, but
@@ -76,8 +57,9 @@ export function HeaderControls({
   variant = 'default',
 }: HeaderControlsProps) {
   const { t } = useI18n();
-  const { theme, setTheme } = useTheme();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const router = useRouter();
+  const { profile } = useAuth();
+  const [savingToCloud, setSavingToCloud] = useState(false);
 
   // Export plumbing — uses the stage / media task stores to check
   // readiness, then hands off to the export hooks. Available in both
@@ -92,6 +74,7 @@ export function HeaderControls({
   const { exporting: isExporting, exportPPTX, exportResourcePack } = useExportPPTX();
   const { preparing: isPreparingVideo, start: exportCourseVideo } = useExportCourseVideo();
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [checkingCloudSave, setCheckingCloudSave] = useState(false);
   const [latestVideoExport, setLatestVideoExport] = useState<CourseVideoExport | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -104,8 +87,10 @@ export function HeaderControls({
       const response = await fetch(`/api/courses/${encodeURIComponent(courseId)}/video-exports`, {
         cache: 'no-store',
       });
-      const payload = (await response.json().catch(() => null)) as CourseVideoExportsResponse | null;
-      setLatestVideoExport(response.ok && payload?.success ? payload.exports?.[0] ?? null : null);
+      const payload = (await response
+        .json()
+        .catch(() => null)) as CourseVideoExportsResponse | null;
+      setLatestVideoExport(response.ok && payload?.success ? (payload.exports?.[0] ?? null) : null);
     } catch {
       setLatestVideoExport(null);
     }
@@ -142,6 +127,53 @@ export function HeaderControls({
   }, [exportMenuOpen, handleClickOutside]);
 
   const compact = variant === 'compact';
+  const canAuthor = profile?.role === 'admin' || profile?.role === 'teacher';
+
+  const saveCourse = useCallback(async () => {
+    if (!courseId || savingToCloud) return;
+    setSavingToCloud(true);
+    try {
+      await saveStageToCloud(courseId);
+      toast.success('课程已保存到云端');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      toast.error(`保存到云端失败：${message}`);
+    } finally {
+      setSavingToCloud(false);
+    }
+  }, [courseId, savingToCloud]);
+
+  const openEditor = useCallback(() => {
+    if (!courseId) return;
+    if (onToggleEditMode) {
+      void onToggleEditMode();
+      return;
+    }
+    router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
+  }, [courseId, onToggleEditMode, router]);
+
+  const openExportMenu = useCallback(async () => {
+    if (!courseId || checkingCloudSave) return;
+    setCheckingCloudSave(true);
+    try {
+      const response = await fetch(`/api/courses/${encodeURIComponent(courseId)}`, {
+        cache: 'no-store',
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        data?: { save_state?: string };
+      } | null;
+      if (!response.ok || !payload?.success || payload.data?.save_state !== 'ready') {
+        toast.warning('课程还未保存到云端，请先点击“保存到云端”。');
+        return;
+      }
+      setExportMenuOpen((open) => !open);
+    } catch {
+      toast.error('暂时无法确认课程保存状态，请稍后重试。');
+    } finally {
+      setCheckingCloudSave(false);
+    }
+  }, [checkingCloudSave, courseId]);
 
   // Self-contained spacing so the control cluster is identical regardless of
   // host. The playback Header (`gap-4`) and the edit CommandBar's trailing
@@ -151,228 +183,151 @@ export function HeaderControls({
   // the cluster pixel-stable; both hosts pad to `px-8`, so the right edge
   // anchors identically too.
   return (
-    <div className="flex items-center gap-4">
-      <div
-        className={cn(
-          'shrink-0 flex items-center gap-1 backdrop-blur-md shadow-sm rounded-full',
-          compact
-            ? 'bg-zinc-100/70 dark:bg-zinc-800/70 border border-zinc-200/60 dark:border-zinc-700/60 px-1.5 py-1'
-            : 'bg-white/60 dark:bg-gray-800/60 border border-gray-100/50 dark:border-gray-700/50 px-2 py-1.5',
-        )}
-      >
-        {/* Language — Radix DropdownMenu so its menu portals to body
-            and never gets clipped by an ancestor's overflow-hidden. */}
-        <LanguageSwitcher />
-
-        {/* Theme — same Portal-backed DropdownMenu pattern. Non-modal keeps
-            Radix from body scroll-locking a fixed-height classroom layout. */}
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="p-2 rounded-full text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm transition-all group"
-              aria-label={t('settings.theme')}
-            >
-              {theme === 'light' && <Sun className="w-4 h-4" />}
-              {theme === 'dark' && <Moon className="w-4 h-4" />}
-              {theme === 'system' && <Monitor className="w-4 h-4" />}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={8} className="min-w-[140px]">
-            <DropdownMenuItem
-              onSelect={() => setTheme('light')}
-              className={cn(
-                'cursor-pointer gap-2',
-                theme === 'light' &&
-                  'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
-              )}
-            >
-              <Sun className="w-4 h-4" />
-              {t('settings.themeOptions.light')}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => setTheme('dark')}
-              className={cn(
-                'cursor-pointer gap-2',
-                theme === 'dark' &&
-                  'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
-              )}
-            >
-              <Moon className="w-4 h-4" />
-              {t('settings.themeOptions.dark')}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => setTheme('system')}
-              className={cn(
-                'cursor-pointer gap-2',
-                theme === 'system' &&
-                  'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
-              )}
-            >
-              <Monitor className="w-4 h-4" />
-              {t('settings.themeOptions.system')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* Settings */}
+    <div className="flex items-center gap-2">
+      {canAuthor && courseId && !hideProMode && (
         <button
-          onClick={() => setSettingsOpen(true)}
-          className="p-2 rounded-full text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm transition-all group"
-          aria-label={t('settings.title')}
-        >
-          <Settings className="w-4 h-4 group-hover:rotate-90 transition-transform duration-500" />
-        </button>
-      </div>
-
-      {/* Pro Switch — toggle property: on/off both clickable, not a
-          one-way "Done" button. Disabled only when the current scene
-          can't be entered (pending/generating/etc.). Fades in with its
-          host bar on the mode swap (no cross-bar layoutId morph: the
-          playback Header and edit CommandBar have different left-side
-          widths, so morphing made the pill visibly drift). */}
-      {!hideProMode && onToggleEditMode && (
-        <label
+          type="button"
+          onClick={() => void saveCourse()}
+          disabled={savingToCloud}
           className={cn(
-            'shrink-0 inline-flex items-center gap-2.5 rounded-full border shadow-sm transition-colors duration-200',
-            'bg-white/60 dark:bg-gray-800/60 backdrop-blur-md',
-            compact ? 'h-8 px-2.5' : 'h-9 px-3',
-            mode === 'edit'
-              ? 'border-violet-500/60 dark:border-violet-400/60'
-              : 'border-gray-100/50 dark:border-gray-700/50',
-            !canEdit && mode !== 'edit'
-              ? 'opacity-60 cursor-not-allowed'
-              : 'cursor-pointer hover:border-violet-400/60 dark:hover:border-violet-500/50',
+            'inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60',
+            compact && 'px-2.5 py-1.5',
           )}
-          // When disabled (e.g. the course-complete placeholder), explain why
-          // on hover and point the user to a real scene instead of a bare
-          // "Edit course" label they can't act on.
-          title={
-            !canEdit && mode !== 'edit'
-              ? t('stage.proModeDisabledHint')
-              : mode === 'edit'
-                ? t('stage.doneEditing')
-                : t('stage.editCourse')
-          }
         >
-          <span
-            className={cn(
-              'text-[11px] font-bold uppercase tracking-[0.14em] tabular-nums select-none transition-colors duration-200',
-              mode === 'edit'
-                ? 'text-violet-600 dark:text-violet-300'
-                : 'text-gray-500 dark:text-gray-400',
-            )}
-          >
-            {t('edit.proMode')}
-          </span>
-          <Switch
-            checked={mode === 'edit'}
-            onCheckedChange={onToggleEditMode}
-            disabled={!canEdit && mode !== 'edit'}
-            aria-label={mode === 'edit' ? t('stage.doneEditing') : t('stage.editCourse')}
-            className="data-[state=checked]:bg-violet-600 dark:data-[state=checked]:bg-violet-500"
-          />
-        </label>
+          {savingToCloud ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CloudUpload className="h-3.5 w-3.5" />
+          )}
+          {savingToCloud ? '保存中' : '保存到云端'}
+        </button>
+      )}
+
+      {canAuthor && courseId && !hideProMode && (
+        <button
+          type="button"
+          onClick={openEditor}
+          disabled={mode !== 'edit' && !canEdit}
+          title={mode === 'edit' ? '完成编辑' : '编辑课程'}
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700',
+            mode === 'edit' && 'border-violet-400 text-violet-700 dark:text-violet-300',
+            compact && 'px-2.5 py-1.5',
+          )}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          {mode === 'edit' ? '完成编辑' : '编辑课程'}
+        </button>
       )}
 
       {/* Export / Download — lives to the right of the Pro Switch.
           Not a settings function so it does not belong inside the
           settings pill; kept as a separate sibling sitting between the
           Pro Switch and the right edge of the chrome. */}
-      <div className="relative" ref={exportRef}>
-        <button
-          onClick={() => {
-            if (canExport && !isExporting && !isPreparingVideo) {
-              setExportMenuOpen(!exportMenuOpen);
+      {canAuthor && !hideProMode && (
+        <div className="relative" ref={exportRef}>
+          <button
+            onClick={() => {
+              if (canExport && !isExporting && !isPreparingVideo && !checkingCloudSave) {
+                void openExportMenu();
+              }
+            }}
+            disabled={!canExport || isExporting || isPreparingVideo || checkingCloudSave}
+            title={
+              canExport
+                ? isExporting || isPreparingVideo || checkingCloudSave
+                  ? t('export.exporting')
+                  : t('export.pptx')
+                : t('share.notReady')
             }
-          }}
-          disabled={!canExport || isExporting || isPreparingVideo}
-          title={
-            canExport
-              ? isExporting || isPreparingVideo
-                ? t('export.exporting')
-                : t('export.pptx')
-              : t('share.notReady')
-          }
-          className={cn(
-            'shrink-0 p-2 rounded-full transition-all',
-            canExport && !isExporting && !isPreparingVideo
-              ? 'text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm'
-              : 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-50',
-          )}
-          aria-label={t('export.pptx')}
-        >
-          {isExporting || isPreparingVideo ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Download className="w-4 h-4" />
-          )}
-        </button>
-        {exportMenuOpen && (
-          <div className="absolute top-full mt-2 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden z-50 min-w-[200px]">
-            <button
-              onClick={() => {
-                setExportMenuOpen(false);
-                exportPPTX();
-              }}
-              className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
-            >
-              <FileDown className="w-4 h-4 text-gray-400 shrink-0" />
-              <span>{t('export.pptx')}</span>
-            </button>
-            <button
-              onClick={() => {
-                setExportMenuOpen(false);
-                exportResourcePack();
-              }}
-              className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
-            >
-              <Package className="w-4 h-4 text-gray-400 shrink-0" />
-              <div>
-                <div>{t('export.resourcePack')}</div>
-                <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                  {t('export.resourcePackDesc')}
-                </div>
-              </div>
-            </button>
-            {latestVideoExport?.status === 'completed' && latestVideoExport.downloadUrl ? (
-              <a
-                href={latestVideoExport.downloadUrl}
-                onClick={() => setExportMenuOpen(false)}
+            className={cn(
+              'shrink-0 p-2 rounded-full transition-all',
+              canExport && !isExporting && !isPreparingVideo && !checkingCloudSave
+                ? 'text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm'
+                : 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-50',
+            )}
+            aria-label={t('export.pptx')}
+          >
+            {isExporting || isPreparingVideo || checkingCloudSave ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+          </button>
+          {exportMenuOpen && (
+            <div className="absolute top-full mt-2 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden z-50 min-w-[200px]">
+              <button
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  exportPPTX();
+                }}
                 className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
               >
-                <Download className="w-4 h-4 text-emerald-600 shrink-0" />
+                <FileDown className="w-4 h-4 text-gray-400 shrink-0" />
+                <span>{t('export.pptx')}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  exportResourcePack();
+                }}
+                className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
+              >
+                <Package className="w-4 h-4 text-gray-400 shrink-0" />
                 <div>
-                  <div>下载课程视频</div>
-                  <div className="text-[11px] text-gray-400 dark:text-gray-500">MP4 视频已生成</div>
+                  <div>{t('export.resourcePack')}</div>
+                  <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                    {t('export.resourcePackDesc')}
+                  </div>
                 </div>
-              </a>
-            ) : (
-            <button
-              onClick={() => {
-                setExportMenuOpen(false);
-                void exportCourseVideo().finally(() => window.setTimeout(() => void refreshVideoExport(), 1_000));
-              }}
-              disabled={isPreparingVideo || latestVideoExport?.status === 'queued' || latestVideoExport?.status === 'rendering'}
-              className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
-            >
-              <Film className="w-4 h-4 text-gray-400 shrink-0" />
-              <div>
-                <div>
-                  {latestVideoExport?.status === 'queued' || latestVideoExport?.status === 'rendering'
-                    ? '课程视频生成中'
-                    : '生成课程视频'}
-                </div>
-                <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                  生成包含配音的 MP4 视频
-                </div>
-              </div>
-            </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+              </button>
+              {latestVideoExport?.status === 'completed' && latestVideoExport.downloadUrl ? (
+                <a
+                  href={latestVideoExport.downloadUrl}
+                  onClick={() => setExportMenuOpen(false)}
+                  className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
+                >
+                  <Download className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <div>下载课程视频</div>
+                    <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                      MP4 视频已生成
+                    </div>
+                  </div>
+                </a>
+              ) : (
+                <button
+                  onClick={() => {
+                    setExportMenuOpen(false);
+                    void exportCourseVideo().finally(() =>
+                      window.setTimeout(() => void refreshVideoExport(), 1_000),
+                    );
+                  }}
+                  disabled={
+                    isPreparingVideo ||
+                    latestVideoExport?.status === 'queued' ||
+                    latestVideoExport?.status === 'rendering'
+                  }
+                  className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
+                >
+                  <Film className="w-4 h-4 text-gray-400 shrink-0" />
+                  <div>
+                    <div>
+                      {latestVideoExport?.status === 'queued' ||
+                      latestVideoExport?.status === 'rendering'
+                        ? '课程视频生成中'
+                        : '生成课程视频'}
+                    </div>
+                    <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                      生成包含配音的 MP4 视频
+                    </div>
+                  </div>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

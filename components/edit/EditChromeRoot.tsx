@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CloudUpload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { EditShell } from '@/components/edit/EditShell';
 import { SlideNavRail } from '@/components/edit/SlideNavRail';
@@ -52,14 +51,14 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
   const stage = useStageStore((state) => state.stage);
   const scenes = useStageStore((state) => state.scenes);
   const { profile } = useAuth();
-  const [savingToCloud, setSavingToCloud] = useState(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>(
+    'idle',
+  );
   const initialAutoSaveSignature = useRef<{ stageId: string; signature: string } | null>(null);
   const autoSaveInFlight = useRef(false);
   const editorAutoOpen = searchParams?.get('editor') === '1';
   const canSaveToCloud =
-    Boolean(stage) &&
-    (editorAutoOpen || profile?.role === 'admin' || profile?.role === 'teacher');
+    Boolean(stage) && (editorAutoOpen || profile?.role === 'admin' || profile?.role === 'teacher');
   const autoSaveSignature = useMemo(
     () =>
       stage
@@ -164,35 +163,6 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
                 ? '自动保存失败'
                 : ''}
         </span>
-      )}
-      {canSaveToCloud && (
-        <button
-          type="button"
-          onClick={async () => {
-            if (!stage || savingToCloud) return;
-            setSavingToCloud(true);
-            try {
-              await saveStageToCloud(stage.id);
-              toast.success('课程已保存到云端');
-            } catch (error) {
-              const message = error instanceof Error ? error.message : '未知错误';
-              toast.error(`保存到云端失败：${message}`);
-            } finally {
-              setSavingToCloud(false);
-            }
-          }}
-          disabled={savingToCloud || !stage}
-          title={'\u4fdd\u5b58\u5230\u4e91\u7aef'}
-          aria-label={'\u4fdd\u5b58\u5230\u4e91\u7aef'}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-3"
-        >
-          {savingToCloud ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <CloudUpload className="h-3.5 w-3.5" />
-          )}
-          <span className="hidden sm:inline">{savingToCloud ? '\u4fdd\u5b58\u4e2d' : '\u4fdd\u5b58\u5230\u4e91\u7aef'}</span>
-        </button>
       )}
       <HeaderControls
         mode="edit"
