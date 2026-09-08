@@ -66,11 +66,15 @@ export function SlideCanvas() {
             replays as a laser pointer, the spotlight cue as a spotlight. */}
         <SpotlightOverlay domIdPrefix="editable-element-" />
         <LaserPointerOverlay domIdPrefix="editable-element-" />
+        {/* Keep every editor-owned overlay inside the same scene context.
+            Some controls are portalled by Radix, but their React ownership
+            remains here; this prevents a context consumer from escaping the
+            provider as new editing chrome is added. */}
+        <AnchoredTextBar editingElementId={editingElementId} />
+        <AnchoredElementBar element={nonTextElement} />
+        {/* Canvas-side element picker for the timeline's element-bound cues. */}
+        <ElementPickLayer />
       </SceneProvider>
-      <AnchoredTextBar editingElementId={editingElementId} />
-      <AnchoredElementBar element={nonTextElement} />
-      {/* Canvas-side element picker for the timeline's element-bound cues. */}
-      <ElementPickLayer />
     </div>
   );
 }
