@@ -126,6 +126,7 @@ export function HomePage() {
   // invariant). Gate generation on this single condition (state A vs B)
   // instead of inspecting modelId directly.
   const providersConfig = useSettingsStore((s) => s.providersConfig);
+  const selectedAgentIds = useSettingsStore((s) => s.selectedAgentIds);
   const hasUsableProvider = hasUsableLLMProvider(providersConfig);
   const [recentOpen, setRecentOpen] = useState(true);
   const persistRecentOpen = (next: boolean) => {
@@ -272,6 +273,10 @@ export function HomePage() {
       const teacherVoice = audioSettings.ttsProviderId && audioSettings.ttsVoice && audioSettings.ttsVoice !== 'default'
         ? { providerId: audioSettings.ttsProviderId, voiceId: audioSettings.ttsVoice, modelId: selectedProvider?.modelId }
         : undefined;
+      // AgentBar keeps the teacher selected and lets the creator choose the
+      // supporting classroom roles. The durable PPTX pipeline only needs the
+      // number of companions; it generates their course-specific personas.
+      const companionCount = Math.min(3, Math.max(1, selectedAgentIds.filter((id) => id !== 'default-1').length));
       const submission = await fetch('/api/generation-jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
@@ -283,6 +288,7 @@ export function HomePage() {
             interactionIntensity: 'standard',
             enableTTS: true,
             ...(teacherVoice ? { teacherVoice } : {}),
+            companionCount,
           }),
         });
         const created = await submission.json().catch(() => null);
@@ -993,6 +999,13 @@ export function HomePage() {
                     >
                       {createMode === 'pptx' && (
                         <div className="mb-5 w-full max-w-xl text-left">
+                          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">课堂角色与音色</p>
+                              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">设置 AI 讲师、伴学角色和讲师音色后再导入。</p>
+                            </div>
+                            <div className="w-full sm:w-72"><AgentBar /></div>
+                          </div>
                           <label
                             htmlFor="pptx-teaching-requirement"
                             className="mb-2 flex items-center justify-between text-sm font-semibold text-slate-800 dark:text-slate-100"
