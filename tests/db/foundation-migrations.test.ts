@@ -497,6 +497,28 @@ describe('P1 PostgreSQL foundation', () => {
     expect((await exports.get(uploadFailed.id))?.status).toBe('queued');
   });
 
+  it('retries a failed video with the durable source, not a stale renderer job id', async () => {
+    const exports = new CourseVideoExportRepository(pool);
+    const created = await exports.create({
+      courseId: 'course-video-activation',
+      requestedBy: 'user-1',
+      request: {
+        inputObjectKey: 'courses/course-video-activation/video-exports/retry/source.zip',
+        render: { jobId: 'renderer-job-lost-after-restart', progress: 0.4 },
+      },
+    });
+    await exports.updateStatus({ id: created.id, status: 'running', expectedStatuses: ['queued'] });
+    await exports.updateStatus({ id: created.id, status: 'failed', expectedStatuses: ['running'] });
+
+    const retried = await exports.retry(created.id);
+
+    expect(retried).toMatchObject({ id: created.id, status: 'queued' });
+    expect(retried?.request).toMatchObject({
+      inputObjectKey: 'courses/course-video-activation/video-exports/retry/source.zip',
+    });
+    expect((retried?.request as { render?: unknown }).render).toBeUndefined();
+  });
+
   it('publishes a task and records learning activity once', async () => {
     const courses = new CourseRepository(pool);
     await courses.createCourse({

@@ -116,7 +116,10 @@ export class CourseVideoExportRepository {
   async retry(id: string): Promise<CourseVideoExport | null> {
     const result = await this.pool.query<CourseVideoExport>(
       `UPDATE app.course_video_exports
-       SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL, updated_at = now()
+       SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL,
+           -- A failed renderer job may have been lost during a renderer restart.
+           -- Preserve the durable ZIP input but force a fresh renderer submission.
+           request = request - 'render', updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'cancelled') AND request ? 'inputObjectKey'
        RETURNING ${columns}`,
       [id],
