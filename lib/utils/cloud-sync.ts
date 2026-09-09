@@ -239,6 +239,9 @@ export async function saveStageToCloud(stageId: string) {
       title,
       topic,
       saveState: 'ready',
+      ...(Number.isInteger(prepared.contentRevision)
+        ? { expectedRevision: prepared.contentRevision }
+        : {}),
       data: {
         stage: stageToSave,
         scenes: scenesToSave,

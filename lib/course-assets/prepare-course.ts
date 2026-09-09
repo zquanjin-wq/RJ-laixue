@@ -2,6 +2,11 @@ import { externalizeCourseAssets, type ExternalizedCourseAssets } from './extern
 
 type RecordLike = Record<string, unknown>;
 
+export interface PreparedCourseAssets extends ExternalizedCourseAssets {
+  /** Revision returned by the recoverable cloud draft write, when available. */
+  contentRevision?: number;
+}
+
 export interface CourseAssetPreparationInput {
   id: string;
   title: string;
@@ -13,9 +18,9 @@ export interface CourseAssetPreparationInput {
   forceCourseNamespace?: boolean;
 }
 
-async function readCourseResponse(response: Response): Promise<void> {
+async function readCourseResponse(response: Response): Promise<number | undefined> {
   const text = await response.text();
-  let body: { success?: boolean; error?: string } | null = null;
+  let body: { success?: boolean; error?: string; data?: { content_revision?: unknown } } | null = null;
   try {
     body = JSON.parse(text) as { success?: boolean; error?: string };
   } catch {
@@ -26,6 +31,7 @@ async function readCourseResponse(response: Response): Promise<void> {
     const detail = body?.error || text.slice(0, 200) || `HTTP ${response.status}`;
     throw new Error(`Course preparation failed: ${detail}`);
   }
+  return Number.isInteger(body.data?.content_revision) ? Number(body.data?.content_revision) : undefined;
 }
 
 function pendingAssetNamespace(): string {
@@ -42,7 +48,7 @@ function pendingAssetNamespace(): string {
  */
 export async function prepareCourseForAssetUploads(
   input: CourseAssetPreparationInput,
-): Promise<ExternalizedCourseAssets> {
+): Promise<PreparedCourseAssets> {
   const probe = await fetch(`/api/courses/${encodeURIComponent(input.id)}`, { method: 'GET' });
   if (!probe.ok && probe.status !== 404) {
     throw new Error(`Course preparation failed: cloud probe returned HTTP ${probe.status}`);
@@ -88,7 +94,7 @@ export async function prepareCourseForAssetUploads(
       },
     }),
   });
-  await readCourseResponse(create);
+  const contentRevision = await readCourseResponse(create);
 
-  return externalized;
+  return { ...externalized, contentRevision };
 }

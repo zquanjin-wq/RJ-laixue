@@ -128,4 +128,33 @@ describe('POST /api/courses', () => {
       expect.objectContaining({ ownerUserId: 'teacher-1', expectedRevision: 3 }),
     );
   });
+
+  it('uses the client revision to reject a stale cloud save instead of overwriting newer work', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
+    getCourse
+      .mockResolvedValueOnce({ id: 'course-1', ownerUserId: 'teacher-1', contentRevision: 5 })
+      .mockResolvedValueOnce({ ...course, contentRevision: 6 });
+    updateCourse.mockResolvedValue(null);
+
+    const response = await post({ ...draft, expectedRevision: 4 });
+
+    expect(response.status).toBe(409);
+    expect(updateCourse).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 4 }),
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      errorCode: 'CONFLICT',
+      currentRevision: 6,
+    });
+  });
+
+  it('rejects malformed course revisions before persisting', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
+
+    const response = await post({ ...draft, expectedRevision: 0 });
+
+    expect(response.status).toBe(400);
+    expect(updateCourse).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ errorCode: 'INVALID_REVISION' });
+  });
 });

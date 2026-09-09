@@ -73,6 +73,9 @@ export async function replaceTeacherVoice({
       title: stage.name?.trim?.() || '未命名课程',
       topic: stage.name?.trim?.() || '',
       saveState: 'ready',
+      ...(Number.isInteger(prepared.contentRevision)
+        ? { expectedRevision: prepared.contentRevision }
+        : {}),
       data: { stage: stageToSave, scenes: scenesToSave, outlines },
     }),
   });

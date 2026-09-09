@@ -140,6 +140,8 @@ beforeEach(() => {
   fetchCalls = [];
   responseQueue = [];
   nextResponseIndex = 0;
+  shouldFailAudioPublish = false;
+  shouldThrowAudioPublish = false;
   realFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : (input as URL).toString();
@@ -251,6 +253,24 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     );
     expect(coursePosts).toHaveLength(1);
     expect(JSON.parse(coursePosts[0].body ?? '{}').saveState).toBe('draft');
+  });
+
+  it('uses the recovery draft revision for the final ready save', async () => {
+    // prepareCourseForAssetUploads performs the first POST and returns this
+    // revision; the final write must compare against it so another editor
+    // cannot be silently overwritten during audio publication.
+    enqueueResponse(404, { success: false, error: '课程不存在' });
+    enqueueResponse(200, { success: true, data: { id: 'stage-new-1', content_revision: 1 } });
+    enqueueResponse(200, { success: true, data: { path: 'x' } });
+    enqueueResponse(200, { success: true, data: { id: 'stage-new-1', content_revision: 2 } });
+
+    await saveStageToCloud('stage-new-1');
+
+    const posts = fetchCalls.filter(
+      (call) => call.method === 'POST' && call.url === '/api/courses',
+    );
+    expect(posts).toHaveLength(2);
+    expect(JSON.parse(posts[1].body ?? '{}')).toMatchObject({ expectedRevision: 1, saveState: 'ready' });
   });
   it('audio publisher exception: marks the saved draft as recoverable', async () => {
     enqueueResponse(200, { success: true, data: { id: 'stage-new-1' } });

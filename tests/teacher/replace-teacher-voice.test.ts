@@ -13,7 +13,11 @@ vi.mock('@/lib/course-assets/externalize', () => ({
   externalizeCourseAssets: vi.fn(async (_id, stage, scenes) => ({ stage, scenes })),
 }));
 vi.mock('@/lib/course-assets/prepare-course', () => ({
-  prepareCourseForAssetUploads: vi.fn(async ({ stage, scenes }) => ({ stage, scenes })),
+  prepareCourseForAssetUploads: vi.fn(async ({ stage, scenes }) => ({
+    stage,
+    scenes,
+    contentRevision: 7,
+  })),
 }));
 vi.mock('@/lib/dsl-extensions/serialize', () => ({ stripRuntimeOnly: (value: unknown) => value }));
 vi.mock('@/lib/utils/database', () => ({
@@ -66,6 +70,7 @@ describe('replaceTeacherVoice', () => {
     const finalBody = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
     expect(publish).toHaveBeenCalledWith('course-1', scenes, voice, { forceRegenerate: true });
     expect(finalBody.saveState).toBe('ready');
+    expect(finalBody.expectedRevision).toBe(7);
     expect(finalBody.data.stage.teacherVoiceConfig.voiceId).toBe('new');
     expect(result.stage).toMatchObject({ teacherVoiceConfig: voice });
   });

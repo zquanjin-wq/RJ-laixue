@@ -66,9 +66,19 @@ export async function POST(request: NextRequest) {
       topic?: string;
       data?: { stage?: { name?: string }; outlines?: unknown[]; scenes?: unknown[] };
       saveState?: string;
+      expectedRevision?: number;
     };
     if (!body.id || !body.data?.stage) {
       return NextResponse.json({ success: false, error: '缺少课程数据' }, { status: 400 });
+    }
+    if (
+      body.expectedRevision !== undefined &&
+      (!Number.isInteger(body.expectedRevision) || body.expectedRevision <= 0)
+    ) {
+      return NextResponse.json(
+        { success: false, errorCode: 'INVALID_REVISION', error: '课程版本无效' },
+        { status: 400 },
+      );
     }
 
     const content = {
@@ -99,7 +109,11 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json({
         success: true,
-        data: { id: created.id, audioGeneration: content.audioGeneration },
+        data: {
+          id: created.id,
+          content_revision: created.contentRevision,
+          audioGeneration: content.audioGeneration,
+        },
       });
     }
     if (existing.ownerUserId !== actor.userId && actor.role !== 'admin') {
@@ -112,21 +126,31 @@ export async function POST(request: NextRequest) {
     const updated = await courses.updateCourse({
       id: existing.id,
       ownerUserId: existing.ownerUserId,
-      expectedRevision: existing.contentRevision,
+      expectedRevision: body.expectedRevision ?? existing.contentRevision,
       title,
       topic: body.topic ?? '',
       content,
       saveState,
     });
     if (!updated) {
+      const current = await courses.getCourse(existing.id);
       return NextResponse.json(
-        { success: false, errorCode: 'CONFLICT', error: '课程刚被其他保存操作更新，请重试。' },
+        {
+          success: false,
+          errorCode: 'CONFLICT',
+          error: '课程刚被其他保存操作更新，请重新加载后再保存。',
+          currentRevision: current?.contentRevision,
+        },
         { status: 409 },
       );
     }
     return NextResponse.json({
       success: true,
-      data: { id: updated.id, audioGeneration: content.audioGeneration },
+      data: {
+        id: updated.id,
+        content_revision: updated.contentRevision,
+        audioGeneration: content.audioGeneration,
+      },
     });
   } catch (error) {
     return NextResponse.json(
