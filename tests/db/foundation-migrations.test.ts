@@ -123,6 +123,7 @@ describe('P1 PostgreSQL foundation', () => {
       '0013_classroom_generation_events.sql',
       '0014_api_tokens.sql',
       '0015_revoice_source_revision.sql',
+      '0016_course_video_export_leases.sql',
     ]);
     expect(second.skipped).toEqual(first.applied);
 
@@ -532,6 +533,11 @@ describe('P1 PostgreSQL foundation', () => {
       status: 'queued',
     });
     expect(await exports.claimNext()).toMatchObject({ id: pending.id, status: 'running' });
+    await exports.updateStatus({
+      id: pending.id,
+      status: 'cancelled',
+      expectedStatuses: ['running'],
+    });
 
     const uploadFailed = await exports.create({
       courseId: 'course-video-activation',
@@ -542,6 +548,54 @@ describe('P1 PostgreSQL foundation', () => {
     });
     expect(await exports.claimNext()).toBeNull();
     expect((await exports.get(uploadFailed.id))?.status).toBe('queued');
+  });
+
+  it('leases video exports to independent agents and reports a truthful queue position', async () => {
+    const exports = new CourseVideoExportRepository(pool);
+    const first = await exports.create({
+      courseId: 'course-video-activation',
+      requestedBy: 'user-1',
+      request: {
+        inputObjectKey: 'courses/course-video-activation/video-exports/agent-a/source.zip',
+      },
+    });
+    const second = await exports.create({
+      courseId: 'course-video-activation',
+      requestedBy: 'user-1',
+      request: {
+        inputObjectKey: 'courses/course-video-activation/video-exports/agent-b/source.zip',
+      },
+    });
+
+    const agentA = await exports.claimNext('agent-a', 60_000);
+    const agentB = await exports.claimNext('agent-b', 60_000);
+    expect([agentA?.id, agentB?.id]).toEqual([first.id, second.id]);
+    expect(agentA?.workerId).toBe('agent-a');
+    expect(await exports.heartbeat(first.id, 'agent-b', 60_000)).toBe(false);
+    expect(await exports.heartbeat(first.id, 'agent-a', 60_000)).toBe(true);
+
+    const third = await exports.create({
+      courseId: 'course-video-activation',
+      requestedBy: 'user-1',
+      request: {
+        inputObjectKey: 'courses/course-video-activation/video-exports/agent-c/source.zip',
+      },
+    });
+    const queue = await exports.getQueueInfo(third.id, 2);
+    expect(queue.position).toBe(3);
+    expect(queue.estimatedWaitSeconds).toEqual(expect.any(Number));
+    expect(queue.estimatedWaitSeconds).toBeGreaterThanOrEqual(0);
+
+    await pool.query(
+      `UPDATE app.course_video_exports
+       SET worker_lease_expires_at = now() - interval '1 second',
+           request = request || '{"render":{"jobId":"lost-agent-render"}}'::jsonb
+       WHERE id = $1`,
+      [first.id],
+    );
+    const recovered = await exports.claimNext('agent-recovery', 60_000);
+    expect(recovered).toMatchObject({ id: first.id, workerId: 'agent-recovery' });
+    expect((recovered?.request as { render?: unknown }).render).toBeUndefined();
   });
 
   it('retries a failed video with the durable source, not a stale renderer job id', async () => {

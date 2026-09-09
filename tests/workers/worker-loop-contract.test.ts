@@ -6,9 +6,11 @@ const worker = (name: string) =>
   readFileSync(resolve(process.cwd(), 'scripts', name), 'utf8');
 
 describe('durable worker loop contracts', () => {
-  it('times out stalled video worker requests so polling can recover', () => {
-    const source = worker('run-course-video-export-worker.mjs');
-    expect(source).toContain('AbortSignal.timeout(290_000)');
+  it('runs video exports as an independently deployable leased agent', () => {
+    const source = worker('run-course-video-export-agent.ts');
+    expect(source).toContain('COURSE_VIDEO_EXPORT_WORKER_ID');
+    expect(source).toContain('COURSE_VIDEO_EXPORT_LEASE_MS');
+    expect(source).toContain('runNextCourseVideoExport({ workerId, leaseMs })');
     expect(source).toContain('COURSE_VIDEO_EXPORT_INTERVAL_MS must be at least 1000');
   });
 

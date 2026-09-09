@@ -23,6 +23,10 @@ export interface VideoExportRecord {
   currentStage: string | null;
   framesRendered: number | null;
   totalFrames: number | null;
+  /** One-based queue position, including active renders ahead of this job. */
+  queuePosition: number | null;
+  /** Historical estimate; null means the service has not observed enough completed renders yet. */
+  estimatedWaitSeconds: number | null;
   createdAt: string;
   updatedAt: string;
 }

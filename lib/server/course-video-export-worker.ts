@@ -20,7 +20,15 @@ type VideoRequest = {
   render?: { jobId?: string };
 };
 const STALE_RUNNING_JOB_MS = 15 * 60 * 1000;
+const DEFAULT_LEASE_MS = 5 * 60 * 1000;
 let courseVideoExportRunning = false;
+
+export class VideoExportLeaseLost extends Error {
+  constructor() {
+    super('Video export worker lease was lost');
+    this.name = 'VideoExportLeaseLost';
+  }
+}
 
 function rendererUrl() {
   const url = process.env.RENDER_SERVICE_URL?.trim().replace(/\/$/, '');
@@ -75,17 +83,27 @@ async function waitForRender(
   }
 }
 
-export async function runNextCourseVideoExport(): Promise<boolean> {
+export async function runNextCourseVideoExport(input: {
+  workerId?: string;
+  leaseMs?: number;
+} = {}): Promise<boolean> {
+  const workerId = input.workerId ?? `video-agent:${process.pid}`;
+  const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS;
   const repository = new CourseVideoExportRepository(getDatabasePool());
   await repository.failStaleRunning(STALE_RUNNING_JOB_MS);
-  const job = (await repository.findRunningWithRender()) ?? (await repository.claimNext());
+  const job = await repository.claimNext(workerId, leaseMs);
   if (!job) return false;
+  const heartbeat = async () => {
+    if (!(await repository.heartbeat(job.id, workerId, leaseMs))) throw new VideoExportLeaseLost();
+  };
   try {
+    await heartbeat();
     if (!(await isCurrentCourseRevision(job))) {
       await repository.updateStatus({
         id: job.id,
         status: 'cancelled',
         expectedStatuses: ['running'],
+        expectedWorkerId: workerId,
         error: '课程内容已更新，本次视频任务已失效，请基于最新版本重新生成。',
       });
       return true;
@@ -93,6 +111,7 @@ export async function runNextCourseVideoExport(): Promise<boolean> {
     const storage = new CosStorage();
     let activeRenderJobId = renderJobId(job);
     if (!activeRenderJobId) {
+      await heartbeat();
       const zip = await storage.getObject(inputKey(job));
       const form = new FormData();
       form.set(
@@ -110,28 +129,32 @@ export async function runNextCourseVideoExport(): Promise<boolean> {
       activeRenderJobId = submitted.jobId;
       await repository.updateRenderProgress({
         id: job.id,
+        workerId,
+        leaseMs,
         renderJobId: activeRenderJobId,
         progress: 0,
         currentStage: 'queued',
       });
     }
-    const completed = await waitForRender(rendererUrl(), activeRenderJobId, (state) =>
-      repository
-        .updateRenderProgress({
-          id: job.id,
-          renderJobId: activeRenderJobId,
-          progress: state.progress ?? 0,
-          currentStage: state.currentStage,
-          framesRendered: state.framesRendered,
-          totalFrames: state.totalFrames,
-        })
-        .then(() => undefined),
-    );
+    const completed = await waitForRender(rendererUrl(), activeRenderJobId, async (state) => {
+      const updated = await repository.updateRenderProgress({
+        id: job.id,
+        workerId,
+        leaseMs,
+        renderJobId: activeRenderJobId,
+        progress: state.progress ?? 0,
+        currentStage: state.currentStage,
+        framesRendered: state.framesRendered,
+        totalFrames: state.totalFrames,
+      });
+      if (!updated) throw new VideoExportLeaseLost();
+    });
     if (completed.status !== 'succeeded') {
       await repository.updateStatus({
         id: job.id,
         status: completed.status === 'cancelled' ? 'cancelled' : 'failed',
         expectedStatuses: ['running'],
+        expectedWorkerId: workerId,
         error: completed.error ?? 'Render failed',
       });
       return true;
@@ -142,11 +165,13 @@ export async function runNextCourseVideoExport(): Promise<boolean> {
     if (!videoResponse.ok)
       throw new Error(`Download rendered video failed (HTTP ${videoResponse.status})`);
     const video = Buffer.from(await videoResponse.arrayBuffer());
+    await heartbeat();
     if (!(await isCurrentCourseRevision(job))) {
       await repository.updateStatus({
         id: job.id,
         status: 'cancelled',
         expectedStatuses: ['running'],
+        expectedWorkerId: workerId,
         error: '视频生成期间课程内容已更新，请基于最新版本重新生成。',
       });
       return true;
@@ -162,12 +187,15 @@ export async function runNextCourseVideoExport(): Promise<boolean> {
         sizeBytes: video.length,
       },
       expectedStatuses: ['running'],
+      expectedWorkerId: workerId,
     });
   } catch (error) {
+    if (error instanceof VideoExportLeaseLost) return true;
     await repository.updateStatus({
       id: job.id,
       status: 'failed',
       expectedStatuses: ['running'],
+      expectedWorkerId: workerId,
       error: error instanceof Error ? error.message : 'Video export failed',
     });
   }
@@ -177,7 +205,7 @@ export async function runNextCourseVideoExport(): Promise<boolean> {
 export function startNextCourseVideoExport(): boolean {
   if (courseVideoExportRunning) return false;
   courseVideoExportRunning = true;
-  void runNextCourseVideoExport()
+  void runNextCourseVideoExport({ workerId: `app-video-agent:${process.pid}` })
     .catch((error) => console.error('[course-video-export-worker]', error))
     .finally(() => {
       courseVideoExportRunning = false;

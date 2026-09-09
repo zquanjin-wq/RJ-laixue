@@ -23,6 +23,15 @@ export interface CourseVideoExport {
   startedAt: Date | null;
   completedAt: Date | null;
   updatedAt: Date;
+  workerId: string | null;
+  workerLeaseExpiresAt: Date | null;
+}
+
+export interface CourseVideoExportQueueInfo {
+  /** One-based position including renders already in progress. */
+  position: number | null;
+  /** Historical estimate; null until enough completed renders exist. */
+  estimatedWaitSeconds: number | null;
 }
 
 const columns = `
@@ -42,7 +51,9 @@ const columns = `
   created_at AS "createdAt",
   started_at AS "startedAt",
   completed_at AS "completedAt",
-  updated_at AS "updatedAt"
+  updated_at AS "updatedAt",
+  worker_id AS "workerId",
+  worker_lease_expires_at AS "workerLeaseExpiresAt"
 `;
 
 export class CourseVideoExportRepository {
@@ -82,23 +93,54 @@ export class CourseVideoExportRepository {
     return result.rows;
   }
 
-  async claimNext(): Promise<CourseVideoExport | null> {
+  async claimNext(
+    workerId = 'legacy-video-worker',
+    leaseMs = 5 * 60 * 1000,
+  ): Promise<CourseVideoExport | null> {
+    if (!workerId.trim()) throw new Error('Video export worker ID is required');
     const result = await this.pool.query<CourseVideoExport>(
       `WITH candidate AS (
          SELECT id AS candidate_id FROM app.course_video_exports
-         WHERE status = 'queued'
-           AND request ? 'inputObjectKey'
-         ORDER BY created_at
+         WHERE request ? 'inputObjectKey'
+           AND (
+             status = 'queued'
+             OR (status = 'running' AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at <= clock_timestamp()))
+           )
+         -- Recover an expired lease before admitting newer work. Otherwise a
+         -- dead agent's task can be stranded behind a permanently busy queue.
+         ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        UPDATE app.course_video_exports export
-       SET status = 'running', started_at = COALESCE(started_at, now()), updated_at = now(), error = NULL
+       SET status = 'running',
+           started_at = COALESCE(started_at, now()),
+           updated_at = now(),
+           error = NULL,
+           -- A replacement agent cannot rely on an in-memory renderer job from
+           -- the disappeared host. Keep the durable ZIP and submit it to its
+           -- own renderer instead of polling a foreign job ID.
+           request = CASE WHEN export.status = 'running' THEN export.request - 'render' ELSE export.request END,
+           worker_id = $1,
+           worker_lease_expires_at = clock_timestamp() + ($2::bigint * interval '1 millisecond')
        FROM candidate
        WHERE export.id = candidate.candidate_id
        RETURNING ${columns}`,
+      [workerId, leaseMs],
     );
     return result.rows[0] ?? null;
+  }
+
+  async heartbeat(id: string, workerId: string, leaseMs: number): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE app.course_video_exports
+       SET worker_lease_expires_at = clock_timestamp() + ($3::bigint * interval '1 millisecond'),
+           updated_at = now()
+       WHERE id = $1 AND status = 'running' AND worker_id = $2
+         AND worker_lease_expires_at > clock_timestamp()`,
+      [id, workerId, leaseMs],
+    );
+    return (result.rowCount ?? 0) === 1;
   }
 
   async activateInput(id: string): Promise<CourseVideoExport | null> {
@@ -129,6 +171,8 @@ export class CourseVideoExportRepository {
 
   async updateRenderProgress(input: {
     id: string;
+    workerId?: string;
+    leaseMs?: number;
     renderJobId: string;
     progress: number;
     currentStage?: string;
@@ -144,10 +188,13 @@ export class CourseVideoExportRepository {
     };
     const result = await this.pool.query<CourseVideoExport>(
       `UPDATE app.course_video_exports
-       SET request = jsonb_set(request, '{render}', $2::jsonb, true), updated_at = now()
+       SET request = jsonb_set(request, '{render}', $2::jsonb, true),
+           worker_lease_expires_at = CASE WHEN $3::text IS NULL THEN worker_lease_expires_at ELSE clock_timestamp() + ($4::bigint * interval '1 millisecond') END,
+           updated_at = now()
        WHERE id = $1 AND status = 'running'
+         AND ($3::text IS NULL OR (worker_id = $3 AND worker_lease_expires_at > clock_timestamp()))
        RETURNING ${columns}`,
-      [input.id, JSON.stringify(render)],
+      [input.id, JSON.stringify(render), input.workerId ?? null, input.leaseMs ?? 0],
     );
     return result.rows[0] ?? null;
   }
@@ -161,6 +208,7 @@ export class CourseVideoExportRepository {
            updated_at = now()
        WHERE status = 'running'
          AND NOT (request ? 'render')
+         AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at <= clock_timestamp())
          AND updated_at < now() - ($1::bigint * interval '1 millisecond')
        RETURNING id`,
       [maxAgeMs],
@@ -168,22 +216,12 @@ export class CourseVideoExportRepository {
     return result.rowCount ?? 0;
   }
 
-  async findRunningWithRender(): Promise<CourseVideoExport | null> {
-    const result = await this.pool.query<CourseVideoExport>(
-      `SELECT ${columns}
-       FROM app.course_video_exports
-       WHERE status = 'running' AND request ? 'render'
-       ORDER BY started_at NULLS LAST, created_at
-       LIMIT 1`,
-    );
-    return result.rows[0] ?? null;
-  }
-
   async updateStatus(input: {
     id: string;
     status: MutableCourseVideoExportStatus;
     expectedStatuses?: MutableCourseVideoExportStatus[];
     error?: string | null;
+    expectedWorkerId?: string;
   }): Promise<CourseVideoExport | null> {
     const result = await this.pool.query<CourseVideoExport>(
       `UPDATE app.course_video_exports
@@ -191,15 +229,19 @@ export class CourseVideoExportRepository {
            error = $3,
            started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END,
            completed_at = CASE WHEN $2 IN ('failed', 'cancelled') THEN now() ELSE NULL END,
+           worker_id = CASE WHEN $2 IN ('failed', 'cancelled') THEN NULL ELSE worker_id END,
+           worker_lease_expires_at = CASE WHEN $2 IN ('failed', 'cancelled') THEN NULL ELSE worker_lease_expires_at END,
            updated_at = now()
        WHERE id = $1
          AND ($4::text[] IS NULL OR status = ANY($4::text[]))
+         AND ($5::text IS NULL OR worker_id = $5)
        RETURNING ${columns}`,
       [
         input.id,
         input.status,
         input.error ?? null,
         input.expectedStatuses ?? ['queued', 'running'],
+        input.expectedWorkerId ?? null,
       ],
     );
     return result.rows[0] ?? null;
@@ -209,6 +251,7 @@ export class CourseVideoExportRepository {
     id: string;
     output: CosObjectReference;
     expectedStatuses?: MutableCourseVideoExportStatus[];
+    expectedWorkerId?: string;
   }): Promise<CourseVideoExport | null> {
     const result = await this.pool.query<CourseVideoExport>(
       `UPDATE app.course_video_exports
@@ -220,9 +263,12 @@ export class CourseVideoExportRepository {
            output_etag = $6,
            error = NULL,
            completed_at = now(),
+           worker_id = NULL,
+           worker_lease_expires_at = NULL,
            updated_at = now()
        WHERE id = $1
          AND ($7::text[] IS NULL OR status = ANY($7::text[]))
+         AND ($8::text IS NULL OR worker_id = $8)
        RETURNING ${columns}`,
       [
         input.id,
@@ -232,8 +278,39 @@ export class CourseVideoExportRepository {
         input.output.sizeBytes,
         input.output.etag ?? null,
         input.expectedStatuses ?? ['running'],
+        input.expectedWorkerId ?? null,
       ],
     );
     return result.rows[0] ?? null;
+  }
+
+  async getQueueInfo(id: string, parallelism: number): Promise<CourseVideoExportQueueInfo> {
+    const result = await this.pool.query<CourseVideoExportQueueInfo>(
+      `WITH target AS (
+         SELECT id, status, created_at FROM app.course_video_exports WHERE id = $1
+       ), history AS (
+         SELECT EXTRACT(EPOCH FROM (completed_at - started_at))::double precision AS seconds
+         FROM app.course_video_exports
+         WHERE status = 'succeeded' AND started_at IS NOT NULL AND completed_at IS NOT NULL
+         ORDER BY completed_at DESC
+         LIMIT 20
+       ), queue AS (
+         SELECT CASE WHEN target.status = 'queued' THEN (
+           SELECT count(*)::int + 1
+           FROM app.course_video_exports candidate
+           WHERE candidate.id <> target.id
+             AND candidate.request ? 'inputObjectKey'
+             AND (candidate.status = 'running' OR (candidate.status = 'queued' AND candidate.created_at <= target.created_at))
+         ) ELSE NULL END AS position
+         FROM target
+       )
+       SELECT queue.position AS position,
+         CASE WHEN queue.position IS NULL OR NOT EXISTS (SELECT 1 FROM history) THEN NULL
+           ELSE CEIL((SELECT avg(seconds) FROM history) * GREATEST(queue.position - 1, 0) / GREATEST($2::integer, 1))::integer
+         END AS "estimatedWaitSeconds"
+       FROM queue`,
+      [id, Math.max(1, Math.floor(parallelism))],
+    );
+    return result.rows[0] ?? { position: null, estimatedWaitSeconds: null };
   }
 }

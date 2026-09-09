@@ -79,17 +79,24 @@ services:
     restart: unless-stopped
 
   video-export-worker:
-    build: .
+    build:
+      context: .
+      target: tools
     profiles: ['video-export']
     env_file:
       - .env.production
     environment:
-      COURSE_VIDEO_EXPORT_WORKER_URL: http://app:3000/api/cron/course-video-exports
+      DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
+      RENDER_SERVICE_URL: http://render-service:9000
       COURSE_VIDEO_EXPORT_INTERVAL_MS: '5000'
+      COURSE_VIDEO_EXPORT_LEASE_MS: '300000'
+      COURSE_VIDEO_EXPORT_WORKER_ID: primary-video-agent
     depends_on:
-      - app
-      - render-service
-    command: ['node', 'scripts/run-course-video-export-worker.mjs']
+      db:
+        condition: service_healthy
+      render-service:
+        condition: service_started
+    command: ['pnpm', 'exec', 'tsx', 'scripts/run-course-video-export-agent.ts']
     restart: unless-stopped
 
   caddy:

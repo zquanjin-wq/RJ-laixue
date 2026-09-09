@@ -38,6 +38,17 @@ function rendererUrl() {
 }
 
 async function capability(): Promise<VideoExportCapability> {
+  // Once a render-agent fleet is deployed, the web application deliberately
+  // does not need a local Chromium renderer. Its only responsibility is to
+  // accept a durable ZIP and enqueue it in PostgreSQL. Keep the existing
+  // health probe as the safe default for the current single-host topology.
+  if (process.env.COURSE_VIDEO_EXPORT_QUEUE_ENABLED === 'true') {
+    return {
+      available: true,
+      code: 'VIDEO_RENDERER_NOT_CONFIGURED',
+      message: '课程视频渲染队列可用。',
+    };
+  }
   const url = rendererUrl();
   if (!url) return unavailableCapability;
   try {
@@ -68,7 +79,19 @@ function numberOrNull(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function present(row: CourseVideoExport, downloadUrl: string | null = null): VideoExportRecord {
+function configuredVideoWorkerParallelism() {
+  const value = Number.parseInt(process.env.COURSE_VIDEO_EXPORT_PARALLELISM ?? '1', 10);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function present(
+  row: CourseVideoExport,
+  downloadUrl: string | null = null,
+  queue: { position: number | null; estimatedWaitSeconds: number | null } = {
+    position: null,
+    estimatedWaitSeconds: null,
+  },
+): VideoExportRecord {
   const request = row.request as { render?: RenderProgress; sourceRevision?: unknown } | null;
   const render = request?.render;
   return {
@@ -91,6 +114,8 @@ function present(row: CourseVideoExport, downloadUrl: string | null = null): Vid
     currentStage: typeof render?.currentStage === 'string' ? render.currentStage : null,
     framesRendered: numberOrNull(render?.framesRendered),
     totalFrames: numberOrNull(render?.totalFrames),
+    queuePosition: queue.position,
+    estimatedWaitSeconds: queue.estimatedWaitSeconds,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -107,7 +132,11 @@ class PostgresVideoExportService implements VideoExportService {
     const storage = new CosStorage();
     return Promise.all(
       (await this.repository.listForCourse(courseId)).map(async (row) =>
-        present(row, row.output ? await storage.getDownloadUrl(row.output.objectKey) : null),
+        present(
+          row,
+          row.output ? await storage.getDownloadUrl(row.output.objectKey) : null,
+          await this.repository.getQueueInfo(row.id, configuredVideoWorkerParallelism()),
+        ),
       ),
     );
   }
@@ -149,6 +178,7 @@ class PostgresVideoExportService implements VideoExportService {
       ? present(
           row,
           row.output ? await new CosStorage().getDownloadUrl(row.output.objectKey) : null,
+          await this.repository.getQueueInfo(row.id, configuredVideoWorkerParallelism()),
         )
       : null;
   }

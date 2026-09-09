@@ -17,6 +17,9 @@ type CourseVideoExport = {
   id: string;
   status: 'queued' | 'rendering' | 'completed' | 'failed' | 'cancelled';
   downloadUrl: string | null;
+  progress?: number | null;
+  queuePosition?: number | null;
+  estimatedWaitSeconds?: number | null;
 };
 
 type CourseVideoExportsResponse = {
@@ -120,6 +123,24 @@ export function HeaderControls({
     generatingOutlines.length === 0 &&
     failedOutlines.length === 0 &&
     Object.values(mediaTasks).every((task) => task.status === 'done' || task.status === 'failed');
+
+  const videoExportStatusText = (() => {
+    if (latestVideoExport?.status === 'rendering') {
+      const progress = typeof latestVideoExport.progress === 'number'
+        ? ` ${Math.round(latestVideoExport.progress * 100)}%`
+        : '';
+      return `正在渲染${progress}`;
+    }
+    if (latestVideoExport?.status === 'queued') {
+      const position = latestVideoExport.queuePosition;
+      const wait = latestVideoExport.estimatedWaitSeconds;
+      const waitText = typeof wait === 'number' && wait > 0
+        ? `，预计等待约 ${Math.ceil(wait / 60)} 分钟`
+        : '';
+      return typeof position === 'number' ? `队列第 ${position} 位${waitText}` : '正在等待渲染';
+    }
+    return '生成包含配音的 MP4 视频';
+  })();
 
   const handleClickOutside = useCallback(
     (e: MouseEvent) => {
@@ -336,13 +357,12 @@ export function HeaderControls({
                   <Film className="w-4 h-4 text-gray-400 shrink-0" />
                   <div>
                     <div>
-                      {latestVideoExport?.status === 'queued' ||
-                      latestVideoExport?.status === 'rendering'
+                      {latestVideoExport?.status === 'queued' || latestVideoExport?.status === 'rendering'
                         ? '课程视频生成中'
                         : '生成课程视频'}
                     </div>
                     <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                      生成包含配音的 MP4 视频
+                      {videoExportStatusText}
                     </div>
                   </div>
                 </button>
