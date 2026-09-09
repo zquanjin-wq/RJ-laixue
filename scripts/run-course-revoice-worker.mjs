@@ -27,5 +27,9 @@ async function runBatch() {
   }
 }
 
-await runBatch();
-setInterval(() => void runBatch(), intervalMs);
+// Keep only one in-flight request. setInterval would overlap slow TTS batches,
+// creating avoidable concurrent claims after an app/worker slowdown.
+for (;;) {
+  await runBatch();
+  await new Promise((resolve) => setTimeout(resolve, intervalMs));
+}
