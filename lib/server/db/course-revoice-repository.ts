@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import type { CourseRevoiceJob, CourseRevoiceStatus } from '@/lib/server/course-revoice-jobs';
 
-const columns = `id, course_id, requested_by, status, voice, snapshot, source_updated_at::text,
+const columns = `id, course_id, requested_by, status, voice, snapshot, source_updated_at::text, source_revision,
   items, total_items, completed_items, failed_items, message, error, created_at::text, updated_at::text`;
 
 export class CourseRevoiceRepository {
@@ -13,10 +13,10 @@ export class CourseRevoiceRepository {
     try {
       const result = await this.pool.query<CourseRevoiceJob>(
         `INSERT INTO app.course_revoice_jobs
-          (id, course_id, requested_by, status, voice, snapshot, source_updated_at, items, total_items, completed_items, failed_items, message)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::timestamptz, $8::jsonb, $9, $10, $11, $12)
+          (id, course_id, requested_by, status, voice, snapshot, source_updated_at, source_revision, items, total_items, completed_items, failed_items, message)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::timestamptz, $8, $9::jsonb, $10, $11, $12, $13)
          RETURNING ${columns}`,
-        [input.id, input.course_id, input.requested_by, input.status, JSON.stringify(input.voice), JSON.stringify(input.snapshot), input.source_updated_at, JSON.stringify(input.items), input.total_items, input.completed_items, input.failed_items, input.message],
+        [input.id, input.course_id, input.requested_by, input.status, JSON.stringify(input.voice), JSON.stringify(input.snapshot), input.source_updated_at, input.source_revision, JSON.stringify(input.items), input.total_items, input.completed_items, input.failed_items, input.message],
       );
       return result.rows[0];
     } catch (error) {
@@ -97,22 +97,39 @@ export class CourseRevoiceRepository {
     return result.rows[0] ?? null;
   }
 
-  async getCourse(courseId: string) {
-    const result = await this.pool.query<{ content: unknown; updatedAt: string }>(
-      `SELECT content, updated_at::text AS "updatedAt" FROM app.courses WHERE id = $1 AND deleted_at IS NULL`, [courseId],
+  async markConflict(jobId: string) {
+    const result = await this.pool.query<CourseRevoiceJob>(
+      `UPDATE app.course_revoice_jobs
+          SET status = 'conflict', message = 'Course changed while revoice was running.',
+              locked_until = NULL, completed_at = now(), updated_at = now()
+        WHERE id = $1 AND status = 'running'
+        RETURNING ${columns}`,
+      [jobId],
     );
     return result.rows[0] ?? null;
   }
 
-  async commit(jobId: string, courseId: string, sourceUpdatedAt: string, content: unknown) {
+  async getCourse(courseId: string) {
+    const result = await this.pool.query<{ content: unknown; updatedAt: string; contentRevision: number }>(
+      `SELECT content, updated_at::text AS "updatedAt", content_revision::integer AS "contentRevision" FROM app.courses WHERE id = $1 AND deleted_at IS NULL`, [courseId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async commit(jobId: string, courseId: string, sourceRevision: number, content: unknown) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       const job = await client.query<{ status: string }>(`SELECT status FROM app.course_revoice_jobs WHERE id = $1 FOR UPDATE`, [jobId]);
       if (job.rows[0]?.status !== 'running') { await client.query('COMMIT'); return 'cancelled'; }
-      const course = await client.query<{ id: string }>(`SELECT id FROM app.courses WHERE id = $1 AND date_trunc('milliseconds', updated_at) = $2::timestamptz FOR UPDATE`, [courseId, sourceUpdatedAt]);
+      const course = await client.query<{ id: string }>(
+        `UPDATE app.courses
+         SET content = $2::jsonb, content_revision = content_revision + 1, updated_at = now()
+         WHERE id = $1 AND content_revision = $3 AND deleted_at IS NULL
+         RETURNING id`,
+        [courseId, JSON.stringify(content), sourceRevision],
+      );
       if (!course.rows[0]) { await client.query(`UPDATE app.course_revoice_jobs SET status = 'conflict', message = 'Course changed while revoice was running.', locked_until = NULL, completed_at = now(), updated_at = now() WHERE id = $1`, [jobId]); await client.query('COMMIT'); return 'conflict'; }
-      await client.query(`UPDATE app.courses SET content = $2::jsonb, content_revision = content_revision + 1, updated_at = now() WHERE id = $1`, [courseId, JSON.stringify(content)]);
       await client.query(`UPDATE app.course_revoice_jobs SET status = 'succeeded', message = 'Revoice completed.', locked_until = NULL, completed_at = now(), updated_at = now() WHERE id = $1`, [jobId]);
       await client.query('COMMIT');
       return 'succeeded';

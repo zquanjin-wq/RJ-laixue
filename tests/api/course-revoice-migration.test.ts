@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const sql = readFileSync(resolve(process.cwd(), 'db/migrations/0008_learning_analytics_and_revoice.sql'), 'utf8');
+const sourceRevisionSql = readFileSync(resolve(process.cwd(), 'db/migrations/0015_revoice_source_revision.sql'), 'utf8');
 const route = readFileSync(resolve(process.cwd(), 'app/api/courses/[id]/revoice/route.ts'), 'utf8');
 
 describe('course revoice database invariants', () => {
@@ -15,6 +16,12 @@ describe('course revoice database invariants', () => {
     expect(sql).toMatch(/locked_until timestamptz/i);
     expect(sql).toMatch(/completed_at timestamptz/i);
     expect(sql).toMatch(/source_updated_at timestamptz not null/i);
+  });
+
+  it('pins revoice commits to a numeric course revision rather than timestamp precision', () => {
+    expect(sourceRevisionSql).toMatch(/add column if not exists source_revision integer/i);
+    expect(sourceRevisionSql).toMatch(/alter column source_revision set not null/i);
+    expect(route).toContain('sourceRevision: course.contentRevision');
   });
 
   it('can safely be re-run when the database was migrated manually', () => {

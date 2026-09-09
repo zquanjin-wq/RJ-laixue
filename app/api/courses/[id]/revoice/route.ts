@@ -34,7 +34,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const data = course.content as { stage?: Record<string, unknown>; scenes?: Record<string, unknown>[]; outlines?: unknown[] };
   if (!data.stage || !Array.isArray(data.scenes)) return apiError('INVALID_REQUEST', 400, 'Course content is incomplete.');
   try {
-    const job = await createCourseRevoiceJob({ courseId: id, userId: auth.user.id, voice: body.voice, snapshot: { stage: data.stage, scenes: data.scenes, outlines: Array.isArray(data.outlines) ? data.outlines : [] }, sourceUpdatedAt: course.updatedAt.toISOString() });
+    const job = await createCourseRevoiceJob({ courseId: id, userId: auth.user.id, voice: body.voice, snapshot: { stage: data.stage, scenes: data.scenes, outlines: Array.isArray(data.outlines) ? data.outlines : [] }, sourceUpdatedAt: course.updatedAt.toISOString(), sourceRevision: course.contentRevision });
     after(() => runCourseRevoiceJob(job.id).catch(() => undefined));
     return apiSuccess({ job: present(job), pollIntervalMs: 5000 }, job.status === 'queued' ? 202 : 200);
   } catch (error) {
