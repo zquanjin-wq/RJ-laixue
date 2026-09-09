@@ -12,6 +12,7 @@ import { admin } from 'better-auth/plugins';
 import { migrateDatabase } from '@/lib/server/db/migrate';
 import { CourseRepository } from '@/lib/server/db/course-repository';
 import { CourseVideoExportRepository } from '@/lib/server/db/course-video-export-repository';
+import { CourseRevoiceRepository } from '@/lib/server/db/course-revoice-repository';
 import { AccessRepository } from '@/lib/server/db/access-repository';
 import { JobRepository } from '@/lib/server/db/job-repository';
 import { PptxSourceRepository } from '@/lib/server/db/pptx-source-repository';
@@ -412,6 +413,52 @@ describe('P1 PostgreSQL foundation', () => {
 
     expect(await courses.softDeleteCourse('course-1', 'user-1')).toBe(true);
     expect(await courses.getCourse('course-1')).toBeNull();
+  });
+
+  it('does not let a completed revoice overwrite a course saved after the job began', async () => {
+    const courses = new CourseRepository(pool);
+    await courses.createCourse({
+      id: 'course-revoice-conflict',
+      ownerUserId: 'user-1',
+      title: '原课程',
+      content: { marker: 'original' },
+      saveState: 'ready',
+    });
+    const revoice = new CourseRevoiceRepository(pool);
+    const created = await revoice.create({
+      id: 'revoice-conflict',
+      course_id: 'course-revoice-conflict',
+      requested_by: 'user-1',
+      status: 'queued',
+      voice: { providerId: 'minimax', voiceId: 'voice-1' },
+      snapshot: { stage: {}, scenes: [], outlines: [] },
+      source_updated_at: new Date().toISOString(),
+      source_revision: 1,
+      items: [],
+      total_items: 0,
+      completed_items: 0,
+      failed_items: 0,
+      message: 'queued',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    expect((await revoice.claim(created.id))?.status).toBe('running');
+    await courses.updateCourse({
+      id: 'course-revoice-conflict',
+      ownerUserId: 'user-1',
+      expectedRevision: 1,
+      title: '讲师的新保存',
+      content: { marker: 'newer-author-save' },
+      saveState: 'ready',
+    });
+
+    expect(
+      await revoice.commit(created.id, 'course-revoice-conflict', 1, { marker: 'stale-revoice' }),
+    ).toBe('conflict');
+    expect((await courses.getCourse('course-revoice-conflict'))?.content).toEqual({
+      marker: 'newer-author-save',
+    });
+    expect((await revoice.get(created.id))?.status).toBe('conflict');
   });
 
   it('stores course video export status and its COS output reference atomically', async () => {
