@@ -8,12 +8,23 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const KEY = 'RENDER_MAX_JOBS_PER_USER';
+const DEADLINE_KEY = 'RENDER_JOB_DEADLINE_MS';
 const original = process.env[KEY];
+const originalDeadline = process.env[DEADLINE_KEY];
 
 afterEach(() => {
   if (original === undefined) delete process.env[KEY];
   else process.env[KEY] = original;
+  if (originalDeadline === undefined) delete process.env[DEADLINE_KEY];
+  else process.env[DEADLINE_KEY] = originalDeadline;
   vi.resetModules();
+});
+
+describe('config jobDeadlineMs', () => {
+  it('defaults to a 90-minute deadline for long narrated courses', async () => {
+    delete process.env[DEADLINE_KEY];
+    expect((await loadConfig()).jobDeadlineMs).toBe(90 * 60 * 1000);
+  });
 });
 
 async function loadConfig() {

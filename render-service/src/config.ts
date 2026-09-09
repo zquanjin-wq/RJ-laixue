@@ -45,7 +45,10 @@ export const config = {
    * Hard per-job wall-clock deadline. A render exceeding this is aborted and
    * marked failed so a hung job can't hold a concurrency slot + scratch forever.
    */
-  jobDeadlineMs: intEnv('RENDER_JOB_DEADLINE_MS', 45 * 60 * 1000),
+  // A narrated course can legitimately contain 20+ minutes of material.
+  // Chromium frame capture is slower than realtime on the lightweight
+  // production host, so allow a 90-minute render before treating it as hung.
+  jobDeadlineMs: intEnv('RENDER_JOB_DEADLINE_MS', 90 * 60 * 1000),
   /** Root dir for unzipped projects and rendered outputs. */
   tmpDir: process.env.PRODUCER_TMP_PROJECT_DIR || '/tmp/openmaic-renders',
 

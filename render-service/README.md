@@ -39,7 +39,7 @@ poll, then download. Job ids are opaque.
 | `RENDER_MAX_JOBS_PER_USER` | `1` | Active jobs allowed per client identity (0 disables the guard — see note below). |
 | `RENDER_MAX_QUEUE` | `20` | Max jobs in the system (reserved+queued+running) before new submits get `429`. |
 | `RENDER_JOB_TTL_MS` | `1800000` | How long finished jobs + artifacts live before cleanup. |
-| `RENDER_JOB_DEADLINE_MS` | `2700000` | Hard per-job wall-clock deadline; overruns are aborted and marked **failed**. |
+| `RENDER_JOB_DEADLINE_MS` | `5400000` | Hard per-job wall-clock deadline; overruns are aborted and marked **failed**. |
 | `RENDER_MAX_UPLOAD_BYTES` | `314572800` | Max compressed archive size accepted (300 MB); enforced on real bytes, before buffering. |
 | `RENDER_MAX_ENTRIES` | `5000` | Max entries allowed in the archive. |
 | `RENDER_MAX_ENTRY_BYTES` | `209715200` | Max expanded size of any single entry (200 MB). |
