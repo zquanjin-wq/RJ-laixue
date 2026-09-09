@@ -5,7 +5,6 @@ import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStageStore } from '@/lib/store';
 import { isCurrentSceneEditable } from '@/lib/edit/stage-mode';
-import { isMaicEditorEnabled } from '@/lib/config/feature-flags';
 import { EditChromeRoot } from '@/components/edit/EditChromeRoot';
 import {
   PlaybackChromeRoot,
@@ -57,6 +56,14 @@ export function Stage({
       hasCurrentScene: !!currentScene,
     });
 
+  // A completed course intentionally parks playback on the virtual
+  // `PENDING_SCENE_ID` completion page. That page has no editable scene, but
+  // the course itself is fully editable. Entry therefore needs a broader
+  // predicate than the in-editor guard above; entering will first select the
+  // first real scene below.
+  const canEnterProMode =
+    canAuthor && !readOnlyShare && scenes.length > 0 && generatingOutlines.length === 0;
+
   // Cross-tab edit lock (#571). Lives at this layer because entry must
   // be refused BEFORE the live session is torn down; PlaybackChromeRoot
   // can't own this since it can't refuse its own unmount path.
@@ -72,6 +79,14 @@ export function Stage({
     if (mode === 'edit') {
       setMode('playback');
       return;
+    }
+    if (!canEnterProMode) return;
+
+    // Course completion and a stale/deleted selection can leave playback on a
+    // virtual or missing scene. Select a real page before mounting the editor
+    // so "编辑课程" remains available immediately after generation completes.
+    if (!currentScene) {
+      useStageStore.getState().setCurrentSceneId(scenes[0]?.id ?? null);
     }
     if (!editLock.acquire()) return;
     // Load the editor chunk (fonts + slide surface) BEFORE flipping mode,
@@ -94,7 +109,7 @@ export function Stage({
       return;
     }
     setMode('edit');
-  }, [editLock, mode, setMode]);
+  }, [canEnterProMode, currentScene, editLock, mode, scenes, setMode]);
 
   // Auto-exit edit mode when the current scene becomes uneditable
   // (pending generation, no scenes, currently generating).
@@ -176,7 +191,7 @@ export function Stage({
             <PlaybackChromeRoot
               ref={playbackRef}
               onRetryOutline={onRetryOutline}
-              canEnterProMode={isEditable}
+              canEnterProMode={canEnterProMode}
               onEnterProMode={toggleHandler}
               readOnlyShare={readOnlyShare}
               canAuthor={canAuthor}
