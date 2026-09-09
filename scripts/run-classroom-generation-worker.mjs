@@ -1,6 +1,10 @@
 const endpoint = process.env.CLASSROOM_GENERATION_WORKER_URL;
 const secret = process.env.CRON_SECRET;
 const intervalMs = Number.parseInt(process.env.CLASSROOM_GENERATION_INTERVAL_MS ?? '3000', 10);
+// Keep this just below the route's 15-minute execution allowance. PPTX jobs
+// synthesize every narration segment before they commit, so a five-minute
+// transport timeout turns a healthy long-running course into a false failure.
+const requestTimeoutMs = 890_000;
 
 if (!endpoint) throw new Error('CLASSROOM_GENERATION_WORKER_URL is required');
 if (!secret) throw new Error('CRON_SECRET is required');
@@ -12,7 +16,7 @@ async function tick() {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { authorization: `Bearer ${secret}` },
-    signal: AbortSignal.timeout(290_000),
+    signal: AbortSignal.timeout(requestTimeoutMs),
   });
   if (!response.ok) throw new Error(`classroom worker returned HTTP ${response.status}`);
 }

@@ -3,7 +3,11 @@ import { getDatabasePool } from '@/lib/server/db/pool';
 import { runDurableClassroomOnce } from '@/lib/server/durable-classroom-worker';
 
 export const runtime = 'nodejs';
-export const maxDuration = 300;
+// PPTX enrichment includes per-page scripts, interactions, and durable TTS.
+// A large deck can legitimately exceed five minutes, while each completed
+// unit is checkpointed. Keep the request alive long enough for a complete
+// course instead of aborting it mid-audio and exhausting retry attempts.
+export const maxDuration = 900;
 
 export async function POST(request: NextRequest) {
   const secret = process.env.CRON_SECRET;

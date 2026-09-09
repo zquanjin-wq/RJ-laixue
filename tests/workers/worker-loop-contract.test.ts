@@ -17,4 +17,10 @@ describe('durable worker loop contracts', () => {
     expect(source).toContain('for (;;)');
     expect(source).not.toContain('setInterval(');
   });
+
+  it('allows a complete PPTX narration run to finish before timing out', () => {
+    const source = worker('run-classroom-generation-worker.mjs');
+    expect(source).toContain('const requestTimeoutMs = 890_000');
+    expect(source).toContain('AbortSignal.timeout(requestTimeoutMs)');
+  });
 });
