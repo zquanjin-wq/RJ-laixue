@@ -20,6 +20,7 @@ describe('course revoice database invariants', () => {
 
   it('pins revoice commits to a numeric course revision rather than timestamp precision', () => {
     expect(sourceRevisionSql).toMatch(/add column if not exists source_revision integer/i);
+    expect(sourceRevisionSql).toMatch(/status in \('queued', 'running'\)/i);
     expect(sourceRevisionSql).toMatch(/alter column source_revision set not null/i);
     expect(route).toContain('sourceRevision: course.contentRevision');
   });
