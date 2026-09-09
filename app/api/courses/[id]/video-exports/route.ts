@@ -34,8 +34,15 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ id
     );
   }
   const service = getVideoExportService();
-  const exports = await service.listForCourse(courseId.data);
-  return NextResponse.json({ success: true, capability: await service.getCapability(), exports });
+  const exports = (await service.listForCourse(courseId.data)).filter(
+    (item) => item.sourceRevision === course.contentRevision,
+  );
+  return NextResponse.json({
+    success: true,
+    capability: await service.getCapability(),
+    currentRevision: course.contentRevision,
+    exports,
+  });
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -60,7 +67,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if ('response' in parsed) return parsed.response;
   const service = getVideoExportService();
   try {
-    const exportJob = await service.request(parsed.input);
+    // The persisted course is the source of truth. Never let a stale or forged
+    // client revision attach a video to the current course version.
+    const exportJob = await service.request({
+      ...parsed.input,
+      sourceRevision: course.contentRevision,
+    });
     return NextResponse.json({ success: true, export: exportJob }, { status: 202 });
   } catch (error) {
     if (error instanceof VideoRendererNotConfiguredError) {
@@ -75,18 +87,47 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if ('response' in access) return access.response;
   const { id } = await context.params;
   const courseId = validateVideoExportIdentifier(id);
-  if (!courseId.success) return NextResponse.json({ success: false, errorCode: 'INVALID_REQUEST', error: '无效的课程标识。' }, { status: 400 });
+  if (!courseId.success)
+    return NextResponse.json(
+      { success: false, errorCode: 'INVALID_REQUEST', error: '无效的课程标识。' },
+      { status: 400 },
+    );
   const course = await new CourseRepository(getDatabasePool()).getCourse(courseId.data);
   if (!course || (course.ownerUserId !== access.actor.userId && access.actor.role !== 'admin')) {
-    return NextResponse.json({ success: false, errorCode: 'NOT_FOUND', error: '课程不存在。' }, { status: 404 });
+    return NextResponse.json(
+      { success: false, errorCode: 'NOT_FOUND', error: '课程不存在。' },
+      { status: 404 },
+    );
   }
-  const body = await request.json().catch(() => null) as { jobId?: string } | null;
+  const body = (await request.json().catch(() => null)) as { jobId?: string } | null;
   const jobId = body?.jobId ? validateVideoExportIdentifier(body.jobId) : null;
-  if (!jobId?.success) return NextResponse.json({ success: false, errorCode: 'INVALID_REQUEST', error: '无效的视频任务标识。' }, { status: 400 });
+  if (!jobId?.success)
+    return NextResponse.json(
+      { success: false, errorCode: 'INVALID_REQUEST', error: '无效的视频任务标识。' },
+      { status: 400 },
+    );
   const service = getVideoExportService();
   const current = await service.getById(jobId.data);
-  if (!current || current.courseId !== courseId.data) return NextResponse.json({ success: false, errorCode: 'NOT_FOUND', error: '视频任务不存在。' }, { status: 404 });
+  if (!current || current.courseId !== courseId.data)
+    return NextResponse.json(
+      { success: false, errorCode: 'NOT_FOUND', error: '视频任务不存在。' },
+      { status: 404 },
+    );
+  if (current.sourceRevision !== course.contentRevision) {
+    return NextResponse.json(
+      {
+        success: false,
+        errorCode: 'STALE_COURSE_REVISION',
+        error: '课程内容已更新，请重新生成视频。',
+      },
+      { status: 409 },
+    );
+  }
   const exportJob = await service.confirmInputUpload(jobId.data);
-  if (!exportJob) return NextResponse.json({ success: false, errorCode: 'CONFLICT', error: '视频任务无法激活。' }, { status: 409 });
+  if (!exportJob)
+    return NextResponse.json(
+      { success: false, errorCode: 'CONFLICT', error: '视频任务无法激活。' },
+      { status: 409 },
+    );
   return NextResponse.json({ success: true, export: exportJob }, { status: 202 });
 }

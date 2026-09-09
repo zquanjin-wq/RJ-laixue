@@ -103,6 +103,12 @@ export function HeaderControls({
     void refreshVideoExport();
   }, [refreshVideoExport]);
 
+  // Saving creates a new immutable course revision. Refresh immediately so a
+  // completed video from the previous revision can no longer be downloaded.
+  useEffect(() => {
+    if (cloudSaveStatus === 'saved') void refreshVideoExport();
+  }, [cloudSaveStatus, refreshVideoExport]);
+
   useEffect(() => {
     if (latestVideoExport?.status !== 'queued' && latestVideoExport?.status !== 'rendering') return;
     const timer = window.setInterval(() => void refreshVideoExport(), 5_000);

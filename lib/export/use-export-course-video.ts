@@ -68,7 +68,7 @@ export function useExportCourseVideo() {
       });
       const coursePayload = (await courseResponse.json().catch(() => null)) as {
         success?: boolean;
-        data?: { save_state?: string };
+        data?: { save_state?: string; content_revision?: number };
       } | null;
       if (
         !courseResponse.ok ||
@@ -87,7 +87,10 @@ export function useExportCourseVideo() {
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ format: 'mp4' }),
+          body: JSON.stringify({
+            format: 'mp4',
+            sourceRevision: coursePayload.data.content_revision,
+          }),
         },
       );
       const created = (await createdResponse.json()) as {

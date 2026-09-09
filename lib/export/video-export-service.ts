@@ -1,8 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { CosStorage } from '@/lib/server/cos-storage';
-import { CourseVideoExportRepository, type CourseVideoExport } from '@/lib/server/db/course-video-export-repository';
+import {
+  CourseVideoExportRepository,
+  type CourseVideoExport,
+} from '@/lib/server/db/course-video-export-repository';
 import { getDatabasePool } from '@/lib/server/db/pool';
-import type { VideoExportCapability, VideoExportRecord, VideoExportRequestInput } from './video-export-contract';
+import type {
+  VideoExportCapability,
+  VideoExportRecord,
+  VideoExportRequestInput,
+} from './video-export-contract';
 
 const unavailableCapability: VideoExportCapability = {
   available: false,
@@ -20,18 +27,33 @@ export interface VideoExportService {
 
 export class VideoRendererNotConfiguredError extends Error {
   readonly code = 'VIDEO_RENDERER_NOT_CONFIGURED';
-  constructor() { super(unavailableCapability.message); this.name = 'VideoRendererNotConfiguredError'; }
+  constructor() {
+    super(unavailableCapability.message);
+    this.name = 'VideoRendererNotConfiguredError';
+  }
 }
 
-function rendererUrl() { return process.env.RENDER_SERVICE_URL?.trim().replace(/\/$/, ''); }
+function rendererUrl() {
+  return process.env.RENDER_SERVICE_URL?.trim().replace(/\/$/, '');
+}
 
 async function capability(): Promise<VideoExportCapability> {
   const url = rendererUrl();
   if (!url) return unavailableCapability;
   try {
-    const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1500), cache: 'no-store' });
-    if (response.ok) return { available: true, code: 'VIDEO_RENDERER_NOT_CONFIGURED', message: '视频渲染服务可用。' };
-  } catch { /* The API must degrade to 503 when the isolated service is unavailable. */ }
+    const response = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(1500),
+      cache: 'no-store',
+    });
+    if (response.ok)
+      return {
+        available: true,
+        code: 'VIDEO_RENDERER_NOT_CONFIGURED',
+        message: '视频渲染服务可用。',
+      };
+  } catch {
+    /* The API must degrade to 503 when the isolated service is unavailable. */
+  }
   return unavailableCapability;
 }
 
@@ -47,41 +69,73 @@ function numberOrNull(value: unknown) {
 }
 
 function present(row: CourseVideoExport, downloadUrl: string | null = null): VideoExportRecord {
-  const request = row.request as { render?: RenderProgress } | null;
+  const request = row.request as { render?: RenderProgress; sourceRevision?: unknown } | null;
   const render = request?.render;
   return {
-    id: row.id, courseId: row.courseId, requestedBy: row.requestedBy, format: 'mp4',
-    status: row.status === 'running' ? 'rendering' : row.status === 'succeeded' ? 'completed' : row.status,
-    sourceRevision: null, downloadUrl, failureReason: row.error,
+    id: row.id,
+    courseId: row.courseId,
+    requestedBy: row.requestedBy,
+    format: 'mp4',
+    status:
+      row.status === 'running'
+        ? 'rendering'
+        : row.status === 'succeeded'
+          ? 'completed'
+          : row.status,
+    sourceRevision: Number.isInteger(request?.sourceRevision)
+      ? (request!.sourceRevision as number)
+      : null,
+    downloadUrl,
+    failureReason: row.error,
     progress: numberOrNull(render?.progress),
     currentStage: typeof render?.currentStage === 'string' ? render.currentStage : null,
     framesRendered: numberOrNull(render?.framesRendered),
     totalFrames: numberOrNull(render?.totalFrames),
-    createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
 class PostgresVideoExportService implements VideoExportService {
   private readonly repository = new CourseVideoExportRepository(getDatabasePool());
 
-  getCapability() { return capability(); }
+  getCapability() {
+    return capability();
+  }
 
   async listForCourse(courseId: string) {
     const storage = new CosStorage();
-    return Promise.all((await this.repository.listForCourse(courseId)).map(async (row) =>
-      present(row, row.output ? await storage.getDownloadUrl(row.output.objectKey) : null),
-    ));
+    return Promise.all(
+      (await this.repository.listForCourse(courseId)).map(async (row) =>
+        present(row, row.output ? await storage.getDownloadUrl(row.output.objectKey) : null),
+      ),
+    );
   }
 
   async request(input: VideoExportRequestInput) {
     if (!(await this.getCapability()).available) throw new VideoRendererNotConfiguredError();
-    const row = await this.repository.create({ courseId: input.courseId, requestedBy: input.requestedBy });
+    const row = await this.repository.create({
+      courseId: input.courseId,
+      requestedBy: input.requestedBy,
+    });
     const inputObjectKey = `courses/${input.courseId}/video-exports/${row.id}/source-${randomUUID()}.zip`;
     await getDatabasePool().query(
       `UPDATE app.course_video_exports SET request = $2::jsonb, updated_at = now() WHERE id = $1`,
-      [row.id, JSON.stringify({ uploadObjectKey: inputObjectKey, sourceRevision: input.sourceRevision ?? null })],
+      [
+        row.id,
+        JSON.stringify({
+          uploadObjectKey: inputObjectKey,
+          sourceRevision: input.sourceRevision ?? null,
+        }),
+      ],
     );
-    return { ...present({ ...row, request: { uploadObjectKey: inputObjectKey } }), inputUploadUrl: await new CosStorage().getUploadUrl(inputObjectKey) };
+    return {
+      ...present({
+        ...row,
+        request: { uploadObjectKey: inputObjectKey, sourceRevision: input.sourceRevision ?? null },
+      }),
+      inputUploadUrl: await new CosStorage().getUploadUrl(inputObjectKey),
+    };
   }
 
   async confirmInputUpload(id: string) {
@@ -91,9 +145,16 @@ class PostgresVideoExportService implements VideoExportService {
 
   async getById(id: string) {
     const row = await this.repository.get(id);
-    return row ? present(row, row.output ? await new CosStorage().getDownloadUrl(row.output.objectKey) : null) : null;
+    return row
+      ? present(
+          row,
+          row.output ? await new CosStorage().getDownloadUrl(row.output.objectKey) : null,
+        )
+      : null;
   }
 }
 
 const videoExportService: VideoExportService = new PostgresVideoExportService();
-export function getVideoExportService() { return videoExportService; }
+export function getVideoExportService() {
+  return videoExportService;
+}
