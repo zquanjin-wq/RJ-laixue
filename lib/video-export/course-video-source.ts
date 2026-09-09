@@ -9,6 +9,7 @@ import type {
 export interface VideoNarrationCue {
   text: string;
   audioRef?: string;
+  audioUrl?: string;
 }
 
 /** A page that can be handed to the later render-ZIP compiler. */
@@ -58,13 +59,20 @@ type ManifestSpeechAction = ManifestAction & {
   type: 'speech';
   text: string;
   audioRef?: string;
+  audioUrl?: string;
 };
 
 function speechCues(actions: ManifestAction[] | undefined): VideoNarrationCue[] {
   return (actions ?? []).flatMap((action) => {
     if (action.type !== 'speech') return [];
     const speech = action as ManifestSpeechAction;
-    return [{ text: speech.text, ...(speech.audioRef ? { audioRef: speech.audioRef } : {}) }];
+    return [
+      {
+        text: speech.text,
+        ...(speech.audioRef ? { audioRef: speech.audioRef } : {}),
+        ...(speech.audioUrl ? { audioUrl: speech.audioUrl } : {}),
+      },
+    ];
   });
 }
 

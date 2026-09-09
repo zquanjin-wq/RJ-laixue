@@ -52,9 +52,14 @@ async function buildTimedPages(
     const audio: TimedPage['audio'] = [];
     let narrationMs = 0;
     for (const cue of page.narration) {
-      if (!cue.audioRef) continue;
-      const resolved = await resolveAudio(cue.audioRef);
-      if (!resolved) continue;
+      const audioSource = cue.audioRef ?? cue.audioUrl;
+      if (!audioSource) {
+        throw new Error(`“${page.title}”存在没有配音文件的讲解，无法生成有声视频。`);
+      }
+      const resolved = await resolveAudio(audioSource);
+      if (!resolved) {
+        throw new Error(`“${page.title}”的讲解音频无法读取，视频生成已停止。`);
+      }
       const path = `assets/audio/${audioIndex++}.media`;
       zip.file(path, await blobBytes(resolved.blob));
       audio.push({ path, startMs: cursorMs + narrationMs, durationMs: resolved.durationMs });

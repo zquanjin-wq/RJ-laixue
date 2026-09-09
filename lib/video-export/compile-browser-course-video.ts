@@ -49,6 +49,20 @@ async function proxyImageForSnapshot(src: string): Promise<ResolvedSnapshotImage
   return { src: objectUrl, cleanup: () => URL.revokeObjectURL(objectUrl) };
 }
 
+async function fetchPublishedAudio(src: string): Promise<Blob | undefined> {
+  const sameOrigin = src.startsWith('/');
+  const response = sameOrigin
+    ? await fetch(src, { credentials: 'same-origin', cache: 'no-store' })
+    : await fetch('/api/proxy-media', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: src }),
+      });
+  if (!response.ok) return undefined;
+  const blob = await response.blob();
+  return blob.size > 0 ? blob : undefined;
+}
+
 /**
  * Browser bridge for the eventual export button: capture the existing PPTist
  * canvas with the app renderer, then compile those snapshots and locally held
@@ -83,19 +97,25 @@ export async function compileBrowserCourseVideo(
   const measuredDurations = new Map<string, Promise<number>>();
   return compileCourseVideo(
     source,
-    async (audioRef) => {
-      const audio = audioByRef.get(audioRef);
-      if (!audio) return undefined;
+    async (audioSource) => {
+      const localAudio = audioByRef.get(audioSource);
+      const audio =
+        localAudio ??
+        (audioSource.startsWith('/') || /^https?:\/\//i.test(audioSource)
+          ? { blob: await fetchPublishedAudio(audioSource) }
+          : undefined);
+      const audioBlob = audio?.blob;
+      if (!audioBlob) return undefined;
       const duration =
-        typeof audio.duration === 'number' && audio.duration > 0
-          ? audio.duration
-          : await (measuredDurations.get(audioRef) ??
+        typeof localAudio?.duration === 'number' && localAudio.duration > 0
+          ? localAudio.duration
+          : await (measuredDurations.get(audioSource) ??
               (() => {
-                const measured = measureAudioDuration(audio.blob);
-                measuredDurations.set(audioRef, measured);
+                const measured = measureAudioDuration(audioBlob);
+                measuredDurations.set(audioSource, measured);
                 return measured;
               })());
-      return { blob: audio.blob, durationMs: Math.round(duration * 1000) };
+      return { blob: audioBlob, durationMs: Math.round(duration * 1000) };
     },
     gsapSource,
   );

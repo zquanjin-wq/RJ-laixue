@@ -91,4 +91,10 @@ describe('compileCourseVideo', () => {
       'id="scene-1-audio-2" class="clip" data-start="1.200" data-duration="2.300" data-track-index="2"',
     );
   });
+
+  it('refuses to publish a silent video when narration audio is unavailable', async () => {
+    await expect(
+      compileCourseVideo(source, async () => undefined, new Uint8Array()),
+    ).rejects.toThrow('讲解音频无法读取');
+  });
 });

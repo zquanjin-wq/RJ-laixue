@@ -71,6 +71,27 @@ describe('prepareCourseVideoSource', () => {
     expect(source.pages[0].title).toBe('欢迎');
   });
 
+  it('preserves published cloud audio when no local IndexedDB audio exists', async () => {
+    const cloudManifest = manifest();
+    cloudManifest.scenes[1].actions = [
+      {
+        id: 'speech-cloud',
+        type: 'speech',
+        text: '云端讲解。',
+        audioUrl: '/api/course-assets/object?key=course-audio.mp3',
+      } as never,
+    ];
+
+    const source = await prepareCourseVideoSource(cloudManifest, async () => new Blob());
+
+    expect(source.pages[0].narration).toEqual([
+      {
+        text: '云端讲解。',
+        audioUrl: '/api/course-assets/object?key=course-audio.mp3',
+      },
+    ]);
+  });
+
   it('plans included and skipped pages before any snapshot or audio work starts', () => {
     const plan = planCourseVideoExport(manifest());
 

@@ -15,16 +15,26 @@ type VideoExport = {
   progress?: number | null;
 };
 
+async function readJsonResponse<T>(response: Response, fallback: string): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) throw new Error(`${fallback}（服务器返回了空响应，HTTP ${response.status}）。`);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${fallback}（服务器响应格式异常，HTTP ${response.status}）。`);
+  }
+}
+
 async function watchVideoExport(courseId: string, jobId: string, toastId: string | number) {
   for (;;) {
     await new Promise((resolve) => window.setTimeout(resolve, 5_000));
     const response = await fetch(`/api/video-exports/${encodeURIComponent(jobId)}`, {
       cache: 'no-store',
     });
-    const payload = (await response.json().catch(() => null)) as {
+    const payload = await readJsonResponse<{
       success?: boolean;
       export?: VideoExport;
-    } | null;
+    }>(response, '读取视频任务失败').catch(() => null);
     const job = payload?.export;
     if (!response.ok || !payload?.success || !job) return;
     if (job.status === 'completed') {
@@ -93,11 +103,11 @@ export function useExportCourseVideo() {
           }),
         },
       );
-      const created = (await createdResponse.json()) as {
+      const created = await readJsonResponse<{
         success?: boolean;
         error?: string;
         export?: { id?: string; inputUploadUrl?: string };
-      };
+      }>(createdResponse, '创建视频任务失败');
       if (
         !createdResponse.ok ||
         !created.success ||
@@ -119,7 +129,10 @@ export function useExportCourseVideo() {
           body: JSON.stringify({ jobId: created.export.id }),
         },
       );
-      const activated = (await activatedResponse.json()) as { success?: boolean; error?: string };
+      const activated = await readJsonResponse<{ success?: boolean; error?: string }>(
+        activatedResponse,
+        '启动视频任务失败',
+      );
       if (!activatedResponse.ok || !activated.success)
         throw new Error(activated.error ?? '无法启动视频任务。');
       toast.loading('课程视频已提交，正在等待渲染。', { id: toastId });
