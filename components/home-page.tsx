@@ -66,6 +66,12 @@ import { SpeechButton } from '@/components/audio/speech-button';
 import { useImportClassroom } from '@/lib/import/use-import-classroom';
 import { shouldShowVocationalTestUi } from '@/lib/config/feature-flags';
 import { useImportPptx } from '@/lib/import/use-import-pptx';
+import {
+  clearPendingGenerationJob,
+  readPendingGenerationJob,
+  savePendingGenerationJob,
+  type PendingGenerationJob,
+} from '@/lib/generation/pending-job';
 
 const log = createLogger('Home');
 
@@ -91,6 +97,41 @@ interface PptxGenerationEventView {
   phase: string;
   summary: string;
 }
+
+async function waitForDurableGeneration(
+  pending: PendingGenerationJob,
+  timeoutMs: number,
+  onPptxProgress?: (summary: string, events: PptxGenerationEventView[]) => void,
+): Promise<'succeeded' | 'failed' | 'cancelled' | 'conflict'> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const poll = await fetch(pending.pollUrl, { cache: 'no-store' });
+    const job = await poll.json().catch(() => null);
+    if (!poll.ok || !job) throw new Error('课程生成状态读取失败');
+    if (pending.kind === 'pptx' && onPptxProgress) {
+      const events = Array.isArray(job.events)
+        ? job.events
+            .filter(
+              (event: unknown): event is PptxGenerationEventView =>
+                !!event &&
+                typeof event === 'object' &&
+                typeof (event as PptxGenerationEventView).id === 'number' &&
+                typeof (event as PptxGenerationEventView).summary === 'string',
+            )
+            .slice(-4)
+        : [];
+      const latest = events.at(-1);
+      if (latest) onPptxProgress(latest.summary, events);
+    }
+    if (job.status === 'succeeded') return 'succeeded';
+    if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'conflict') {
+      return job.status;
+    }
+  }
+  throw new Error('课程生成仍在后台继续，可稍后从课程管理中打开。');
+}
+
 const initialFormState: FormState = {
   pdfFiles: [],
   requirement: '',
@@ -111,6 +152,7 @@ export function HomePage() {
     summary: string;
     events: PptxGenerationEventView[];
   } | null>(null);
+  const [resumingGeneration, setResumingGeneration] = useState(false);
   const [dragMode, setDragMode] = useState<'pptx' | 'course' | null>(null);
   const isPreparingGenerationRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -192,6 +234,40 @@ export function HomePage() {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const thumbnailsRef = useRef<Record<string, Slide>>({});
+  const pendingGenerationResumeRef = useRef(false);
+
+  // Durable generation continues on the worker after a refresh. Reconnect to
+  // its status stream instead of asking the teacher to upload or submit again.
+  useEffect(() => {
+    if (pendingGenerationResumeRef.current) return;
+    const pending = readPendingGenerationJob();
+    if (!pending) return;
+    pendingGenerationResumeRef.current = true;
+    setResumingGeneration(true);
+    if (pending.kind === 'pptx') {
+      setCreateMode('pptx');
+      setPptxProgress({ summary: '正在恢复 AI 课堂生成进度…', events: [] });
+    }
+    void waitForDurableGeneration(pending, pending.kind === 'pptx' ? 45 * 60 * 1000 : 30 * 60 * 1000,
+      pending.kind === 'pptx'
+        ? (summary, events) => setPptxProgress({ summary, events })
+        : undefined,
+    )
+      .then((status) => {
+        clearPendingGenerationJob();
+        if (status === 'succeeded') {
+          router.push(`/classroom/${encodeURIComponent(pending.courseId)}?editor=1`);
+          return;
+        }
+        setError('课程生成未完成，可从课程管理中查看后重试。');
+      })
+      .catch((error: unknown) => {
+        // Keep the handle: a transient network failure must not turn into a
+        // duplicate submission on the next reload.
+        setError(error instanceof Error ? error.message : '课程生成状态恢复失败');
+      })
+      .finally(() => setResumingGeneration(false));
+  }, [router]);
 
   const replaceThumbnails = (slides: Record<string, Slide>) => {
     const previous = thumbnailsRef.current;
@@ -295,35 +371,22 @@ export function HomePage() {
         if (!submission.ok || !created?.jobId || !created?.pollUrl) {
           throw new Error(created?.error || 'AI 课堂任务创建失败');
         }
-        const deadline = Date.now() + 45 * 60 * 1000;
-        while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, created.pollIntervalMs ?? 5000));
-          const poll = await fetch(created.pollUrl, { cache: 'no-store' });
-          const job = await poll.json().catch(() => null);
-          if (!poll.ok || !job) throw new Error('AI 课堂生成状态读取失败');
-          const events = Array.isArray(job.events)
-            ? job.events
-                .filter(
-                  (event: unknown): event is PptxGenerationEventView =>
-                    !!event &&
-                    typeof event === 'object' &&
-                    typeof (event as PptxGenerationEventView).id === 'number' &&
-                    typeof (event as PptxGenerationEventView).summary === 'string',
-                )
-                .slice(-4)
-            : [];
-          const latest = events.at(-1);
-          if (latest) setPptxProgress({ summary: latest.summary, events });
-          if (job.status === 'succeeded') {
-            setPptxProgress({ summary: 'AI 课堂已生成，正在进入编辑器…', events });
-            router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
-            return;
-          }
-          if (['failed', 'cancelled', 'conflict'].includes(job.status)) {
-            throw new Error('AI 课堂生成未完成，请稍后重试。');
-          }
-        }
-        throw new Error('AI 课堂生成等待超时，请稍后在课程列表中查看结果。');
+        const pending: PendingGenerationJob = {
+          jobId: created.jobId,
+          courseId,
+          pollUrl: created.pollUrl,
+          kind: 'pptx',
+          createdAt: Date.now(),
+        };
+        savePendingGenerationJob(pending);
+        const status = await waitForDurableGeneration(pending, 45 * 60 * 1000, (summary, events) =>
+          setPptxProgress({ summary, events }),
+        );
+        clearPendingGenerationJob();
+        if (status !== 'succeeded') throw new Error('AI 课堂生成未完成，可从课程管理中查看后重试。');
+        setPptxProgress({ summary: 'AI 课堂已生成，正在进入编辑器…', events: [] });
+        router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
+        return;
       }
     },
   });
@@ -427,21 +490,19 @@ export function HomePage() {
         if (!submission.ok || !created?.jobId || !created?.courseId || !created?.pollUrl) {
           throw new Error(created?.error || '课程生成任务创建失败');
         }
-        const deadline = Date.now() + 30 * 60 * 1000;
-        while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, created.pollIntervalMs ?? 5000));
-          const poll = await fetch(created.pollUrl, { cache: 'no-store' });
-          const job = await poll.json().catch(() => null);
-          if (!poll.ok || !job) throw new Error('课程生成状态读取失败');
-          if (job.status === 'succeeded') {
-            router.push(`/classroom/${encodeURIComponent(created.courseId)}?editor=1`);
-            return;
-          }
-          if (['failed', 'cancelled', 'conflict'].includes(job.status)) {
-            throw new Error('课程生成未完成，请在稍后重试。');
-          }
-        }
-        throw new Error('课程生成等待超时，请稍后在课程列表中查看结果。');
+        const pending: PendingGenerationJob = {
+          jobId: created.jobId,
+          courseId: created.courseId,
+          pollUrl: created.pollUrl,
+          kind: 'text',
+          createdAt: Date.now(),
+        };
+        savePendingGenerationJob(pending);
+        const status = await waitForDurableGeneration(pending, 30 * 60 * 1000);
+        clearPendingGenerationJob();
+        if (status !== 'succeeded') throw new Error('课程生成未完成，可从课程管理中查看后重试。');
+        router.push(`/classroom/${encodeURIComponent(created.courseId)}?editor=1`);
+        return;
       }
 
       const userProfile = useUserProfileStore.getState();
@@ -936,7 +997,8 @@ export function HomePage() {
                   transition={{ duration: 0.2 }}
                   className="min-h-[344px] p-5 md:p-7"
                 >
-                  {(createMode === 'pptx' && pptxImporting) ||
+                  {(createMode === 'ai' && isPreparingGeneration) ||
+                  (createMode === 'pptx' && (pptxImporting || resumingGeneration)) ||
                   (createMode === 'course' && importing) ? (
                     <div className="flex min-h-[290px] flex-col justify-center rounded-xl border border-white/90 bg-white/55 p-6 shadow-inner dark:border-white/10 dark:bg-slate-950/30">
                       <div className="flex items-center gap-3">
@@ -959,7 +1021,9 @@ export function HomePage() {
                           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
                             {createMode === 'pptx'
                               ? pptxProgress?.summary || '正在解析页面与讲师备注…'
-                              : '正在解析课程内容与互动配置…'}
+                              : createMode === 'ai'
+                                ? '正在创建课程并生成学习路径…'
+                                : '正在解析课程内容与互动配置…'}
                           </p>
                         </div>
                         <LoaderCircle className="ml-auto size-5 animate-spin text-emerald-700" />
@@ -967,7 +1031,9 @@ export function HomePage() {
                       <div className="mt-6 h-2 overflow-hidden rounded-full bg-slate-200/80">
                         <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" />
                       </div>
-                      <p className="mt-2 text-right font-mono text-xs text-slate-500">处理中</p>
+                      <p className="mt-2 text-right font-mono text-xs text-slate-500">
+                        {createMode === 'ai' ? '课程生成中' : '处理中'}
+                      </p>
                       {createMode === 'pptx' && pptxProgress?.events.length ? (
                         <div className="mt-4 space-y-1.5 rounded-lg border border-slate-200 bg-white/55 p-3 text-left text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950/30 dark:text-slate-300">
                           {pptxProgress.events.map((event) => (
