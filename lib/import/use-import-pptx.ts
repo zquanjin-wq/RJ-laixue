@@ -37,6 +37,10 @@ export interface UseImportPptxOptions {
  */
 export function useImportPptx(options: UseImportPptxOptions = {}) {
   const [importing, setImporting] = useState(false);
+  // React state is intentionally asynchronous. Keep a synchronous latch as
+  // well so a double drop / duplicate change event cannot create two source
+  // uploads and two courses before the disabled button has rendered.
+  const importingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useI18n();
   const { upload, onImported } = options;
@@ -52,11 +56,14 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
 
       e.target.value = '';
 
+      if (importingRef.current) return;
+
       if (file.size > 100 * 1024 * 1024) {
         toast.error('PPTX 文件不能超过 100MB');
         return;
       }
 
+      importingRef.current = true;
       setImporting(true);
       const toastId = toast.loading(t('import.parsingPptx'));
 
@@ -115,6 +122,7 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
           id: toastId,
         });
       } finally {
+        importingRef.current = false;
         setImporting(false);
       }
     },
