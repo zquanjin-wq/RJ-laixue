@@ -294,7 +294,12 @@ const useStageStoreBase = create<StageState>()((set, get) => ({
       const content = mergeSceneContentForUpdate(scene.content, updates.content) ?? scene.content;
       // Rebind `type` to the merged content's kind (a type-only patch can no
       // longer desync the discriminant from the content).
-      return makeScene({ ...scene, ...updates }, content);
+      // Pro-mode cloud autosave deliberately keys off each scene's updatedAt.
+      // Keep it monotonic even for consecutive edits in the same millisecond:
+      // otherwise narration / canvas edits can remain only in the local draft
+      // and the saved course, video invalidation, and learner view drift apart.
+      const updatedAt = Math.max(Date.now(), (scene.updatedAt ?? 0) + 1);
+      return makeScene({ ...scene, ...updates, updatedAt }, content);
     });
     set({ scenes });
     debouncedSave();
