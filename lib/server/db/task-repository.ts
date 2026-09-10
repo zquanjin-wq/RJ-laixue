@@ -31,7 +31,16 @@ export class TaskRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await this.requireRows(client, 'app.courses', 'id', courseIds, 'deleted_at IS NULL');
+      // A task is the publication boundary. Never package a draft whose
+      // contents (or narration) have not been saved as a teacher-approved
+      // revision yet.
+      await this.requireRows(
+        client,
+        'app.courses',
+        'id',
+        courseIds,
+        "deleted_at IS NULL AND save_state = 'ready'",
+      );
       await this.requireRows(client, 'public."user"', 'id', userIds, 'banned IS NOT TRUE');
 
       const task = await client.query<{ id: string }>(

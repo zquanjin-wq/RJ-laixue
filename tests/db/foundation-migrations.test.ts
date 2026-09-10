@@ -393,6 +393,17 @@ describe('P1 PostgreSQL foundation', () => {
     });
     expect(staleUpdate).toBeNull();
 
+    const repeatedSave = await courses.updateCourse({
+      id: 'course-1',
+      ownerUserId: 'user-1',
+      expectedRevision: 2,
+      title: '新员工入职指南',
+      topic: '入职培训',
+      content: { scenes: [{ id: 'scene-1', title: '欢迎加入' }] },
+      saveState: 'ready',
+    });
+    expect(repeatedSave?.contentRevision).toBe(2);
+
     const asset = await courses.createAsset({
       ownerUserId: 'user-1',
       courseId: 'course-1',
@@ -623,6 +634,23 @@ describe('P1 PostgreSQL foundation', () => {
   it('publishes a task and records learning activity once', async () => {
     const courses = new CourseRepository(pool);
     await courses.createCourse({
+      id: 'course-draft-only',
+      ownerUserId: 'user-1',
+      title: '尚未保存的课程',
+      content: { scenes: [{ id: 'draft-scene' }] },
+      saveState: 'draft',
+    });
+    const tasks = new TaskRepository(pool);
+    await expect(
+      tasks.createTask({
+        title: '不应发布草稿',
+        createdBy: 'user-1',
+        courses: [{ courseId: 'course-draft-only' }],
+        userIds: ['user-1'],
+      }),
+    ).rejects.toThrow('Task references unavailable records');
+
+    await courses.createCourse({
       id: 'course-2',
       ownerUserId: 'user-1',
       title: '服务流程',
@@ -630,7 +658,6 @@ describe('P1 PostgreSQL foundation', () => {
       saveState: 'ready',
     });
 
-    const tasks = new TaskRepository(pool);
     const taskId = await tasks.createTask({
       title: '服务流程学习任务',
       createdBy: 'user-1',
@@ -640,6 +667,26 @@ describe('P1 PostgreSQL foundation', () => {
     const published = await tasks.publishTask(taskId, 'user-1');
     const repeatedPublish = await tasks.publishTask(taskId, 'user-1');
     expect(repeatedPublish.shareToken).toBe(published.shareToken);
+
+    await courses.updateCourse({
+      id: 'course-2',
+      ownerUserId: 'user-1',
+      expectedRevision: 1,
+      title: '服务流程（修订）',
+      content: { scenes: [{ id: 'scene-b' }] },
+      saveState: 'ready',
+    });
+    const publishedSnapshot = await pool.query<{ content: unknown; courseRevision: number }>(
+      `SELECT snapshot.content, snapshot.course_revision::integer AS "courseRevision"
+       FROM app.task_courses task_course
+       JOIN app.course_snapshots snapshot ON snapshot.id = task_course.snapshot_id
+       WHERE task_course.task_id = $1 AND task_course.course_id = 'course-2'`,
+      [taskId],
+    );
+    expect(publishedSnapshot.rows[0]).toEqual({
+      courseRevision: 1,
+      content: { scenes: [{ id: 'scene-a' }] },
+    });
 
     const progressRows = await pool.query(
       `SELECT 1 FROM app.task_course_progress WHERE task_id = $1 AND user_id = 'user-1'`,

@@ -153,6 +153,12 @@ export class CourseRepository {
          AND owner_user_id = $2
          AND content_revision = $3
          AND deleted_at IS NULL
+         AND (
+           title IS DISTINCT FROM $4
+           OR topic IS DISTINCT FROM $5
+           OR content IS DISTINCT FROM $6::jsonb
+           OR save_state IS DISTINCT FROM $7
+         )
        RETURNING ${courseColumns}`,
       [
         input.id,
@@ -164,7 +170,34 @@ export class CourseRepository {
         input.saveState,
       ],
     );
-    return result.rows[0] ?? null;
+    if (result.rows[0]) return result.rows[0];
+
+    // Autosave is allowed to send the same snapshot more than once. Treat an
+    // identical save at the current revision as a successful no-op: creating a
+    // new revision would unnecessarily invalidate the current video export and
+    // make an in-flight revoice job conflict with unchanged course content.
+    const unchanged = await (transaction ?? this.pool).query<CourseRecord>(
+      `SELECT ${courseColumns}
+       FROM app.courses
+       WHERE id = $1
+         AND owner_user_id = $2
+         AND content_revision = $3
+         AND deleted_at IS NULL
+         AND title IS NOT DISTINCT FROM $4
+         AND topic IS NOT DISTINCT FROM $5
+         AND content IS NOT DISTINCT FROM $6::jsonb
+         AND save_state IS NOT DISTINCT FROM $7`,
+      [
+        input.id,
+        input.ownerUserId,
+        input.expectedRevision,
+        input.title,
+        input.topic ?? null,
+        JSON.stringify(input.content),
+        input.saveState,
+      ],
+    );
+    return unchanged.rows[0] ?? null;
   }
 
   async softDeleteCourse(courseId: string, ownerUserId: string): Promise<boolean> {
