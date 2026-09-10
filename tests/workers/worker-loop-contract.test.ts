@@ -2,8 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const worker = (name: string) =>
-  readFileSync(resolve(process.cwd(), 'scripts', name), 'utf8');
+const worker = (name: string) => readFileSync(resolve(process.cwd(), 'scripts', name), 'utf8');
 
 describe('durable worker loop contracts', () => {
   it('runs video exports as an independently deployable leased agent', () => {
@@ -21,8 +20,9 @@ describe('durable worker loop contracts', () => {
   });
 
   it('allows a complete PPTX narration run to finish before timing out', () => {
-    const source = worker('run-classroom-generation-worker.mjs');
-    expect(source).toContain('const requestTimeoutMs = 890_000');
-    expect(source).toContain('AbortSignal.timeout(requestTimeoutMs)');
+    const source = worker('run-classroom-generation-agent.ts');
+    expect(source).toContain('CLASSROOM_GENERATION_WORKER_ID');
+    expect(source).toContain('runDurableClassroomOnce(getDatabasePool(), workerId, baseUrl)');
+    expect(source).not.toContain('AbortSignal.timeout');
   });
 });

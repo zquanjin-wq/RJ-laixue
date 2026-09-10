@@ -49,15 +49,19 @@ services:
     restart: unless-stopped
 
   classroom-generation-worker:
-    build: .
+    build:
+      context: .
+      target: tools
     env_file:
       - .env.production
     environment:
-      CLASSROOM_GENERATION_WORKER_URL: http://app:3000/api/cron/classroom-generation
+      DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
       CLASSROOM_GENERATION_INTERVAL_MS: '3000'
+      CLASSROOM_GENERATION_WORKER_ID: primary-classroom-agent
     depends_on:
-      - app
-    command: ['node', 'scripts/run-classroom-generation-worker.mjs']
+      db:
+        condition: service_healthy
+    command: ['pnpm', 'exec', 'tsx', 'scripts/run-classroom-generation-agent.ts']
     restart: unless-stopped
 
   render-service:
