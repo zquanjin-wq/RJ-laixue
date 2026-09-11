@@ -70,7 +70,10 @@ if [ "`$memory_before" -lt $((512 * 1024)) ]; then
   exit 1
 fi
 
-rsync -a --delete $dryRunFlag \
+# Application files may be owned by a previous root-run container build. Run
+# the sync with sudo and avoid copying archive ownership so a later release
+# cannot fail halfway through on an otherwise healthy host.
+sudo rsync -rltD --delete $dryRunFlag \
   --exclude='.env.production' \
   --exclude='.deployed-revision' \
   --exclude='data/' \
