@@ -64,6 +64,24 @@ services:
     command: ['pnpm', 'exec', 'tsx', 'scripts/run-classroom-generation-agent.ts']
     restart: unless-stopped
 
+  course-asset-cleanup-worker:
+    build:
+      context: .
+      target: tools
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgres://laixue:${POSTGRES_PASSWORD}@db:5432/laixue
+      COURSE_ASSET_CLEANUP_INTERVAL_MS: '21600000'
+      COURSE_ASSET_CLEANUP_MAX_AGE_MS: '86400000'
+      COURSE_ASSET_CLEANUP_LIMIT: '100'
+      COURSE_ASSET_CLEANUP_WORKER_ID: primary-course-asset-cleanup-agent
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['pnpm', 'exec', 'tsx', 'scripts/run-course-asset-cleanup-agent.ts']
+    restart: unless-stopped
+
   render-service:
     build: ./render-service
     profiles: ['video-export']

@@ -279,6 +279,64 @@ export class CourseRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * Finds upload records that were never bound to a course, then atomically
+   * leases them for cleanup. Bound assets are deliberately excluded: they may
+   * still be part of a durable generation task and must never be reclaimed by
+   * this maintenance path.
+   */
+  async claimStaleUnboundPendingAssets(cutoff: Date, limit: number): Promise<CourseAssetRecord[]> {
+    const result = await this.pool.query<CourseAssetRecord>(
+      `WITH candidates AS (
+         SELECT id
+         FROM app.course_assets
+         WHERE state = 'pending'
+           AND course_id IS NULL
+           AND deleted_at IS NULL
+           AND created_at < $1
+         ORDER BY created_at ASC, id ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT $2
+       )
+       UPDATE app.course_assets asset
+       SET state = 'deleting'
+       FROM candidates
+       WHERE asset.id = candidates.id
+       RETURNING asset.id,
+         asset.course_id AS "courseId",
+         asset.owner_user_id AS "ownerUserId",
+         asset.kind,
+         asset.object_key AS "objectKey",
+         asset.content_type AS "contentType",
+         asset.size_bytes::double precision AS "sizeBytes",
+         asset.state,
+         asset.created_at AS "createdAt",
+         asset.bound_at AS "boundAt"`,
+      [cutoff, limit],
+    );
+    return result.rows;
+  }
+
+  async completeAssetDeletion(assetId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE app.course_assets
+       SET state = 'deleted', deleted_at = now()
+       WHERE id = $1 AND state = 'deleting' AND deleted_at IS NULL`,
+      [assetId],
+    );
+    return result.rowCount === 1;
+  }
+
+  async failAssetDeletion(assetId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE app.course_assets
+       SET state = 'failed'
+       WHERE id = $1 AND state = 'deleting' AND deleted_at IS NULL`,
+      [assetId],
+    );
+    return result.rowCount === 1;
+  }
+
   async createSnapshot(courseId: string, createdBy: string): Promise<CourseSnapshotRecord | null> {
     const client = await this.pool.connect();
     try {
