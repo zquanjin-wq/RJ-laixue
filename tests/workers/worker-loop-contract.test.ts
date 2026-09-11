@@ -23,11 +23,11 @@ describe('durable worker loop contracts', () => {
     expect(service).toContain('- render');
   });
 
-  it('reserves host capacity in the 8-core / 16-GB renderer profile', () => {
+  it('reserves host capacity in the 4-core / 16-GB renderer profile', () => {
     const service = compose()
       .split(/^  render-service:/m)[1]
       ?.split(/^  video-export-worker:/m)[0];
-    expect(service).toContain('cpus: 6.0');
+    expect(service).toContain('cpus: 3.0');
     expect(service).toContain('mem_limit: 10g');
     expect(service).toContain("RENDER_MAX_CONCURRENCY: '1'");
   });

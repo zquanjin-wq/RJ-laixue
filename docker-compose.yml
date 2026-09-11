@@ -95,9 +95,9 @@ services:
       RENDER_MAX_CONCURRENT_EXTRACTIONS: '1'
       RENDER_MAX_JOBS_PER_USER: '0'
       RENDER_JOB_DEADLINE_MS: '5400000'
-    # 8 vCPU / 16 GB production profile: leave capacity for PostgreSQL, the
-    # web app and workers while allowing the producer to exit low-memory mode.
-    cpus: 6.0
+    # 4 vCPU / 16 GB production profile: leave one CPU for PostgreSQL, the web
+    # app and workers while allowing the producer to exit low-memory mode.
+    cpus: 3.0
     mem_limit: 10g
     networks:
       - render
