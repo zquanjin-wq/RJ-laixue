@@ -150,6 +150,11 @@ export function HomePage() {
     summary: string;
     events: PptxGenerationEventView[];
   } | null>(null);
+  const [preparedPptx, setPreparedPptx] = useState<{
+    file: File;
+    slides: Slide[];
+    sourceId: string;
+  } | null>(null);
   const [resumingGeneration, setResumingGeneration] = useState(false);
   const [dragMode, setDragMode] = useState<'pptx' | 'course' | null>(null);
   const isPreparingGenerationRef = useRef(false);
@@ -321,17 +326,31 @@ export function HomePage() {
     handleFileChange: handlePptxFileChange,
   } = useImportPptx({
     onImported: async (slides, file) => {
-      setPptxProgress({ summary: '正在登记 PPTX 来源并创建可编辑课程…', events: [] });
+      setPptxProgress({ summary: '正在上传 PPTX…', events: [] });
       const source = await uploadPptxGenerationSource(file);
+      setPreparedPptx({ file, slides, sourceId: source.sourceId });
+      setPptxProgress(null);
+    },
+  });
+
+  const startPptxGeneration = async () => {
+    if (!preparedPptx || pptxImporting || resumingGeneration) return;
+    const { file, slides, sourceId } = preparedPptx;
+    const courseId = crypto.randomUUID();
+    let courseCreated = false;
+    let generationSubmitted = false;
+    setResumingGeneration(true);
+    setError(null);
+    try {
+      setPptxProgress({ summary: '正在创建课程并提交生成任务…', events: [] });
       // The durable PPTX pipeline uses the formal UUID course identifier as
       // both its revision anchor and asset namespace; do not create a second
       // course once enrichment begins.
-      const courseId = crypto.randomUUID();
       const draft = createPptxCourseDraft({
         courseId,
         fileName: file.name,
         slides,
-        sourceId: source.sourceId,
+        sourceId,
       });
       const response = await fetch('/api/courses', {
         method: 'POST',
@@ -340,6 +359,7 @@ export function HomePage() {
       });
       const saved = await response.json().catch(() => null);
       if (!response.ok || !saved?.success) throw new Error(saved?.error || '导入课程保存失败');
+      courseCreated = true;
       // PPTX import must always continue through the durable generation path.
       // A client-side release fallback silently created mute, non-interactive
       // courses whenever an older browser bundle evaluated its build-time flag.
@@ -370,7 +390,7 @@ export function HomePage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
           body: JSON.stringify({
-            sourceId: source.sourceId,
+            sourceId,
             courseId,
             sourceRevision: 1,
             teachingRequirement: form.requirement.trim(),
@@ -384,6 +404,7 @@ export function HomePage() {
         if (!submission.ok || !created?.jobId || !created?.pollUrl) {
           throw new Error(created?.error || 'AI 课堂任务创建失败');
         }
+        generationSubmitted = true;
         const pending: PendingGenerationJob = {
           jobId: created.jobId,
           courseId,
@@ -392,6 +413,7 @@ export function HomePage() {
           createdAt: Date.now(),
         };
         savePendingGenerationJob(pending);
+        setPreparedPptx(null);
         const status = await waitForDurableGeneration(pending, 45 * 60 * 1000, (summary, events) =>
           setPptxProgress({ summary, events }),
         );
@@ -402,8 +424,24 @@ export function HomePage() {
         router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
         return;
       }
-    },
-  });
+    } catch (generationError) {
+      // A course should only become visible once it has a real generation job.
+      // If submission itself failed, remove the transient draft so course
+      // management does not show a misleading "未生成" item.
+      if (courseCreated && !generationSubmitted) {
+        await fetch(`/api/courses/${encodeURIComponent(courseId)}`, {
+          method: 'DELETE',
+        }).catch(() => undefined);
+      }
+      const message =
+        generationError instanceof Error ? generationError.message : 'AI 课堂生成失败';
+      setError(message);
+      toast.error(message);
+      setPptxProgress(null);
+    } finally {
+      setResumingGeneration(false);
+    }
+  };
 
   useEffect(() => {
     // Clear stale media store to prevent cross-course thumbnail contamination.
@@ -1084,6 +1122,16 @@ export function HomePage() {
                           <div className={styles.agentControl}>
                             <AgentBar />
                           </div>
+                          {preparedPptx ? (
+                            <button
+                              type="button"
+                              className={styles.pptxGenerateButton}
+                              onClick={() => void startPptxGeneration()}
+                            >
+                              <Sparkles className="size-4" />
+                              开始生成课程
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                       {pptxImporting || resumingGeneration ? (
@@ -1109,6 +1157,29 @@ export function HomePage() {
                               </p>
                             ) : null}
                           </div>
+                        </div>
+                      ) : preparedPptx ? (
+                        <div
+                          className={styles.pptxUploaded}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <span className={styles.pptxUploadedIcon} aria-hidden="true">
+                            <Check className="size-5" />
+                          </span>
+                          <div className={styles.pptxUploadedBody}>
+                            <strong>PPTX 上传成功</strong>
+                            <p title={preparedPptx.file.name}>
+                              {preparedPptx.file.name} · {preparedPptx.slides.length} 页
+                            </p>
+                            <span>可继续填写设计要求，确认后再开始生成。</span>
+                          </div>
+                          <button
+                            type="button"
+                            className={styles.pptxReplaceButton}
+                            onClick={triggerPptxFileSelect}
+                          >
+                            重新选择
+                          </button>
                         </div>
                       ) : (
                         <div
