@@ -100,6 +100,9 @@ services:
         condition: service_healthy
       render-service:
         condition: service_started
+    networks:
+      - default
+      - render
     command: ['pnpm', 'exec', 'tsx', 'scripts/run-course-video-export-agent.ts']
     restart: unless-stopped
 

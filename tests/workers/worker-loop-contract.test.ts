@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const worker = (name: string) => readFileSync(resolve(process.cwd(), 'scripts', name), 'utf8');
+const compose = () => readFileSync(resolve(process.cwd(), 'docker-compose.yml'), 'utf8');
 
 describe('durable worker loop contracts', () => {
   it('runs video exports as an independently deployable leased agent', () => {
@@ -11,6 +12,13 @@ describe('durable worker loop contracts', () => {
     expect(source).toContain('COURSE_VIDEO_EXPORT_LEASE_MS');
     expect(source).toContain('runNextCourseVideoExport({ workerId, leaseMs })');
     expect(source).toContain('COURSE_VIDEO_EXPORT_INTERVAL_MS must be at least 1000');
+  });
+
+  it('connects the video export worker to the renderer network', () => {
+    const service = compose().split(/^  video-export-worker:/m)[1]?.split(/^  caddy:/m)[0];
+    expect(service).toContain('networks:');
+    expect(service).toContain('- default');
+    expect(service).toContain('- render');
   });
 
   it('does not overlap revoice worker ticks', () => {
