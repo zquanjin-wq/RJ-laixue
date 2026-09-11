@@ -641,6 +641,54 @@
   color: #08743b;
 }
 
+.pptxProgressTimeline {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  list-style: none;
+}
+
+.pptxProgressTimeline li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 7px 92px 1fr;
+  align-items: center;
+  gap: 7px;
+  color: #829087;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.pptxProgressTimeline li > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #a9b9b0;
+}
+
+.pptxProgressTimeline li > span {
+  white-space: nowrap;
+}
+
+.pptxProgressTimeline li > strong {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pptxProgressTimeline li.pptxProgressTimelineActive {
+  color: #08743b;
+}
+
+.pptxProgressTimeline li.pptxProgressTimelineActive > i {
+  background: #0b9b50;
+  box-shadow: 0 0 0 3px rgba(11, 155, 80, 0.13);
+}
+
 .pptxUploaded {
   order: 1;
   display: flex;

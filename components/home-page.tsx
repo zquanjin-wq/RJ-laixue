@@ -1243,6 +1243,27 @@ export function HomePage() {
                                 分钟，任务仍在后台运行，请勿重复提交
                               </p>
                             ) : null}
+                            {pptxProgress?.events.length ? (
+                              <ol
+                                className={styles.pptxProgressTimeline}
+                                aria-label="AI 课堂生成过程"
+                              >
+                                {pptxProgress.events.map((event, index, events) => (
+                                  <li
+                                    key={event.id}
+                                    className={
+                                      index === events.length - 1
+                                        ? styles.pptxProgressTimelineActive
+                                        : undefined
+                                    }
+                                  >
+                                    <i aria-hidden="true" />
+                                    <span>{pptxPhaseLabel(event.phase)}</span>
+                                    <strong>{event.summary}</strong>
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : null}
                           </div>
                         </div>
                       ) : preparedPptx ? (
