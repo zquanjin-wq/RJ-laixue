@@ -105,7 +105,7 @@ fi
 
 echo 'Recreating selected services...'
 "`${compose[@]}" up -d --no-deps --force-recreate $($Services -join ' ')
-printf '%s\n' '$shortRevision' > .deployed-revision
+printf '%s\n' '$shortRevision' | sudo tee .deployed-revision >/dev/null
 "@
   # PowerShell writes pipeline text with CRLF. Strip it on the Linux side so
   # heredoc-derived shell lines and continuations keep their intended shape.
