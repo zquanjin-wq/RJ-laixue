@@ -39,7 +39,7 @@ Remove-Item -LiteralPath $archivePath -ErrorAction SilentlyContinue
 git -C $RepositoryPath archive --format=zip --output=$archivePath $resolvedRevision
 
 try {
-  & scp -i $SshKeyPath $archivePath "${RemoteUser}@${HostName}:$remoteArchive"
+  & scp -o BatchMode=yes -o ConnectTimeout=15 -i $SshKeyPath $archivePath "${RemoteUser}@${HostName}:$remoteArchive"
   if ($LASTEXITCODE -ne 0) { throw 'Archive upload failed.' }
 
   $dryRunFlag = if ($DryRun) { '--dry-run' } else { '' }
@@ -109,7 +109,7 @@ printf '%s\n' '$shortRevision' > .deployed-revision
 "@
   # PowerShell writes pipeline text with CRLF. Strip it on the Linux side so
   # heredoc-derived shell lines and continuations keep their intended shape.
-  $remoteScript | & ssh -i $SshKeyPath "${RemoteUser}@${HostName}" 'tr -d "\r" | bash -s'
+  $remoteScript | & ssh -T -o BatchMode=yes -o ConnectTimeout=15 -i $SshKeyPath "${RemoteUser}@${HostName}" 'tr -d "\r" | bash -s'
   if ($LASTEXITCODE -ne 0) { throw 'Remote release failed.' }
 } finally {
   Remove-Item -LiteralPath $archivePath -ErrorAction SilentlyContinue
