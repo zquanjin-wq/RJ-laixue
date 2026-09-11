@@ -843,9 +843,9 @@ export function HomePage() {
             </span>
             <span>来学·创课助手</span>
           </div>
-          <Link href="/" className={styles.backLink}>
+          <Link href="/teaching-dashboard" className={styles.backLink}>
             <ArrowLeft aria-hidden="true" />
-            返回教学驾驶舱
+            教师驾驶舱
           </Link>
         </header>
 

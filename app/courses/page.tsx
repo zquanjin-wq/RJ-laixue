@@ -17,10 +17,10 @@ export default function CoursesPage() {
             </div>
             <div className="flex gap-2">
               <Button asChild variant="outline">
-                <Link href="/">返回驾驶舱</Link>
+                <Link href="/teaching-dashboard">返回驾驶舱</Link>
               </Button>
               <Button asChild>
-                <Link href="/studio">AI 创建课程</Link>
+                <Link href="/">AI 创建课程</Link>
               </Button>
             </div>
           </header>

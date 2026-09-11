@@ -1,10 +1,5 @@
-import { AdminGate } from '@/components/auth-gate';
-import { HomePage } from '@/components/home-page';
+import { redirect } from 'next/navigation';
 
 export default function StudioPage() {
-  return (
-    <AdminGate>
-      <HomePage />
-    </AdminGate>
-  );
+  redirect('/');
 }

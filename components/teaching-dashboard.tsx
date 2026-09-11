@@ -1,18 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  ArrowRight,
   BarChart3,
   BookOpen,
   Bot,
+  Box,
   ChevronRight,
   ClipboardList,
-  Sparkles,
+  RefreshCw,
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { TeachingDataChat } from '@/components/teaching-data-chat';
 
 type DashboardData = {
@@ -43,124 +45,74 @@ function formatDuration(seconds: number) {
 export function TeachingDashboard() {
   const [data, setData] = useState<DashboardData>(initial);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    fetch('/api/admin/teaching-dashboard')
-      .then((response) => response.json())
-      .then((result) => {
-        if (result.success) setData(result.data);
-      })
-      .finally(() => setLoading(false));
+  const [error, setError] = useState(false);
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const response = await fetch('/api/admin/teaching-dashboard');
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error('dashboard request failed');
+      setData(result.data);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+  const dashboardState = data.courseCount === 0 ? 'no-course' : data.taskCount === 0 ? 'no-task' : 'active';
   const startedRate = percentage(data.startedCount, data.learnerCount);
   const completedRate = percentage(data.completedCount, data.learnerCount);
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-background">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header>
-          <p className="text-sm font-medium text-primary">来学 · 教学驾驶舱</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">把课程变成可管理的学习结果</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            课程、学习任务和教学数据，都从这里开始。
-          </p>
+    <main className="min-h-screen bg-[#f6fcf8] text-[#14281d] [background-image:radial-gradient(ellipse_900px_420px_at_50%_-10%,rgba(28,172,93,.08),transparent_62%),linear-gradient(rgba(7,148,71,.06)_1px,transparent_1px),linear-gradient(90deg,rgba(7,148,71,.06)_1px,transparent_1px)] [background-size:auto,28px_28px,28px_28px]">
+      <div className="mx-auto w-[min(calc(100%-32px),1200px)] pb-12">
+        <header className="flex min-h-14 items-center justify-between border-b border-emerald-950/10">
+          <div className="flex items-center gap-2.5 font-semibold"><span className="grid size-7 place-items-center rounded-sm bg-[#079447] text-white"><Box className="size-4" /></span>来学·教师驾驶舱</div>
+          <nav className="flex items-center gap-1 text-sm"><Link className="rounded-md px-3 py-2 hover:bg-white/75" href="/courses">课程管理</Link><Link className="rounded-md px-3 py-2 text-[#08743b] hover:bg-white/75" href="/">返回课程创作 <ArrowRight className="ml-1 inline size-4" /></Link></nav>
         </header>
-        <section className="grid gap-4 md:grid-cols-3">
-          <ActionCard
-            icon={BookOpen}
-            title="课程管理"
-            description="查看、整理和继续编辑你的课程。"
-            href="/courses"
-            action="进入课程管理"
-          />
-          <ActionCard
-            icon={ClipboardList}
-            title="学习任务"
-            description="创建任务、分配学员、跟进学习。"
-            href="/admin/learning-tasks"
-            action="进入任务管理"
-          />
-          <ActionCard
-            icon={Sparkles}
-            title="AI 创建课程"
-            description="从一句需求开始，生成结构化课程。"
-            href="/studio"
-            action="开始创建"
-          />
+        <section className="flex flex-col gap-3 py-9 md:flex-row md:items-end md:justify-between">
+          <div><p className="mb-3 inline-flex min-h-7 items-center rounded-full border border-[#079447]/30 bg-[#eaf8ef] px-3 font-mono text-xs font-semibold tracking-[.08em] text-[#08743b]">可选教学交付空间</p><h1 className="text-3xl font-semibold leading-[1.34] md:text-4xl">教师驾驶舱</h1><p className="mt-2 text-sm text-[#5f6f66]">将课程用于教学交付，并持续跟进学习效果。</p></div>
+          {!loading && dashboardState === 'active' && <p className="w-fit rounded-full border border-emerald-900/10 bg-white/70 px-3 py-1.5 text-xs text-[#5f6f66]">当前共有 {data.taskCount} 项任务</p>}
         </section>
-        <section className="grid gap-6 xl:grid-cols-[1.45fr_0.85fr]">
-          <Card className="shadow-sm">
-            <CardHeader className="flex-row items-center justify-between gap-4">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="size-5 text-primary" />
-                  学习数据看板
-                </CardTitle>
-                <CardDescription>当前权限范围内已发布学习任务的汇总。</CardDescription>
+        {error ? (
+          <section className="rounded-2xl border border-red-200 bg-white p-8 text-center"><h2 className="font-semibold">驾驶舱数据暂时无法加载</h2><p className="mt-1 text-sm text-[#5f6f66]">课程与任务本身不受影响，请稍后重试。</p><Button className="mt-5" variant="outline" onClick={() => void loadDashboard()}><RefreshCw className="mr-2 size-4" />重新加载</Button></section>
+        ) : !loading && dashboardState !== 'active' ? (
+          <EmptyDashboard state={dashboardState} courseCount={data.courseCount} />
+        ) : (
+          <div className="grid gap-5 xl:grid-cols-[1.65fr_1fr]">
+            <section className="overflow-hidden rounded-2xl border border-emerald-950/15 bg-white shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)]">
+              <div className="border-b border-emerald-950/10 px-6 py-5"><h2 className="text-xl font-semibold">教学运营</h2><p className="mt-1 text-sm text-[#5f6f66]">沿着真实教学链路，快速进入下一步工作。</p></div>
+              <div className="grid md:grid-cols-3">
+                <ActionCard icon={BookOpen} title="课程准备" description="维护已有课程与交付内容。" href="/courses" action="课程管理" />
+                <ActionCard icon={ClipboardList} title="任务发布" description="组合课程、分配学员并发布。" href="/admin/learning-tasks" action="学习任务" />
+                <ActionCard icon={BarChart3} title="效果跟进" description="查看参学、完成与有效学习情况。" href="/teaching-data" action="数据中心" />
               </div>
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/teaching-data">
-                  进入数据中心 <ChevronRight className="ml-1 size-4" />
-                </Link>
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Metric
-                  label="我的课程"
-                  value={data.courseCount}
-                  hint="进入课程管理"
-                  icon={BookOpen}
-                  loading={loading}
-                  href="/courses"
-                />
-                <Metric
-                  label="进行中任务"
-                  value={data.activeTaskCount}
-                  hint={`共 ${data.taskCount} 个任务`}
-                  icon={ClipboardList}
-                  loading={loading}
-                  href="/admin/learning-tasks"
-                />
-                <Metric
-                  label="参学人次"
-                  value={data.learnerCount}
-                  hint={`已开始 ${data.startedCount} 人次`}
-                  icon={Users}
-                  loading={loading}
-                />
-                <Metric
-                  label="有效学习时长"
-                  value={formatDuration(data.effectiveSeconds)}
-                  hint={`开始率 ${startedRate}% · 完成率 ${completedRate}%`}
-                  icon={BarChart3}
-                  loading={loading}
-                />
+              <div className="border-t border-emerald-950/10 px-6 py-5">
+                <div className="mb-4 flex items-center justify-between"><div><h2 className="font-semibold">教学概览</h2><p className="mt-1 text-xs text-[#5f6f66]">已发布学习任务的聚合数据</p></div><Link href="/teaching-data" className="text-sm font-medium text-[#08743b]">查看完整数据 <ArrowRight className="inline size-4" /></Link></div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <Metric label="我的课程" value={data.courseCount} hint="课程总数" icon={BookOpen} loading={loading} href="/courses" />
+                  <Metric label="进行中任务" value={data.activeTaskCount} hint={`共 ${data.taskCount} 个任务`} icon={ClipboardList} loading={loading} href="/admin/learning-tasks" />
+                  <Metric label="参学人次" value={data.learnerCount} hint={`已开始 ${data.startedCount} 人次`} icon={Users} loading={loading} />
+                  <Metric label="有效学习时长" value={formatDuration(data.effectiveSeconds)} hint={`开始率 ${startedRate}% · 完成率 ${completedRate}%`} icon={BarChart3} loading={loading} />
+                </div>
+                <div className="mt-5 rounded-xl bg-[#f5f8f6] p-4 text-sm"><span className="font-semibold">教学提示：</span>{data.learnerCount === 0 ? '先发布一项学习任务，学员开始学习后数据会逐步出现。' : data.startedCount === data.learnerCount ? '所有已分配学员都已开始学习，可重点关注完成情况。' : `还有 ${data.learnerCount - data.startedCount} 人次尚未开始，建议发送提醒或安排补学。`}</div>
               </div>
-              <div className="rounded-lg bg-muted/60 p-4 text-sm">
-                <span className="font-medium">教学提示：</span>
-                {data.learnerCount === 0
-                  ? '先发布一项学习任务，学员开始学习后数据会逐步出现。'
-                  : data.startedCount === data.learnerCount
-                    ? '所有已分配学员都已开始学习，可重点关注完成情况。'
-                    : `还有 ${data.learnerCount - data.startedCount} 人次尚未开始，建议发送提醒或安排补学。`}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="size-5 text-primary" />问 AI
-              </CardTitle>
-              <CardDescription>用你权限范围内的教学数据判断下一步。</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <TeachingDataChat />
-            </CardContent>
-          </Card>
-        </section>
+            </section>
+            <aside className="self-start rounded-2xl border border-emerald-950/15 bg-[#f8fbf9] p-6 text-[#14281d] shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)]"><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-[#079447]" /><Bot className="size-5 text-[#079447]" /><h2 className="text-xl font-semibold">问 AI</h2><span className="ml-auto font-mono text-[10px] font-semibold tracking-[.08em] text-[#08743b]">READ ONLY</span></div><p className="mt-2 text-sm leading-6 text-[#5f6f66]">根据已发布任务的数据，解释现状并给出跟进建议。</p><div className="mt-5 border-t border-emerald-950/10 pt-4"><TeachingDataChat /></div></aside>
+          </div>
+        )}
       </div>
     </main>
   );
+}
+
+function EmptyDashboard({ state, courseCount }: { state: 'no-course' | 'no-task'; courseCount: number }) {
+  const noCourse = state === 'no-course';
+  return <section className="grid overflow-hidden rounded-2xl border border-emerald-950/15 bg-white shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)] md:grid-cols-[1fr_.7fr]"><div className="p-8 md:p-12"><p className="font-mono text-xs font-semibold tracking-[.14em] text-[#08743b]">{noCourse ? 'FIRST COURSE' : 'READY TO DELIVER'}</p><h2 className="mt-4 text-2xl font-semibold">{noCourse ? '先创建第一门课程' : '课程已经准备好，下一步可以发布任务'}</h2><p className="mt-3 max-w-xl text-sm leading-6 text-[#5f6f66]">{noCourse ? '驾驶舱用于管理课程交付与学习效果。完成创作并保存课程后，这里会自然出现下一步操作。' : `你已有 ${courseCount} 门课程。将课程分配给学员后，才会显示有效教学数据与 AI 分析。`}</p><Button asChild className="mt-6 bg-[#079447] hover:bg-[#08743b]"><Link href={noCourse ? '/' : '/admin/learning-tasks'}>{noCourse ? '开始创建课程' : '创建学习任务'}<ChevronRight className="ml-1 size-4" /></Link></Button></div><div className="grid min-h-52 place-items-center border-t border-emerald-950/10 bg-[#eff8f2] md:border-l md:border-t-0"><div className="grid size-32 place-items-center rounded-full border border-dashed border-[#079447]/35">{noCourse ? <BookOpen className="size-10 text-[#079447]" /> : <ClipboardList className="size-10 text-[#079447]" />}</div></div></section>;
 }
 
 function Metric({
@@ -180,10 +132,10 @@ function Metric({
 }) {
   const content = (
     <>
-      <Icon className="size-5 text-primary" />
-      <p className="mt-4 text-sm text-muted-foreground">{label}</p>
+      <Icon className="size-5 text-[#079447]" />
+      <p className="mt-4 text-sm text-[#5f6f66]">{label}</p>
       <p className="mt-1 text-2xl font-semibold">{loading ? '—' : value}</p>
-      <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
+      <p className="mt-2 text-xs text-[#5f6f66]">{hint}</p>
     </>
   );
   return href ? (
@@ -209,12 +161,12 @@ function ActionCard({
   action: string;
 }) {
   return (
-    <Card className="shadow-sm">
-      <CardContent className="p-5">
-        <Icon className="size-5 text-primary" />
-        <h2 className="mt-4 font-semibold">{title}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-        <Button asChild className="mt-4 px-0" variant="link">
+    <Card className="rounded-none border-0 border-b border-emerald-950/10 shadow-none last:border-b-0 md:border-r md:border-b-0 md:last:border-r-0">
+      <CardContent className="p-6">
+        <Icon className="size-5 text-[#079447]" />
+        <h2 className="mt-3 font-semibold">{title}</h2>
+        <p className="mt-1 min-h-10 text-sm text-[#5f6f66]">{description}</p>
+        <Button asChild className="mt-3 h-8 px-0 text-[#08743b]" variant="link">
           <Link href={href}>
             {action}
             <ChevronRight className="ml-1 size-4" />

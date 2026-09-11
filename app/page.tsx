@@ -1,10 +1,10 @@
 import { AdminGate } from '@/components/auth-gate';
-import { TeachingDashboard } from '@/components/teaching-dashboard';
+import { HomePage } from '@/components/home-page';
 
 export default function Page() {
   return (
     <AdminGate>
-      <TeachingDashboard />
+      <HomePage />
     </AdminGate>
   );
 }
