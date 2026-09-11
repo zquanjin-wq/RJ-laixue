@@ -871,6 +871,19 @@ export function HomePage() {
                   transition={{ duration: 0.2 }}
                   className="flex min-h-[344px] flex-col p-5 md:p-7"
                 >
+                  {isPreparingGeneration && (
+                    <div
+                      className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-emerald-900 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-100"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <LoaderCircle className="size-5 animate-spin" />
+                      <div>
+                        <p className="font-semibold">正在创建课程</p>
+                        <p className="text-sm opacity-80">课程结构、讲解与互动内容生成中，请勿重复提交。</p>
+                      </div>
+                    </div>
+                  )}
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <GreetingBar />
                     <div className="flex w-full min-w-0 items-center gap-2 md:w-auto">
@@ -997,8 +1010,7 @@ export function HomePage() {
                   transition={{ duration: 0.2 }}
                   className="min-h-[344px] p-5 md:p-7"
                 >
-                  {(createMode === 'ai' && isPreparingGeneration) ||
-                  (createMode === 'pptx' && (pptxImporting || resumingGeneration)) ||
+                  {(createMode === 'pptx' && (pptxImporting || resumingGeneration)) ||
                   (createMode === 'course' && importing) ? (
                     <div className="flex min-h-[290px] flex-col justify-center rounded-xl border border-white/90 bg-white/55 p-6 shadow-inner dark:border-white/10 dark:bg-slate-950/30">
                       <div className="flex items-center gap-3">
