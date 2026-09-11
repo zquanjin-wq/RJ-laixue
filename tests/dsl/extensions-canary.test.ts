@@ -15,16 +15,13 @@ import { describe, expect, it } from 'vitest';
 // 注意：上游 DSL 包不直接依赖 RJ 这层（单向依赖：RJ → DSL）。
 // 我们测 RJ 这层包装过的 validateStageExtended / validateSceneExtended
 // 以及 stripRuntimeOnly。
-import {
-  validateStageExtended,
-  validateSceneExtended,
-} from '@/lib/dsl-extensions/validate';
+import { validateStageExtended, validateSceneExtended } from '@/lib/dsl-extensions/validate';
 import { stripRuntimeOnly } from '@/lib/dsl-extensions/serialize';
 import { CLOUD_PERSISTED, RUNTIME_ONLY, ASSET_URL_PATHS } from '@/lib/dsl-extensions/registry';
 
 describe('RJ DSL extensions — registry invariants', () => {
-  it('CLOUD_PERSISTED has 6 fields', () => {
-    expect(CLOUD_PERSISTED.length).toBe(6);
+  it('CLOUD_PERSISTED has 7 fields', () => {
+    expect(CLOUD_PERSISTED.length).toBe(7);
   });
 
   it('RUNTIME_ONLY has 4 fields', () => {
@@ -40,7 +37,7 @@ describe('RJ DSL extensions — registry invariants', () => {
 });
 
 describe('validateStageExtended — cloudPersisted 字段不被 strip / 校验通过', () => {
-  it('accepts stage with all 6 cloudPersisted fields + valid https URLs', () => {
+  it('accepts stage with all 7 cloudPersisted fields + valid https URLs', () => {
     const stage = {
       id: 'stage-canary',
       name: '金丝雀课程',
@@ -50,6 +47,10 @@ describe('validateStageExtended — cloudPersisted 字段不被 strip / 校验�
         providerId: 'minimax-tts',
         voiceId: 'female-yujie',
         modelId: 'speech-2.8-hd',
+      },
+      pptxSource: {
+        sourceId: '64fd0314-2f09-497d-bc0b-d7f6771b04bd',
+        fileName: 'training.pptx',
       },
       sceneOrderTrusted: true,
       sceneOrderRepairedAt: 1753344000000,
@@ -87,7 +88,7 @@ describe('validateStageExtended — cloudPersisted 字段不被 strip / 校验�
     }
   });
 
-  it('reject when narrationAudioUrl is not https (DSL validator doesn\'t know it, RJ layer catches)', () => {
+  it("reject when narrationAudioUrl is not https (DSL validator doesn't know it, RJ layer catches)", () => {
     const scene = {
       id: 'scene-1',
       stageId: 'stage-1',
@@ -147,6 +148,14 @@ describe('stripRuntimeOnly — 深拷贝不污染原对象 + RUNTIME_ONLY 字段
     (stripped.scenes[0] as Record<string, unknown>).id = 'mutated';
     expect(original.scenes[0].id).toBe('s1');
     expect(stripped.scenes[0].id).toBe('mutated');
+  });
+
+  it('preserves the durable PPTX source binding', () => {
+    const stage = {
+      id: 'stage-pptx',
+      pptxSource: { sourceId: 'source-1', fileName: 'training.pptx' },
+    };
+    expect(stripRuntimeOnly(stage).pptxSource).toEqual(stage.pptxSource);
   });
 });
 

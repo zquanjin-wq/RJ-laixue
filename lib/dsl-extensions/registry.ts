@@ -40,6 +40,11 @@ export const CLOUD_PERSISTED: readonly CloudPersistedField[] = [
     purpose: '老师个性化音色（TTS 选 provider/voice/model）',
   },
   {
+    path: 'stage.pptxSource',
+    type: '{ sourceId: string; fileName: string }',
+    purpose: 'PPTX AI 成课任务的不可变来源关联与断点恢复',
+  },
+  {
     path: 'stage.sceneOrderTrusted',
     type: 'boolean',
     purpose: 'scene `seq` 字段是否可信（v15 migration 引入）',
@@ -120,11 +125,7 @@ export const EXCLUDED_FIELDS = {
     'chats',
     'mode',
   ],
-  mobileView: [
-    'MobileChapter.*',
-    'm-mode',
-    'm-currentChapterIndex',
-  ],
+  mobileView: ['MobileChapter.*', 'm-mode', 'm-currentChapterIndex'],
   sceneAliases: [
     // DSL 用 title，RJ 多处用 name 做 fallback——不冲突，不注册
     'scene.name',
