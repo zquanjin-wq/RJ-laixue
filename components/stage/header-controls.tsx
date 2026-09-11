@@ -355,44 +355,22 @@ export function HeaderControls({
                   </div>
                 </button>
               ) : (
-                <>
-                  <button
-                    onClick={() => {
-                      setExportMenuOpen(false);
-                      void exportCourseVideo('fast').finally(() =>
-                        window.setTimeout(() => void refreshVideoExport(), 1_000),
-                      );
-                    }}
-                    disabled={isPreparingVideo}
-                    className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
-                  >
-                    <Film className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <div>
-                      <div>快速生成视频</div>
-                      <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                        720p · 20fps · 更快交付
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setExportMenuOpen(false);
-                      void exportCourseVideo('standard').finally(() =>
-                        window.setTimeout(() => void refreshVideoExport(), 1_000),
-                      );
-                    }}
-                    disabled={isPreparingVideo}
-                    className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
-                  >
-                    <Film className="w-4 h-4 text-gray-400 shrink-0" />
-                    <div>
-                      <div>标准生成视频</div>
-                      <div className="text-[11px] text-gray-400 dark:text-gray-500">
-                        720p · 24fps · 默认推荐
-                      </div>
-                    </div>
-                  </button>
-                </>
+                <button
+                  onClick={() => {
+                    setExportMenuOpen(false);
+                    void exportCourseVideo().finally(() =>
+                      window.setTimeout(() => void refreshVideoExport(), 1_000),
+                    );
+                  }}
+                  disabled={isPreparingVideo}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  <Film className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <div>生成课程视频</div>
+                    <div className="text-[11px] text-gray-400 dark:text-gray-500">720p · 20fps</div>
+                  </div>
+                </button>
               )}
             </div>
           )}

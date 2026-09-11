@@ -115,22 +115,8 @@ describe('GET /api/courses/[id]/video-exports', () => {
       expect.objectContaining({
         courseId: 'course-1',
         requestedBy: 'teacher-1',
-        preset: 'standard',
         sourceRevision: 8,
       }),
-    );
-  });
-
-  it('accepts the 720p fast export preset', async () => {
-    getCurrentActor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
-    getCourse.mockResolvedValue({ id: 'course-1', ownerUserId: 'teacher-1', contentRevision: 8 });
-    requestExport.mockResolvedValue({ id: 'video-fast' });
-
-    const response = await requestVideoExport({ preset: 'fast' });
-
-    expect(response.status).toBe(202);
-    expect(requestExport).toHaveBeenCalledWith(
-      expect.objectContaining({ preset: 'fast', sourceRevision: 8 }),
     );
   });
 });
