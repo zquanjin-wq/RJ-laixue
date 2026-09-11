@@ -80,8 +80,6 @@ export function TeachingDashboard() {
         </section>
         {error ? (
           <section className="rounded-2xl border border-red-200 bg-white p-8 text-center"><h2 className="font-semibold">驾驶舱数据暂时无法加载</h2><p className="mt-1 text-sm text-[#5f6f66]">课程与任务本身不受影响，请稍后重试。</p><Button className="mt-5" variant="outline" onClick={() => void loadDashboard()}><RefreshCw className="mr-2 size-4" />重新加载</Button></section>
-        ) : !loading && dashboardState !== 'active' ? (
-          <EmptyDashboard state={dashboardState} courseCount={data.courseCount} />
         ) : (
           <div className="grid gap-5 xl:grid-cols-[1.65fr_1fr]">
             <section className="overflow-hidden rounded-2xl border border-emerald-950/15 bg-white shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)]">
@@ -93,16 +91,22 @@ export function TeachingDashboard() {
               </div>
               <div className="border-t border-emerald-950/10 px-6 py-5">
                 <div className="mb-4 flex items-center justify-between"><div><h2 className="font-semibold">教学概览</h2><p className="mt-1 text-xs text-[#5f6f66]">已发布学习任务的聚合数据</p></div><Link href="/teaching-data" className="text-sm font-medium text-[#08743b]">查看完整数据 <ArrowRight className="inline size-4" /></Link></div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Metric label="我的课程" value={data.courseCount} hint="课程总数" icon={BookOpen} loading={loading} href="/courses" />
-                  <Metric label="进行中任务" value={data.activeTaskCount} hint={`共 ${data.taskCount} 个任务`} icon={ClipboardList} loading={loading} href="/admin/learning-tasks" />
-                  <Metric label="参学人次" value={data.learnerCount} hint={`已开始 ${data.startedCount} 人次`} icon={Users} loading={loading} />
-                  <Metric label="有效学习时长" value={formatDuration(data.effectiveSeconds)} hint={`开始率 ${startedRate}% · 完成率 ${completedRate}%`} icon={BarChart3} loading={loading} />
-                </div>
-                <div className="mt-5 rounded-xl bg-[#f5f8f6] p-4 text-sm"><span className="font-semibold">教学提示：</span>{data.learnerCount === 0 ? '先发布一项学习任务，学员开始学习后数据会逐步出现。' : data.startedCount === data.learnerCount ? '所有已分配学员都已开始学习，可重点关注完成情况。' : `还有 ${data.learnerCount - data.startedCount} 人次尚未开始，建议发送提醒或安排补学。`}</div>
+                {!loading && dashboardState !== 'active' ? (
+                  <InlineEmptyState state={dashboardState} courseCount={data.courseCount} />
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Metric label="我的课程" value={data.courseCount} hint="课程总数" icon={BookOpen} loading={loading} href="/courses" />
+                      <Metric label="进行中任务" value={data.activeTaskCount} hint={`共 ${data.taskCount} 个任务`} icon={ClipboardList} loading={loading} href="/admin/learning-tasks" />
+                      <Metric label="参学人次" value={data.learnerCount} hint={`已开始 ${data.startedCount} 人次`} icon={Users} loading={loading} />
+                      <Metric label="有效学习时长" value={formatDuration(data.effectiveSeconds)} hint={`开始率 ${startedRate}% · 完成率 ${completedRate}%`} icon={BarChart3} loading={loading} />
+                    </div>
+                    <div className="mt-5 rounded-xl bg-[#f5f8f6] p-4 text-sm"><span className="font-semibold">教学提示：</span>{data.learnerCount === 0 ? '先发布一项学习任务，学员开始学习后数据会逐步出现。' : data.startedCount === data.learnerCount ? '所有已分配学员都已开始学习，可重点关注完成情况。' : `还有 ${data.learnerCount - data.startedCount} 人次尚未开始，建议发送提醒或安排补学。`}</div>
+                  </>
+                )}
               </div>
             </section>
-            <aside className="self-start rounded-2xl border border-emerald-950/15 bg-[#f8fbf9] p-6 text-[#14281d] shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)]"><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-[#079447]" /><Bot className="size-5 text-[#079447]" /><h2 className="text-xl font-semibold">问 AI</h2><span className="ml-auto font-mono text-[10px] font-semibold tracking-[.08em] text-[#08743b]">READ ONLY</span></div><p className="mt-2 text-sm leading-6 text-[#5f6f66]">根据已发布任务的数据，解释现状并给出跟进建议。</p><div className="mt-5 border-t border-emerald-950/10 pt-4"><TeachingDataChat /></div></aside>
+            <aside className="self-start rounded-2xl border border-emerald-950/15 bg-[#f8fbf9] p-6 text-[#14281d] shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)]"><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-[#079447]" /><Bot className="size-5 text-[#079447]" /><h2 className="text-xl font-semibold">问 AI</h2><span className="ml-auto font-mono text-[10px] font-semibold tracking-[.08em] text-[#08743b]">READ ONLY</span></div><p className="mt-2 text-sm leading-6 text-[#5f6f66]">根据已发布任务的数据，解释现状并给出跟进建议。</p><div className="mt-5 border-t border-emerald-950/10 pt-4"><TeachingDataChat disabled={!loading && dashboardState !== 'active'} /></div></aside>
           </div>
         )}
       </div>
@@ -110,9 +114,9 @@ export function TeachingDashboard() {
   );
 }
 
-function EmptyDashboard({ state, courseCount }: { state: 'no-course' | 'no-task'; courseCount: number }) {
+function InlineEmptyState({ state, courseCount }: { state: 'no-course' | 'no-task'; courseCount: number }) {
   const noCourse = state === 'no-course';
-  return <section className="grid overflow-hidden rounded-2xl border border-emerald-950/15 bg-white shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)] md:grid-cols-[1fr_.7fr]"><div className="p-8 md:p-12"><p className="font-mono text-xs font-semibold tracking-[.14em] text-[#08743b]">{noCourse ? 'FIRST COURSE' : 'READY TO DELIVER'}</p><h2 className="mt-4 text-2xl font-semibold">{noCourse ? '先创建第一门课程' : '课程已经准备好，下一步可以发布任务'}</h2><p className="mt-3 max-w-xl text-sm leading-6 text-[#5f6f66]">{noCourse ? '驾驶舱用于管理课程交付与学习效果。完成创作并保存课程后，这里会自然出现下一步操作。' : `你已有 ${courseCount} 门课程。将课程分配给学员后，才会显示有效教学数据与 AI 分析。`}</p><Button asChild className="mt-6 bg-[#079447] hover:bg-[#08743b]"><Link href={noCourse ? '/' : '/admin/learning-tasks'}>{noCourse ? '开始创建课程' : '创建学习任务'}<ChevronRight className="ml-1 size-4" /></Link></Button></div><div className="grid min-h-52 place-items-center border-t border-emerald-950/10 bg-[#eff8f2] md:border-l md:border-t-0"><div className="grid size-32 place-items-center rounded-full border border-dashed border-[#079447]/35">{noCourse ? <BookOpen className="size-10 text-[#079447]" /> : <ClipboardList className="size-10 text-[#079447]" />}</div></div></section>;
+  return <div className="flex flex-col gap-5 rounded-xl border-l-2 border-[#079447] bg-[#f4faf6] p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[10px] font-semibold tracking-[.12em] text-[#08743b]">{noCourse ? 'FIRST COURSE' : 'READY TO DELIVER'}</p><h3 className="mt-2 font-semibold">{noCourse ? '还没有课程' : '已有课程，尚无学习任务'}</h3><p className="mt-1 text-sm leading-6 text-[#5f6f66]">{noCourse ? '先完成第一门课程，之后可按需进入教学交付。' : `你已有 ${courseCount} 门课程；需要教学交付时，再将课程组合为学习任务。`}</p></div><Button asChild className="shrink-0 bg-[#079447] hover:bg-[#08743b]"><Link href={noCourse ? '/' : '/admin/learning-tasks'}>{noCourse ? '返回课程创作' : '创建学习任务'}<ChevronRight className="ml-1 size-4" /></Link></Button></div>;
 }
 
 function Metric({

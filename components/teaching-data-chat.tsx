@@ -11,14 +11,20 @@ const prompts = [
   '我下一步应重点跟进什么？',
 ];
 
-export function TeachingDataChat() {
+export function TeachingDataChat({
+  disabled = false,
+  disabledReason = '发布学习任务并产生学习数据后，即可使用 AI 分析。',
+}: {
+  disabled?: boolean;
+  disabledReason?: string;
+} = {}) {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function ask(nextQuestion = question) {
     const text = nextQuestion.trim();
-    if (!text) return;
+    if (!text || disabled) return;
     setQuestion(text);
     setLoading(true);
     setAnswer('');
@@ -54,7 +60,7 @@ export function TeachingDataChat() {
             variant="outline"
             size="sm"
             onClick={() => void ask(prompt)}
-            disabled={loading}
+            disabled={disabled || loading}
           >
             {prompt}
           </Button>
@@ -63,12 +69,14 @@ export function TeachingDataChat() {
       <Textarea
         value={question}
         onChange={(event) => setQuestion(event.target.value)}
-        placeholder="例如：哪些任务需要我本周重点跟进？"
+        placeholder={disabled ? '发布学习任务后可在这里询问教学数据' : '例如：哪些任务需要我本周重点跟进？'}
         rows={3}
+        disabled={disabled}
       />
-      <Button className="w-full" onClick={() => void ask()} disabled={loading || !question.trim()}>
+      <Button className="w-full" onClick={() => void ask()} disabled={disabled || loading || !question.trim()}>
         {loading ? '正在分析…' : '问 AI'}
       </Button>
+      {disabled && <p className="rounded-lg bg-[#eef5f0] p-3 text-sm text-[#5f6f66]">{disabledReason}</p>}
       {answer && (
         <div className="rounded-lg bg-muted/60 p-3 text-sm leading-6 whitespace-pre-wrap">
           {answer}
