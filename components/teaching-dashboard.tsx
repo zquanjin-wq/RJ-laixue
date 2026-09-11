@@ -81,7 +81,7 @@ export function TeachingDashboard() {
         {error ? (
           <section className="rounded-2xl border border-red-200 bg-white p-8 text-center"><h2 className="font-semibold">驾驶舱数据暂时无法加载</h2><p className="mt-1 text-sm text-[#5f6f66]">课程与任务本身不受影响，请稍后重试。</p><Button className="mt-5" variant="outline" onClick={() => void loadDashboard()}><RefreshCw className="mr-2 size-4" />重新加载</Button></section>
         ) : (
-          <div className="grid overflow-hidden rounded-2xl border border-emerald-950/15 bg-white shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)] xl:grid-cols-[1.65fr_1fr]">
+          <div className="grid overflow-hidden rounded-2xl border border-emerald-950/15 bg-white shadow-[0_18px_50px_-36px_rgba(20,40,29,.35)] min-[950px]:grid-cols-[1.65fr_1fr]">
             <section className="min-w-0 bg-white">
               <div className="border-b border-emerald-950/10 px-5 py-4"><h2 className="text-xl font-semibold">教学运营</h2><p className="mt-1 text-sm text-[#5f6f66]">沿着真实教学链路，快速进入下一步工作。</p></div>
               <div className="grid md:grid-cols-3">
@@ -106,7 +106,7 @@ export function TeachingDashboard() {
                 )}
               </div>
             </section>
-            <aside className="min-w-0 border-t border-emerald-950/15 bg-[#f8fbf9] p-5 text-[#14281d] xl:border-t-0 xl:border-l"><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-[#079447]" /><Bot className="size-5 text-[#079447]" /><h2 className="text-xl font-semibold">问 AI</h2><span className="ml-auto font-mono text-[10px] font-semibold tracking-[.08em] text-[#08743b]">READ ONLY</span></div><p className="mt-2 text-sm leading-6 text-[#5f6f66]">根据已发布任务的数据，解释现状并给出跟进建议。</p><div className="mt-4 border-t border-emerald-950/10 pt-4"><TeachingDataChat disabled={!loading && dashboardState !== 'active'} /></div></aside>
+            <aside className="min-w-0 border-t border-emerald-950/15 bg-[#f8fbf9] p-5 text-[#14281d] min-[950px]:border-t-0 min-[950px]:border-l"><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-[#079447]" /><Bot className="size-5 text-[#079447]" /><h2 className="text-xl font-semibold">问 AI</h2><span className="ml-auto font-mono text-[10px] font-semibold tracking-[.08em] text-[#08743b]">READ ONLY</span></div><p className="mt-2 text-sm leading-6 text-[#5f6f66]">根据已发布任务的数据，解释现状并给出跟进建议。</p><div className="mt-4 border-t border-emerald-950/10 pt-4"><TeachingDataChat disabled={!loading && dashboardState !== 'active'} /></div></aside>
           </div>
         )}
       </div>
