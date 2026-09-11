@@ -270,7 +270,10 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
       (call) => call.method === 'POST' && call.url === '/api/courses',
     );
     expect(posts).toHaveLength(2);
-    expect(JSON.parse(posts[1].body ?? '{}')).toMatchObject({ expectedRevision: 1, saveState: 'ready' });
+    expect(JSON.parse(posts[1].body ?? '{}')).toMatchObject({
+      expectedRevision: 1,
+      saveState: 'ready',
+    });
   });
   it('audio publisher exception: marks the saved draft as recoverable', async () => {
     enqueueResponse(200, { success: true, data: { id: 'stage-new-1' } });
@@ -292,6 +295,18 @@ describe('saveStageToCloud — Phase 0 course-row pre-upsert', () => {
     expect(findCall((c) => c.method === 'POST' && c.url === '/api/course-assets/sign-upload')).toBe(
       -1,
     );
+  });
+
+  it('retries a transient 502 from the course probe before saving', async () => {
+    enqueueResponse(502, { success: false, error: 'bad gateway' });
+    enqueueResponse(200, { success: true, data: { id: 'stage-new-1', content_revision: 1 } });
+    enqueueResponse(200, { success: true, data: { path: 'x' } });
+    enqueueResponse(200, { success: true, data: { id: 'stage-new-1', content_revision: 2 } });
+
+    await expect(saveStageToCloud('stage-new-1')).resolves.toMatchObject({ id: 'stage-new-1' });
+    expect(
+      fetchCalls.filter((call) => call.method === 'GET' && call.url === '/api/courses/stage-new-1'),
+    ).toHaveLength(2);
   });
 });
 

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { uploadCourseBlob, uploadCourseMaterial, uploadPptxGenerationSource } from '@/lib/course-assets/client';
+import {
+  uploadCourseBlob,
+  uploadCourseMaterial,
+  uploadPptxGenerationSource,
+} from '@/lib/course-assets/client';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -78,18 +82,69 @@ describe('COS course asset client', () => {
     expect(uploaded).toEqual({ path: 'pending/user-1/material/file.pdf', size: 8 });
   });
 
+  it('retries a transient gateway failure while confirming an uploaded asset', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              path: 'courses/course-1/images/file.png',
+              uploadUrl: 'https://cos.example/upload',
+              publicUrl: '/api/course-assets/object?key=file',
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      uploadCourseBlob('course-1', 'images', new Blob(['image'], { type: 'image/png' })),
+    ).resolves.toContain('/api/course-assets/object');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   it('confirms a PPTX asset before registering it as a generation source', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: {
-        assetId: '11111111-1111-4111-8111-111111111111', path: 'pending/user-1/material/source.pptx', uploadUrl: 'https://cos.example/upload', publicUrl: '/api/course-assets/object?key=source',
-      } }), { status: 200 }))
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              assetId: '11111111-1111-4111-8111-111111111111',
+              path: 'pending/user-1/material/source.pptx',
+              uploadUrl: 'https://cos.example/upload',
+              publicUrl: '/api/course-assets/object?key=source',
+            },
+          }),
+          { status: 200 },
+        ),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ sourceId: '22222222-2222-4222-8222-222222222222' }), { status: 201 }));
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ sourceId: '22222222-2222-4222-8222-222222222222' }), {
+          status: 201,
+        }),
+      );
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('crypto', { randomUUID: () => 'local-pending-id' });
-    const source = await uploadPptxGenerationSource(new File(['pptx'], 'source.pptx', { type: 'application/octet-stream' }));
-    expect(source).toEqual({ sourceId: '22222222-2222-4222-8222-222222222222', path: 'pending/user-1/material/source.pptx' });
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/generation-sources/pptx', expect.objectContaining({ method: 'POST' }));
+    const source = await uploadPptxGenerationSource(
+      new File(['pptx'], 'source.pptx', { type: 'application/octet-stream' }),
+    );
+    expect(source).toEqual({
+      sourceId: '22222222-2222-4222-8222-222222222222',
+      path: 'pending/user-1/material/source.pptx',
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/generation-sources/pptx',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 });

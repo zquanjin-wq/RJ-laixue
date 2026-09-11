@@ -1,5 +1,6 @@
 import { MATERIAL_EXTENSIONS, MATERIAL_MIME_TYPES, type CourseAssetKind } from './shared';
 import { createLogger } from '@/lib/logger';
+import { fetchWithGatewayRetry } from './fetch-retry';
 
 const log = createLogger('CourseAssets');
 
@@ -89,7 +90,7 @@ async function requestSignedUpload({
 }
 
 async function confirmCourseUpload(path: string): Promise<void> {
-  const response = await fetch('/api/course-assets/confirm-upload', {
+  const response = await fetchWithGatewayRetry('/api/course-assets/confirm-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
@@ -168,20 +169,30 @@ export async function uploadCourseMaterial(
 }
 
 /** Upload a PPTX as an immutable generation source; parsing is scheduled separately. */
-export async function uploadPptxGenerationSource(file: File | Blob & { name?: string }): Promise<{ sourceId: string; path: string }> {
+export async function uploadPptxGenerationSource(
+  file: File | (Blob & { name?: string }),
+): Promise<{ sourceId: string; path: string }> {
   const fileName = file instanceof File ? file.name : file.name || 'courseware.pptx';
   if (!/\.pptx$/i.test(fileName)) throw new Error('请选择 .pptx 课件');
   const contentType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   const signed = await requestSignedUpload({
     courseId: `pending-${crypto.randomUUID()}`,
-    kind: 'material', contentType, size: file.size, extension: 'pptx',
+    kind: 'material',
+    contentType,
+    size: file.size,
+    extension: 'pptx',
   });
   if (!signed.assetId) throw new Error('上传服务未返回资产标识');
-  const upload = await fetch(signed.uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: file });
+  const upload = await fetch(signed.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: file,
+  });
   if (!upload.ok) throw new Error(`PPTX 直传失败(HTTP ${upload.status})`);
   await confirmCourseUpload(signed.path);
   const sourceResponse = await fetch('/api/generation-sources/pptx', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ assetId: signed.assetId, fileName }),
   });
   const source = await sourceResponse.json().catch(() => null);

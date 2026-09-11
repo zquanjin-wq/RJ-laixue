@@ -1,4 +1,5 @@
 import { externalizeCourseAssets, type ExternalizedCourseAssets } from './externalize';
+import { fetchWithGatewayRetry } from './fetch-retry';
 
 type RecordLike = Record<string, unknown>;
 
@@ -20,7 +21,8 @@ export interface CourseAssetPreparationInput {
 
 async function readCourseResponse(response: Response): Promise<number | undefined> {
   const text = await response.text();
-  let body: { success?: boolean; error?: string; data?: { content_revision?: unknown } } | null = null;
+  let body: { success?: boolean; error?: string; data?: { content_revision?: unknown } } | null =
+    null;
   try {
     body = JSON.parse(text) as { success?: boolean; error?: string };
   } catch {
@@ -31,12 +33,15 @@ async function readCourseResponse(response: Response): Promise<number | undefine
     const detail = body?.error || text.slice(0, 200) || `HTTP ${response.status}`;
     throw new Error(`Course preparation failed: ${detail}`);
   }
-  return Number.isInteger(body.data?.content_revision) ? Number(body.data?.content_revision) : undefined;
+  return Number.isInteger(body.data?.content_revision)
+    ? Number(body.data?.content_revision)
+    : undefined;
 }
 
 function pendingAssetNamespace(): string {
-  const random = globalThis.crypto?.randomUUID?.().replace(/-/g, '')
-    ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  const random =
+    globalThis.crypto?.randomUUID?.().replace(/-/g, '') ??
+    `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
   return `pending-${random.slice(0, 32)}`;
 }
 
@@ -49,14 +54,15 @@ function pendingAssetNamespace(): string {
 export async function prepareCourseForAssetUploads(
   input: CourseAssetPreparationInput,
 ): Promise<PreparedCourseAssets> {
-  const probe = await fetch(`/api/courses/${encodeURIComponent(input.id)}`, { method: 'GET' });
+  const probe = await fetchWithGatewayRetry(`/api/courses/${encodeURIComponent(input.id)}`, {
+    method: 'GET',
+  });
   if (!probe.ok && probe.status !== 404) {
     throw new Error(`Course preparation failed: cloud probe returned HTTP ${probe.status}`);
   }
 
-  const assetNamespace = input.forceCourseNamespace || probe.status !== 404
-    ? input.id
-    : pendingAssetNamespace();
+  const assetNamespace =
+    input.forceCourseNamespace || probe.status !== 404 ? input.id : pendingAssetNamespace();
 
   // A revoice task for an imported course owns the final course id from the
   // outset. Create a minimal row before requesting upload signatures: the
