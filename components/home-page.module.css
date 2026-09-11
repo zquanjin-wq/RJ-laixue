@@ -597,6 +597,13 @@
   color: #08743b;
 }
 
+.pptxProgressTitle b {
+  margin-left: auto;
+  color: #08743b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .pptxProgressBody > p {
   margin: 3px 0 0;
   overflow: hidden;
@@ -622,6 +629,12 @@
   border-radius: inherit;
   background: linear-gradient(90deg, #42b879, #08743b);
   animation: pptx-progress 1.3s ease-in-out infinite alternate;
+}
+
+.pptxProgressTrack i.pptxProgressDeterminate {
+  min-width: 2%;
+  transition: width 0.45s ease;
+  animation: none;
 }
 
 .pptxProgressBody > .pptxProgressEvent {

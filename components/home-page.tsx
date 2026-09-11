@@ -98,10 +98,37 @@ interface PptxGenerationEventView {
   summary: string;
 }
 
+interface PptxProgressView {
+  summary: string;
+  events: PptxGenerationEventView[];
+  percent?: number;
+  phase?: string;
+  elapsedSeconds?: number;
+}
+
+function pptxPhaseLabel(phase?: string): string {
+  switch (phase) {
+    case 'initializing':
+      return '检查课件';
+    case 'generating_outlines':
+      return '配置课堂角色';
+    case 'generating_scenes':
+      return '生成逐页讲稿与互动';
+    case 'generating_tts':
+      return '生成逐段配音';
+    case 'persisting':
+      return '校验并保存课程';
+    case 'completed':
+      return '生成完成';
+    default:
+      return '处理课件';
+  }
+}
+
 async function waitForDurableGeneration(
   pending: PendingGenerationJob,
   timeoutMs: number,
-  onPptxProgress?: (summary: string, events: PptxGenerationEventView[]) => void,
+  onPptxProgress?: (progress: PptxProgressView) => void,
 ): Promise<{
   status: 'succeeded' | 'failed' | 'cancelled' | 'conflict';
   errorCode?: string;
@@ -126,7 +153,22 @@ async function waitForDurableGeneration(
             .slice(-4)
         : [];
       const latest = events.at(-1);
-      if (latest) onPptxProgress(latest.summary, events);
+      const progress = job.progress && typeof job.progress === 'object' ? job.progress : {};
+      const rawPercent = Number(progress.progress);
+      const percent = Number.isFinite(rawPercent)
+        ? Math.min(100, Math.max(0, Math.round(rawPercent)))
+        : undefined;
+      const summary =
+        (typeof progress.message === 'string' && progress.message) ||
+        latest?.summary ||
+        '任务仍在后台处理中…';
+      onPptxProgress({
+        summary,
+        events,
+        percent,
+        phase: typeof progress.step === 'string' ? progress.step : latest?.phase,
+        elapsedSeconds: Math.max(0, Math.floor((Date.now() - pending.createdAt) / 1000)),
+      });
     }
     if (job.status === 'succeeded') return { status: 'succeeded' };
     if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'conflict') {
@@ -154,10 +196,7 @@ export function HomePage() {
   const [form, setForm] = useState<FormState>(initialFormState);
   const [isPreparingGeneration, setIsPreparingGeneration] = useState(false);
   const [createMode, setCreateMode] = useState<'ai' | 'pptx' | 'course'>('ai');
-  const [pptxProgress, setPptxProgress] = useState<{
-    summary: string;
-    events: PptxGenerationEventView[];
-  } | null>(null);
+  const [pptxProgress, setPptxProgress] = useState<PptxProgressView | null>(null);
   const [preparedPptx, setPreparedPptx] = useState<{
     file: File;
     slides: Slide[];
@@ -278,9 +317,7 @@ export function HomePage() {
     void waitForDurableGeneration(
       pending,
       pending.kind === 'pptx' ? 45 * 60 * 1000 : 30 * 60 * 1000,
-      pending.kind === 'pptx'
-        ? (summary, events) => setPptxProgress({ summary, events })
-        : undefined,
+      pending.kind === 'pptx' ? (progress) => setPptxProgress(progress) : undefined,
     )
       .then((result) => {
         if (result.status === 'succeeded') {
@@ -425,9 +462,7 @@ export function HomePage() {
         };
         savePendingGenerationJob(pending);
         setPreparedPptx(null);
-        const result = await waitForDurableGeneration(pending, 45 * 60 * 1000, (summary, events) =>
-          setPptxProgress({ summary, events }),
-        );
+        const result = await waitForDurableGeneration(pending, 45 * 60 * 1000, setPptxProgress);
         if (result.status !== 'succeeded') {
           if (result.status === 'failed') setFailedPptxJob(pending);
           else clearPendingGenerationJob();
@@ -465,11 +500,7 @@ export function HomePage() {
     try {
       const response = await fetch(failedPptxJob.pollUrl, { method: 'POST' });
       if (!response.ok) throw new Error('生成任务重新提交失败');
-      const result = await waitForDurableGeneration(
-        failedPptxJob,
-        45 * 60 * 1000,
-        (summary, events) => setPptxProgress({ summary, events }),
-      );
+      const result = await waitForDurableGeneration(failedPptxJob, 45 * 60 * 1000, setPptxProgress);
       if (result.status !== 'succeeded') {
         throw new Error(result.errorMessage || '课程生成重试未完成');
       }
@@ -1187,16 +1218,34 @@ export function HomePage() {
                           </span>
                           <div className={styles.pptxProgressBody}>
                             <div className={styles.pptxProgressTitle}>
-                              <span>正在处理 PPTX</span>
+                              <span>{pptxPhaseLabel(pptxProgress?.phase)}</span>
                               <LoaderCircle className="size-4 animate-spin" />
+                              {typeof pptxProgress?.percent === 'number' ? (
+                                <b>{pptxProgress.percent}%</b>
+                              ) : null}
                             </div>
                             <p>{pptxProgress?.summary || '正在解析页面与讲师备注…'}</p>
-                            <div className={styles.pptxProgressTrack} aria-label="PPTX 处理进度">
-                              <i />
+                            <div
+                              className={styles.pptxProgressTrack}
+                              aria-label={`PPTX 处理进度${typeof pptxProgress?.percent === 'number' ? ` ${pptxProgress.percent}%` : ''}`}
+                            >
+                              <i
+                                className={
+                                  typeof pptxProgress?.percent === 'number'
+                                    ? styles.pptxProgressDeterminate
+                                    : undefined
+                                }
+                                style={
+                                  typeof pptxProgress?.percent === 'number'
+                                    ? { width: `${pptxProgress.percent}%` }
+                                    : undefined
+                                }
+                              />
                             </div>
-                            {pptxProgress?.events.length ? (
+                            {typeof pptxProgress?.elapsedSeconds === 'number' ? (
                               <p className={styles.pptxProgressEvent}>
-                                {pptxProgress.events[pptxProgress.events.length - 1]?.summary}
+                                已处理 {Math.max(1, Math.ceil(pptxProgress.elapsedSeconds / 60))}{' '}
+                                分钟，任务仍在后台运行，请勿重复提交
                               </p>
                             ) : null}
                           </div>
