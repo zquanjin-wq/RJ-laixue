@@ -318,11 +318,13 @@ export class ClassroomGenerationRepository {
       progress: unknown;
       result: unknown;
       errorCode: string | null;
+      errorMessage: string | null;
       courseId: string;
       createdAt: Date;
       completedAt: Date | null;
     }>(
       `SELECT j.id,j.status,j.progress,j.result,j.error_code AS "errorCode",
+       j.error_message AS "errorMessage",
        g.course_id AS "courseId",j.created_at AS "createdAt",j.completed_at AS "completedAt"
        FROM app.background_jobs j JOIN app.classroom_generation_jobs g ON g.job_id=j.id
        WHERE j.id=$1 AND j.owner_user_id=$2 AND j.type=$3`,

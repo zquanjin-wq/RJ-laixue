@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getCourse: vi.fn(),
   retry: vi.fn(),
   getOwned: vi.fn(),
+  listOwnedEvents: vi.fn(),
 }));
 
 vi.mock('@/lib/server/auth-context', () => ({ getCurrentActor: mocks.actor }));
@@ -22,6 +23,7 @@ vi.mock('@/lib/server/db/classroom-generation-repository', () => ({
     enqueue = mocks.enqueue;
     retry = mocks.retry;
     getOwned = mocks.getOwned;
+    listOwnedEvents = mocks.listOwnedEvents;
   },
   GenerationIdempotencyConflict: class GenerationIdempotencyConflict extends Error {},
 }));
@@ -73,6 +75,7 @@ describe('durable generation job submission', () => {
       status: 'queued',
       courseId: '6c2195f4-d03c-4cf3-9cb9-dabc17d7d343',
     });
+    mocks.listOwnedEvents.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -163,5 +166,26 @@ describe('durable generation job submission', () => {
     );
     expect(response.status).toBe(202);
     expect(mocks.retry).toHaveBeenCalledWith('d8db3a3f-6db5-4e6a-a8d6-b586270219d4', 'teacher-1');
+  });
+
+  it('returns a safe terminal error summary to the owning teacher', async () => {
+    mocks.getOwned.mockResolvedValueOnce({
+      id: 'd8db3a3f-6db5-4e6a-a8d6-b586270219d4',
+      status: 'failed',
+      courseId: 'course-1',
+      errorCode: 'TTS_UNAVAILABLE',
+      errorMessage: '语音服务暂时不可用，请稍后重试。',
+    });
+    const { GET } = await import('@/app/api/generation-jobs/[jobId]/route');
+    const response = await GET(
+      new NextRequest('http://localhost/api/generation-jobs/d8db3a3f-6db5-4e6a-a8d6-b586270219d4', { method: 'GET' }),
+      { params: Promise.resolve({ jobId: 'd8db3a3f-6db5-4e6a-a8d6-b586270219d4' }) },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'failed',
+      errorCode: 'TTS_UNAVAILABLE',
+      errorMessage: '语音服务暂时不可用，请稍后重试。',
+    });
   });
 });
