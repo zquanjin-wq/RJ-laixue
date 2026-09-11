@@ -95,6 +95,14 @@ services:
       RENDER_MAX_CONCURRENT_EXTRACTIONS: '1'
       RENDER_MAX_JOBS_PER_USER: '0'
       RENDER_JOB_DEADLINE_MS: '5400000'
+      # Hyperframes defaults every FFmpeg preprocessing command to 5 minutes.
+      # Long narrated courses can legitimately exceed that while mixing many
+      # audio clips (the 46m55s / 179-track course took ~310s), so keep the
+      # audio/encode subprocess budget below, but proportional to, the 90m job
+      # deadline. This preserves fail-closed audio correctness instead of
+      # allowing a silent video fallback.
+      FFMPEG_PROCESS_TIMEOUT_MS: '1800000'
+      FFMPEG_ENCODE_TIMEOUT_MS: '1800000'
     # 4 vCPU / 16 GB production profile: leave one CPU for PostgreSQL, the web
     # app and workers while allowing the producer to exit low-memory mode.
     cpus: 3.0
