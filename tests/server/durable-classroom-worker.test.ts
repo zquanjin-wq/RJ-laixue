@@ -18,6 +18,17 @@ describe('durable classroom failure diagnostics', () => {
     });
   });
 
+  it('does not misreport PPTX quality failures as missing source files', () => {
+    expect(
+      describeGenerationFailure(
+        new Error('PPTX AI classroom quality validation failed: missing_element'),
+      ),
+    ).toEqual({
+      code: 'GENERATION_QUALITY_FAILED',
+      message: '课程内容校验未通过，未保存不完整结果。请重试该课程生成任务。',
+    });
+  });
+
   it('keeps unknown internal failures generic', () => {
     expect(describeGenerationFailure(new Error('internal endpoint https://secret.example/token'))).toEqual({
       code: 'GENERATION_FAILED',

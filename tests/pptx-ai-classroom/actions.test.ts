@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { generatePptxPageActions } from '@/lib/pptx-ai-classroom/actions';
+import {
+  generatePptxPageActions,
+  sanitizePptxPageActions,
+} from '@/lib/pptx-ai-classroom/actions';
 
 describe('PPTX action generation adapter', () => {
   it('keeps the prepared narration and only accepts cues for real slide elements', async () => {
@@ -45,5 +48,30 @@ describe('PPTX action generation adapter', () => {
     expect(actions.find((action) => action.type === 'speech')).not.toMatchObject({
       text: '模型临时讲稿，不能覆盖已准备讲稿。',
     });
+  });
+
+  it('repairs stale checkpoint actions without removing playable narration', () => {
+    const scene = {
+      id: 'scene-1',
+      content: {
+        type: 'slide',
+        canvas: { elements: [{ id: 'real-title', type: 'text', content: '<p>课程标题</p>' }] },
+      },
+    } as any;
+    const actions = sanitizePptxPageActions(
+      scene,
+      [{ id: 'teacher-1' }, { id: 'student-1' }],
+      [
+        { id: 'speech-1', type: 'speech', title: '讲解', text: '保留讲稿' },
+        { id: 'cue-1', type: 'spotlight', elementId: 'missing-element' },
+        { id: 'cue-2', type: 'spotlight', elementId: 'real-title' },
+        { id: 'talk-1', type: 'discussion', agentId: 'missing-agent', message: '无效互动' },
+      ] as any,
+    );
+
+    expect(actions).toEqual([
+      expect.objectContaining({ type: 'speech', text: '保留讲稿' }),
+      expect.objectContaining({ type: 'spotlight', elementId: 'real-title' }),
+    ]);
   });
 });

@@ -21,6 +21,37 @@ function requiredSpeech(script: PptxPageScript): Action {
 }
 
 /**
+ * Remove model-generated references that cannot be played by the imported
+ * slide. This is intentionally safe to run on checkpointed actions as well as
+ * newly generated actions.
+ */
+export function sanitizePptxPageActions(
+  scene: Scene,
+  roster: Array<Pick<PptxClassroomRosterMember, 'id'>>,
+  actions: Action[],
+): Action[] {
+  const elementIds = new Set(
+    scene.content.type === 'slide'
+      ? scene.content.canvas.elements.map((element) => element.id)
+      : [],
+  );
+  const agentIds = new Set(roster.map((agent) => agent.id));
+
+  return actions.filter((action) => {
+    if (
+      (action.type === 'spotlight' || action.type === 'laser' || action.type === 'play_video') &&
+      !elementIds.has(action.elementId)
+    ) {
+      return false;
+    }
+    if (action.type === 'discussion' && action.agentId && !agentIds.has(action.agentId)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+/**
  * Adapt the existing course action generator to an imported slide. The canvas
  * is never regenerated: only actions are produced, and every spotlight is
  * validated by the shared generator against this page's actual element IDs.
@@ -82,5 +113,5 @@ export async function generatePptxPageActions(input: {
     return speech;
   });
   if (!speechPlaced) actions.push(speech);
-  return actions;
+  return sanitizePptxPageActions(input.scene, input.roster, actions);
 }

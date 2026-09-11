@@ -22,7 +22,10 @@ import {
 } from '@/lib/pptx-ai-classroom/inspection';
 import { applyPptxRoster, type PptxPageScript } from '@/lib/pptx-ai-classroom/draft';
 import { generatePptxPageScript, generatePptxRoster } from '@/lib/pptx-ai-classroom/generation';
-import { generatePptxPageActions } from '@/lib/pptx-ai-classroom/actions';
+import {
+  generatePptxPageActions,
+  sanitizePptxPageActions,
+} from '@/lib/pptx-ai-classroom/actions';
 import { validatePptxAiClassroom } from '@/lib/pptx-ai-classroom/quality';
 import {
   applyPptxSpeechAudio,
@@ -39,6 +42,12 @@ export function describeGenerationFailure(error: unknown): { code: string; messa
     return {
       code: 'TTS_GENERATION_FAILED',
       message: '课程讲解已生成，但配音未完成。请检查音色服务后重试该课程生成任务。',
+    };
+  }
+  if (/quality validation/i.test(detail)) {
+    return {
+      code: 'GENERATION_QUALITY_FAILED',
+      message: '课程内容校验未通过，未保存不完整结果。请重试该课程生成任务。',
     };
   }
   if (/pptx|imported ppt|source/i.test(detail)) {
@@ -317,7 +326,10 @@ async function runPptxAiClassroomJob(input: {
           aiCall,
         }),
     );
-    actionsBySceneId.set(script.sceneId, actions);
+    // Checkpoints can contain output created by an older generator version.
+    // Sanitize after retrieval so a retry repairs stale references without
+    // invalidating scripts or completed TTS checkpoints.
+    actionsBySceneId.set(script.sceneId, sanitizePptxPageActions(scene, roster, actions));
   }
   let voicedScenes = scenes.map((scene) => {
     const actions = actionsBySceneId.get(scene.id);
