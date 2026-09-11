@@ -281,6 +281,33 @@ describe('P1 PostgreSQL foundation', () => {
     await expect(jobs.heartbeat(lease, {})).rejects.toBeInstanceOf(GenerationLeaseLost);
   });
 
+  it('starts a manual retry with a clean progress stream while retaining checkpoints', async () => {
+    const jobs = new ClassroomGenerationRepository(pool);
+    const submitted = await jobs.enqueue({
+      ownerUserId: 'user-1',
+      operation: 'create',
+      channel: 'web',
+      inputKind: 'text',
+      idempotencyKey: 'generation-clean-retry',
+      payload: { requirement: 'retry with clean progress' },
+    });
+    const first = (await jobs.claimNext('first-worker'))!;
+    await jobs.appendEvent(first, { kind: 'error', phase: 'tts', summary: '旧一次尝试失败' });
+    await jobs.fail(first, 'TTS_UNAVAILABLE', 'temporary voice provider outage', false);
+    expect((await jobs.listOwnedEvents(submitted.id, 'user-1')).map((event) => event.summary)).toEqual([
+      '旧一次尝试失败',
+    ]);
+
+    expect(await jobs.retry(submitted.id, 'user-1')).toBe(true);
+    expect(await jobs.listOwnedEvents(submitted.id, 'user-1')).toEqual([]);
+
+    const retried = (await jobs.claimNext('retry-worker'))!;
+    await jobs.appendEvent(retried, { kind: 'thinking', phase: 'outline', summary: '新一次尝试开始' });
+    expect((await jobs.listOwnedEvents(submitted.id, 'user-1')).map((event) => event.summary)).toEqual([
+      '新一次尝试开始',
+    ]);
+  });
+
   it('commits the formal draft atomically and refuses revoked roles and stale revisions', async () => {
     const jobs = new ClassroomGenerationRepository(pool);
     const courses = new CourseRepository(pool);

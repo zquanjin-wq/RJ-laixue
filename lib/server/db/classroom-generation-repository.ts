@@ -304,7 +304,8 @@ export class ClassroomGenerationRepository {
     const result = await this.pool.query(
       `UPDATE app.background_jobs SET status='queued',attempts=0,run_after=now(),
         started_at=NULL,completed_at=NULL,error_code=NULL,error_message=NULL,
-        result=NULL,locked_by=NULL,locked_until=NULL,updated_at=now()
+        result=NULL,progress='{"step":"queued","progress":0}'::jsonb,
+        locked_by=NULL,locked_until=NULL,execution_epoch=execution_epoch+1,updated_at=now()
        WHERE id=$1 AND owner_user_id=$2 AND type=$3 AND status IN ('failed','cancelled','conflict')`,
       [id, ownerUserId, JOB_TYPE],
     );
@@ -346,7 +347,8 @@ export class ClassroomGenerationRepository {
       `SELECT e.id,e.kind,e.phase,e.page,e.summary,e.details,e.created_at AS "createdAt"
        FROM app.classroom_generation_events e
        JOIN app.classroom_generation_jobs g ON g.job_id=e.job_id
-       WHERE e.job_id=$1 AND g.owner_user_id=$2 AND e.id>$3
+       JOIN app.background_jobs j ON j.id=e.job_id
+       WHERE e.job_id=$1 AND g.owner_user_id=$2 AND e.execution_epoch=j.execution_epoch AND e.id>$3
        ORDER BY e.id ASC LIMIT 200`,
       [id, ownerUserId, Math.max(0, afterId)],
     );
