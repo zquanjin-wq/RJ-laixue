@@ -16,7 +16,14 @@ if (-not (Test-Path -LiteralPath $SshKeyPath)) { throw "SSH key not found: $SshK
 if (-not (Test-Path -LiteralPath (Join-Path $RepositoryPath '.git'))) { throw "Not a Git worktree: $RepositoryPath" }
 if (-not $Revision) { $Revision = (git -C $RepositoryPath rev-parse --short HEAD).Trim() }
 
-$allowedServices = @('app', 'revoice-worker', 'classroom-generation-worker', 'course-asset-cleanup-worker')
+$allowedServices = @(
+  'app',
+  'revoice-worker',
+  'classroom-generation-worker',
+  'course-asset-cleanup-worker',
+  'render-service',
+  'video-export-worker'
+)
 $Services = @($Services | Select-Object -Unique)
 if ($Services.Count -eq 0) { throw 'At least one deployable service is required.' }
 foreach ($service in $Services) {
