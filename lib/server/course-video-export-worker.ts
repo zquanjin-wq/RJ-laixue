@@ -5,6 +5,10 @@ import {
 import { CourseRepository } from '@/lib/server/db/course-repository';
 import { getDatabasePool } from '@/lib/server/db/pool';
 import { CosStorage } from '@/lib/server/cos-storage';
+import {
+  resolveVideoExportProfile,
+  type VideoExportPreset,
+} from '@/lib/export/video-export-contract';
 
 type RenderState = {
   status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -17,6 +21,7 @@ type RenderState = {
 type VideoRequest = {
   inputObjectKey?: string;
   sourceRevision?: number;
+  preset?: VideoExportPreset;
   render?: { jobId?: string };
 };
 const STALE_RUNNING_JOB_MS = 15 * 60 * 1000;
@@ -54,6 +59,10 @@ function sourceRevision(job: CourseVideoExport) {
   return Number.isInteger(revision) ? revision! : null;
 }
 
+function renderProfile(job: CourseVideoExport) {
+  return resolveVideoExportProfile((job.request as VideoRequest | null)?.preset);
+}
+
 async function isCurrentCourseRevision(job: CourseVideoExport) {
   const revision = sourceRevision(job);
   if (revision === null) return false;
@@ -83,10 +92,12 @@ async function waitForRender(
   }
 }
 
-export async function runNextCourseVideoExport(input: {
-  workerId?: string;
-  leaseMs?: number;
-} = {}): Promise<boolean> {
+export async function runNextCourseVideoExport(
+  input: {
+    workerId?: string;
+    leaseMs?: number;
+  } = {},
+): Promise<boolean> {
   const workerId = input.workerId ?? `video-agent:${process.pid}`;
   const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS;
   const repository = new CourseVideoExportRepository(getDatabasePool());
@@ -120,7 +131,9 @@ export async function runNextCourseVideoExport(input: {
         'course-video.zip',
       );
       form.set('format', 'mp4');
-      form.set('quality', 'standard');
+      const profile = renderProfile(job);
+      form.set('fps', String(profile.fps));
+      form.set('quality', profile.quality);
       const submitted = await responseJson<{ jobId?: string }>(
         await fetch(`${rendererUrl()}/render`, { method: 'POST', body: form }),
         'Submit video render',

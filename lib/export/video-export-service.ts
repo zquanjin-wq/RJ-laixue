@@ -5,6 +5,7 @@ import {
   type CourseVideoExport,
 } from '@/lib/server/db/course-video-export-repository';
 import { getDatabasePool } from '@/lib/server/db/pool';
+import { resolveVideoExportProfile } from './video-export-contract';
 import type {
   VideoExportCapability,
   VideoExportRecord,
@@ -92,13 +93,22 @@ function present(
     estimatedWaitSeconds: null,
   },
 ): VideoExportRecord {
-  const request = row.request as { render?: RenderProgress; sourceRevision?: unknown } | null;
+  const request = row.request as {
+    render?: RenderProgress;
+    sourceRevision?: unknown;
+    preset?: 'fast' | 'standard';
+  } | null;
   const render = request?.render;
+  const profile = resolveVideoExportProfile(request?.preset);
   return {
     id: row.id,
     courseId: row.courseId,
     requestedBy: row.requestedBy,
     format: 'mp4',
+    preset: profile.preset,
+    fps: profile.fps,
+    width: profile.width,
+    height: profile.height,
     status:
       row.status === 'running'
         ? 'rendering'
@@ -148,6 +158,7 @@ class PostgresVideoExportService implements VideoExportService {
       requestedBy: input.requestedBy,
     });
     const inputObjectKey = `courses/${input.courseId}/video-exports/${row.id}/source-${randomUUID()}.zip`;
+    const profile = resolveVideoExportProfile(input.preset);
     await getDatabasePool().query(
       `UPDATE app.course_video_exports SET request = $2::jsonb, updated_at = now() WHERE id = $1`,
       [
@@ -155,13 +166,18 @@ class PostgresVideoExportService implements VideoExportService {
         JSON.stringify({
           uploadObjectKey: inputObjectKey,
           sourceRevision: input.sourceRevision ?? null,
+          preset: profile.preset,
         }),
       ],
     );
     return {
       ...present({
         ...row,
-        request: { uploadObjectKey: inputObjectKey, sourceRevision: input.sourceRevision ?? null },
+        request: {
+          uploadObjectKey: inputObjectKey,
+          sourceRevision: input.sourceRevision ?? null,
+          preset: profile.preset,
+        },
       }),
       inputUploadUrl: await new CosStorage().getUploadUrl(inputObjectKey),
     };

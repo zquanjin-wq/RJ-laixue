@@ -126,17 +126,17 @@ export function HeaderControls({
 
   const videoExportStatusText = (() => {
     if (latestVideoExport?.status === 'rendering') {
-      const progress = typeof latestVideoExport.progress === 'number'
-        ? ` ${Math.round(latestVideoExport.progress * 100)}%`
-        : '';
+      const progress =
+        typeof latestVideoExport.progress === 'number'
+          ? ` ${Math.round(latestVideoExport.progress * 100)}%`
+          : '';
       return `正在渲染${progress}`;
     }
     if (latestVideoExport?.status === 'queued') {
       const position = latestVideoExport.queuePosition;
       const wait = latestVideoExport.estimatedWaitSeconds;
-      const waitText = typeof wait === 'number' && wait > 0
-        ? `，预计等待约 ${Math.ceil(wait / 60)} 分钟`
-        : '';
+      const waitText =
+        typeof wait === 'number' && wait > 0 ? `，预计等待约 ${Math.ceil(wait / 60)} 分钟` : '';
       return typeof position === 'number' ? `队列第 ${position} 位${waitText}` : '正在等待渲染';
     }
     return '生成包含配音的 MP4 视频';
@@ -325,7 +325,7 @@ export function HeaderControls({
                   </div>
                 </div>
               </button>
-              {latestVideoExport?.status === 'completed' && latestVideoExport.downloadUrl ? (
+              {latestVideoExport?.status === 'completed' && latestVideoExport.downloadUrl && (
                 <a
                   href={latestVideoExport.downloadUrl}
                   onClick={() => setExportMenuOpen(false)}
@@ -339,33 +339,60 @@ export function HeaderControls({
                     </div>
                   </div>
                 </a>
-              ) : (
+              )}
+              {latestVideoExport?.status === 'queued' ||
+              latestVideoExport?.status === 'rendering' ? (
                 <button
-                  onClick={() => {
-                    setExportMenuOpen(false);
-                    void exportCourseVideo().finally(() =>
-                      window.setTimeout(() => void refreshVideoExport(), 1_000),
-                    );
-                  }}
-                  disabled={
-                    isPreparingVideo ||
-                    latestVideoExport?.status === 'queued' ||
-                    latestVideoExport?.status === 'rendering'
-                  }
-                  className="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2.5"
+                  disabled
+                  className="flex w-full cursor-not-allowed items-center gap-2.5 px-4 py-2.5 text-left text-sm opacity-60"
                 >
                   <Film className="w-4 h-4 text-gray-400 shrink-0" />
                   <div>
-                    <div>
-                      {latestVideoExport?.status === 'queued' || latestVideoExport?.status === 'rendering'
-                        ? '课程视频生成中'
-                        : '生成课程视频'}
-                    </div>
+                    <div>课程视频生成中</div>
                     <div className="text-[11px] text-gray-400 dark:text-gray-500">
                       {videoExportStatusText}
                     </div>
                   </div>
                 </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      void exportCourseVideo('fast').finally(() =>
+                        window.setTimeout(() => void refreshVideoExport(), 1_000),
+                      );
+                    }}
+                    disabled={isPreparingVideo}
+                    className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
+                  >
+                    <Film className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <div>快速生成视频</div>
+                      <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                        720p · 20fps · 更快交付
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      void exportCourseVideo('standard').finally(() =>
+                        window.setTimeout(() => void refreshVideoExport(), 1_000),
+                      );
+                    }}
+                    disabled={isPreparingVideo}
+                    className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
+                  >
+                    <Film className="w-4 h-4 text-gray-400 shrink-0" />
+                    <div>
+                      <div>标准生成视频</div>
+                      <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                        720p · 24fps · 默认推荐
+                      </div>
+                    </div>
+                  </button>
+                </>
               )}
             </div>
           )}

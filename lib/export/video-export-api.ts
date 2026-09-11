@@ -4,6 +4,7 @@ import { getCurrentActor, type AuthenticatedActor } from '@/lib/server/auth-cont
 import {
   type VideoExportCapability,
   type VideoExportFormat,
+  type VideoExportPreset,
   type VideoExportRequestInput,
 } from './video-export-contract';
 
@@ -16,6 +17,7 @@ const identifierSchema = z
 const createRequestSchema = z
   .object({
     format: z.literal('mp4').optional(),
+    preset: z.enum(['fast', 'standard']).optional(),
     sourceRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
@@ -67,6 +69,7 @@ export async function parseVideoExportRequest(
       courseId,
       requestedBy,
       format: (parsed.data.format ?? 'mp4') as VideoExportFormat,
+      preset: (parsed.data.preset ?? 'standard') as VideoExportPreset,
       sourceRevision: parsed.data.sourceRevision,
     },
   };

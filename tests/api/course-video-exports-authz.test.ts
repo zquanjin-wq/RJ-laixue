@@ -38,13 +38,13 @@ async function listVideoExports() {
   );
 }
 
-async function requestVideoExport() {
+async function requestVideoExport(body: Record<string, unknown> = {}) {
   const { POST } = await import('@/app/api/courses/[id]/video-exports/route');
   return POST(
     new Request('http://localhost/api/courses/course-1/video-exports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify(body),
     }) as unknown as NextRequest,
     { params: Promise.resolve({ id: 'course-1' }) },
   );
@@ -115,8 +115,22 @@ describe('GET /api/courses/[id]/video-exports', () => {
       expect.objectContaining({
         courseId: 'course-1',
         requestedBy: 'teacher-1',
+        preset: 'standard',
         sourceRevision: 8,
       }),
+    );
+  });
+
+  it('accepts the 720p fast export preset', async () => {
+    getCurrentActor.mockResolvedValue({ userId: 'teacher-1', role: 'teacher' });
+    getCourse.mockResolvedValue({ id: 'course-1', ownerUserId: 'teacher-1', contentRevision: 8 });
+    requestExport.mockResolvedValue({ id: 'video-fast' });
+
+    const response = await requestVideoExport({ preset: 'fast' });
+
+    expect(response.status).toBe(202);
+    expect(requestExport).toHaveBeenCalledWith(
+      expect.objectContaining({ preset: 'fast', sourceRevision: 8 }),
     );
   });
 });
