@@ -882,15 +882,10 @@ export function HomePage() {
 
         <section className={styles.hero}>
           <div>
-            <p className={styles.eyebrow}>
-              <span>TEACHING BRIEF</span>
-              <i aria-hidden="true">•</i>
-              教学蓝图
-            </p>
             <h1>
               创建一门课程，
               <span>
-                从一个<span className={styles.accent}>清晰的意图</span>开始
+                从一段<span className={styles.accent}>清晰描述的需求</span>开始。
               </span>
             </h1>
           </div>
