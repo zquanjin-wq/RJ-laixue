@@ -102,7 +102,11 @@ async function waitForDurableGeneration(
   pending: PendingGenerationJob,
   timeoutMs: number,
   onPptxProgress?: (summary: string, events: PptxGenerationEventView[]) => void,
-): Promise<'succeeded' | 'failed' | 'cancelled' | 'conflict'> {
+): Promise<{
+  status: 'succeeded' | 'failed' | 'cancelled' | 'conflict';
+  errorCode?: string;
+  errorMessage?: string;
+}> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -124,9 +128,13 @@ async function waitForDurableGeneration(
       const latest = events.at(-1);
       if (latest) onPptxProgress(latest.summary, events);
     }
-    if (job.status === 'succeeded') return 'succeeded';
+    if (job.status === 'succeeded') return { status: 'succeeded' };
     if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'conflict') {
-      return job.status;
+      return {
+        status: job.status,
+        errorCode: typeof job.errorCode === 'string' ? job.errorCode : undefined,
+        errorMessage: typeof job.errorMessage === 'string' ? job.errorMessage : undefined,
+      };
     }
   }
   throw new Error('课程生成仍在后台继续，可稍后从课程管理中打开。');
@@ -156,6 +164,7 @@ export function HomePage() {
     sourceId: string;
   } | null>(null);
   const [resumingGeneration, setResumingGeneration] = useState(false);
+  const [failedPptxJob, setFailedPptxJob] = useState<PendingGenerationJob | null>(null);
   const [dragMode, setDragMode] = useState<'pptx' | 'course' | null>(null);
   const isPreparingGenerationRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -273,13 +282,15 @@ export function HomePage() {
         ? (summary, events) => setPptxProgress({ summary, events })
         : undefined,
     )
-      .then((status) => {
-        clearPendingGenerationJob();
-        if (status === 'succeeded') {
+      .then((result) => {
+        if (result.status === 'succeeded') {
+          clearPendingGenerationJob();
           router.push(`/classroom/${encodeURIComponent(pending.courseId)}?editor=1`);
           return;
         }
-        setError('课程生成未完成，可从课程管理中查看后重试。');
+        if (result.status === 'failed' && pending.kind === 'pptx') setFailedPptxJob(pending);
+        else clearPendingGenerationJob();
+        setError(result.errorMessage || '课程生成未完成，可从课程管理中查看后重试。');
       })
       .catch((error: unknown) => {
         // Keep the handle: a transient network failure must not turn into a
@@ -414,12 +425,15 @@ export function HomePage() {
         };
         savePendingGenerationJob(pending);
         setPreparedPptx(null);
-        const status = await waitForDurableGeneration(pending, 45 * 60 * 1000, (summary, events) =>
+        const result = await waitForDurableGeneration(pending, 45 * 60 * 1000, (summary, events) =>
           setPptxProgress({ summary, events }),
         );
+        if (result.status !== 'succeeded') {
+          if (result.status === 'failed') setFailedPptxJob(pending);
+          else clearPendingGenerationJob();
+          throw new Error(result.errorMessage || 'AI 课堂生成未完成，可从课程管理中查看后重试。');
+        }
         clearPendingGenerationJob();
-        if (status !== 'succeeded')
-          throw new Error('AI 课堂生成未完成，可从课程管理中查看后重试。');
         setPptxProgress({ summary: 'AI 课堂已生成，正在进入编辑器…', events: [] });
         router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
         return;
@@ -437,6 +451,33 @@ export function HomePage() {
         generationError instanceof Error ? generationError.message : 'AI 课堂生成失败';
       setError(message);
       toast.error(message);
+      setPptxProgress(null);
+    } finally {
+      setResumingGeneration(false);
+    }
+  };
+
+  const retryFailedPptxGeneration = async () => {
+    if (!failedPptxJob || resumingGeneration) return;
+    setResumingGeneration(true);
+    setError(null);
+    setPptxProgress({ summary: '正在恢复已完成的讲稿，并重试配音…', events: [] });
+    try {
+      const response = await fetch(failedPptxJob.pollUrl, { method: 'POST' });
+      if (!response.ok) throw new Error('生成任务重新提交失败');
+      const result = await waitForDurableGeneration(
+        failedPptxJob,
+        45 * 60 * 1000,
+        (summary, events) => setPptxProgress({ summary, events }),
+      );
+      if (result.status !== 'succeeded') {
+        throw new Error(result.errorMessage || '课程生成重试未完成');
+      }
+      clearPendingGenerationJob();
+      setFailedPptxJob(null);
+      router.push(`/classroom/${encodeURIComponent(failedPptxJob.courseId)}?editor=1`);
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : '课程生成重试失败');
       setPptxProgress(null);
     } finally {
       setResumingGeneration(false);
@@ -549,9 +590,11 @@ export function HomePage() {
           createdAt: Date.now(),
         };
         savePendingGenerationJob(pending);
-        const status = await waitForDurableGeneration(pending, 30 * 60 * 1000);
+        const result = await waitForDurableGeneration(pending, 30 * 60 * 1000);
         clearPendingGenerationJob();
-        if (status !== 'succeeded') throw new Error('课程生成未完成，可从课程管理中查看后重试。');
+        if (result.status !== 'succeeded') {
+          throw new Error(result.errorMessage || '课程生成未完成，可从课程管理中查看后重试。');
+        }
         router.push(`/classroom/${encodeURIComponent(created.courseId)}?editor=1`);
         return;
       }
@@ -1326,7 +1369,18 @@ export function HomePage() {
                 exit={{ opacity: 0, height: 0 }}
                 className="mt-3 rounded-lg border border-red-300 bg-red-50/80 p-3 text-sm text-red-700"
               >
-                {error}
+                <div className="flex items-center justify-between gap-3">
+                  <span>{error}</span>
+                  {failedPptxJob ? (
+                    <button
+                      type="button"
+                      onClick={() => void retryFailedPptxGeneration()}
+                      className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100"
+                    >
+                      重试生成
+                    </button>
+                  ) : null}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
