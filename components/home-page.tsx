@@ -1033,9 +1033,7 @@ export function HomePage() {
                           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
                             {createMode === 'pptx'
                               ? pptxProgress?.summary || '正在解析页面与讲师备注…'
-                              : createMode === 'ai'
-                                ? '正在创建课程并生成学习路径…'
-                                : '正在解析课程内容与互动配置…'}
+                              : '正在解析课程内容与互动配置…'}
                           </p>
                         </div>
                         <LoaderCircle className="ml-auto size-5 animate-spin text-emerald-700" />
@@ -1043,9 +1041,7 @@ export function HomePage() {
                       <div className="mt-6 h-2 overflow-hidden rounded-full bg-slate-200/80">
                         <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" />
                       </div>
-                      <p className="mt-2 text-right font-mono text-xs text-slate-500">
-                        {createMode === 'ai' ? '课程生成中' : '处理中'}
-                      </p>
+                      <p className="mt-2 text-right font-mono text-xs text-slate-500">处理中</p>
                       {createMode === 'pptx' && pptxProgress?.events.length ? (
                         <div className="mt-4 space-y-1.5 rounded-lg border border-slate-200 bg-white/55 p-3 text-left text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950/30 dark:text-slate-300">
                           {pptxProgress.events.map((event) => (
