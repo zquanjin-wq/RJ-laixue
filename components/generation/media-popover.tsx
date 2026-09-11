@@ -2,14 +2,7 @@
 
 import { useState, useCallback, useMemo, Fragment } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import {
-  Image as ImageIcon,
-  Video,
-  Volume2,
-  Mic,
-  SlidersHorizontal,
-  ChevronRight,
-} from 'lucide-react';
+import { Image as ImageIcon, Video, Volume2, Mic, SlidersHorizontal } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -32,11 +25,6 @@ import { ASR_PROVIDERS, getASRSupportedLanguages } from '@/lib/audio/constants';
 import type { ImageProviderId, VideoProviderId } from '@/lib/media/types';
 import type { ASRProviderId } from '@/lib/audio/types';
 import { isCustomASRProvider } from '@/lib/audio/types';
-import type { SettingsSection } from '@/lib/types/settings';
-
-interface MediaPopoverProps {
-  onSettingsOpen: (section: SettingsSection) => void;
-}
 
 // ─── Provider icon maps ───
 const IMAGE_PROVIDER_ICONS: Record<string, string> = {
@@ -74,7 +62,7 @@ function providerModels<T extends { id: string; name: string }>(
   return [...builtInModels, ...customModels];
 }
 
-export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
+export function MediaPopover() {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('image');
@@ -267,17 +255,7 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
               label={t('media.imageCapability')}
               enabled={imageGenerationEnabled}
               onToggle={setImageGenerationEnabled}
-            >
-              <GroupedSelect
-                groups={imageGroups}
-                selectedGroupId={imageProviderId}
-                selectedItemId={imageModelId}
-                onSelect={(gid, iid) => {
-                  setImageProvider(gid as ImageProviderId);
-                  setImageModelId(iid);
-                }}
-              />
-            </TabPanel>
+            />
           )}
 
           {activeTab === 'video' && (
@@ -286,17 +264,7 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
               label={t('media.videoCapability')}
               enabled={videoGenerationEnabled}
               onToggle={setVideoGenerationEnabled}
-            >
-              <GroupedSelect
-                groups={videoGroups}
-                selectedGroupId={videoProviderId}
-                selectedItemId={videoModelId}
-                onSelect={(gid, iid) => {
-                  setVideoProvider(gid as VideoProviderId);
-                  setVideoModelId(iid);
-                }}
-              />
-            </TabPanel>
+            />
           )}
 
           {activeTab === 'tts' && (
@@ -314,32 +282,8 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
               label={t('media.asrCapability')}
               enabled={asrEnabled}
               onToggle={setASREnabled}
-            >
-              <GroupedSelect
-                groups={asrGroups}
-                selectedGroupId={asrProviderId}
-                selectedItemId={asrLanguage}
-                onSelect={(gid, iid) => {
-                  setASRProvider(gid as ASRProviderId);
-                  setASRLanguage(iid);
-                }}
-              />
-            </TabPanel>
+            />
           )}
-        </div>
-
-        {/* ── Footer ── */}
-        <div className="border-t border-border/40">
-          <button
-            onClick={() => {
-              setOpen(false);
-              onSettingsOpen(activeTab);
-            }}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-          >
-            <span>{t('toolbar.advancedSettings')}</span>
-            <ChevronRight className="size-3" />
-          </button>
         </div>
       </PopoverContent>
     </Popover>

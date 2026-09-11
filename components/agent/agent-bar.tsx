@@ -720,7 +720,7 @@ export function AgentBar() {
   const avatarRow = (
     <div className="flex items-center gap-1.5 shrink-0">
       {teacherAgent && (
-        <div className="size-8 rounded-full overflow-hidden ring-2 ring-blue-400/40 dark:ring-blue-500/30 shrink-0">
+        <div className="size-6 rounded-full overflow-hidden ring-2 ring-blue-400/40 dark:ring-blue-500/30 shrink-0">
           <img
             src={teacherAgent.avatar}
             alt={getAgentName(teacherAgent)}
@@ -820,19 +820,17 @@ export function AgentBar() {
   };
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-96">
+    <div ref={containerRef} className="relative w-fit max-w-96">
       <Tooltip>
         <TooltipTrigger asChild>
           <button
+            aria-label={t('agentBar.configTooltip')}
             className={cn(
-              'group flex items-center gap-2 cursor-pointer rounded-full px-2.5 py-2 transition-all w-full',
+              'group flex items-center gap-2 cursor-pointer rounded-[7px] px-2 py-2 transition-all',
               'border border-border/50 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60',
             )}
             onClick={() => setOpen(!open)}
           >
-            <span className="text-xs text-muted-foreground/60 group-hover:text-muted-foreground transition-colors hidden sm:block font-medium flex-1 text-left truncate">
-              {open ? t('agentBar.expandedTitle') : t('agentBar.readyToLearn')}
-            </span>
             {avatarRow}
             {open ? (
               <ChevronUp className="size-3 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors" />
@@ -841,11 +839,7 @@ export function AgentBar() {
             )}
           </button>
         </TooltipTrigger>
-        {!open && (
-          <TooltipContent side="bottom" sideOffset={4}>
-            {t('agentBar.configTooltip')}
-          </TooltipContent>
-        )}
+        {!open && <TooltipContent side="top">{t('agentBar.configTooltip')}</TooltipContent>}
       </Tooltip>
 
       <AnimatePresence>
@@ -855,7 +849,7 @@ export function AgentBar() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.97 }}
             transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
-            className="absolute right-0 top-full mt-1 z-50 w-96"
+            className="absolute bottom-full left-0 z-50 mb-1 w-[min(24rem,calc(100vw-32px))]"
           >
             <div className="rounded-2xl bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm ring-1 ring-black/[0.04] dark:ring-white/[0.06] shadow-[0_1px_8px_-2px_rgba(0,0,0,0.06)] dark:shadow-[0_1px_8px_-2px_rgba(0,0,0,0.3)] px-2 py-1.5">
               {/* Teacher — always visible */}

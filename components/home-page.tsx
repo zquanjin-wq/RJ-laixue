@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'motion/react';
-import { TeachingDashboard } from '@/components/teaching-dashboard';
-import { AdminGate } from '@/components/auth-gate';
 import {
-  ArrowUp,
+  ArrowRight,
+  ArrowLeft,
+  Box,
   Check,
   ChevronDown,
   Clock,
@@ -64,7 +65,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDraftCache } from '@/lib/hooks/use-draft-cache';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { useImportClassroom } from '@/lib/import/use-import-classroom';
-import { shouldShowVocationalTestUi } from '@/lib/config/feature-flags';
 import { useImportPptx } from '@/lib/import/use-import-pptx';
 import {
   clearPendingGenerationJob,
@@ -72,6 +72,7 @@ import {
   savePendingGenerationJob,
   type PendingGenerationJob,
 } from '@/lib/generation/pending-job';
+import styles from './home-page.module.css';
 
 const log = createLogger('Home');
 
@@ -88,7 +89,6 @@ interface FormState {
   requirement: string;
   webSearch: boolean;
   interactiveMode: boolean;
-  vocationalTestMode: boolean;
 }
 
 interface PptxGenerationEventView {
@@ -137,14 +137,12 @@ const initialFormState: FormState = {
   requirement: '',
   webSearch: false,
   interactiveMode: false,
-  vocationalTestMode: false,
 };
 
 export function HomePage() {
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
-  const showVocationalTestUi = shouldShowVocationalTestUi();
   const [form, setForm] = useState<FormState>(initialFormState);
   const [isPreparingGeneration, setIsPreparingGeneration] = useState(false);
   const [createMode, setCreateMode] = useState<'ai' | 'pptx' | 'course'>('ai');
@@ -170,7 +168,9 @@ export function HomePage() {
   const providersConfig = useSettingsStore((s) => s.providersConfig);
   const selectedAgentIds = useSettingsStore((s) => s.selectedAgentIds);
   const hasUsableProvider = hasUsableLLMProvider(providersConfig);
-  const [recentOpen, setRecentOpen] = useState(true);
+  // Keep the creation flow as the page's primary task. Returning users can
+  // still expand recent courses, and an explicitly saved preference wins.
+  const [recentOpen, setRecentOpen] = useState(false);
   const persistRecentOpen = (next: boolean) => {
     setRecentOpen(next);
     try {
@@ -185,7 +185,9 @@ export function HomePage() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(RECENT_OPEN_STORAGE_KEY);
-      if (saved !== null) setRecentOpen(saved !== 'false');
+      // Keep the collapsed default for first-time visitors. Only an explicit
+      // stored preference should override it.
+      if (saved !== null) setRecentOpen(saved === 'true');
     } catch {
       /* localStorage unavailable */
     }
@@ -236,6 +238,17 @@ export function HomePage() {
   const thumbnailsRef = useRef<Record<string, Slide>>({});
   const pendingGenerationResumeRef = useRef(false);
 
+  useEffect(() => {
+    if (!themeOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
+        setThemeOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [themeOpen]);
+
   // Durable generation continues on the worker after a refresh. Reconnect to
   // its status stream instead of asking the teacher to upload or submit again.
   useEffect(() => {
@@ -248,7 +261,9 @@ export function HomePage() {
       setCreateMode('pptx');
       setPptxProgress({ summary: '正在恢复 AI 课堂生成进度…', events: [] });
     }
-    void waitForDurableGeneration(pending, pending.kind === 'pptx' ? 45 * 60 * 1000 : 30 * 60 * 1000,
+    void waitForDurableGeneration(
+      pending,
+      pending.kind === 'pptx' ? 45 * 60 * 1000 : 30 * 60 * 1000,
       pending.kind === 'pptx'
         ? (summary, events) => setPptxProgress({ summary, events })
         : undefined,
@@ -275,18 +290,6 @@ export function HomePage() {
     setThumbnails(slides);
     window.setTimeout(() => revokeThumbnailSlideMediaUrls(previous), 0);
   };
-
-  // Close dropdowns when clicking outside
-  useEffect(() => {
-    if (!themeOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
-        setThemeOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [themeOpen]);
 
   const loadClassrooms = async () => {
     try {
@@ -344,16 +347,26 @@ export function HomePage() {
       // when this capability is unavailable.
       {
         setPptxProgress({ summary: '正在根据教学需求配置 AI 课堂…', events: [] });
-      const audioSettings = useSettingsStore.getState();
-      const selectedProvider = audioSettings.ttsProvidersConfig[audioSettings.ttsProviderId];
-      const teacherVoice = audioSettings.ttsProviderId && audioSettings.ttsVoice && audioSettings.ttsVoice !== 'default'
-        ? { providerId: audioSettings.ttsProviderId, voiceId: audioSettings.ttsVoice, modelId: selectedProvider?.modelId }
-        : undefined;
-      // AgentBar keeps the teacher selected and lets the creator choose the
-      // supporting classroom roles. The durable PPTX pipeline only needs the
-      // number of companions; it generates their course-specific personas.
-      const companionCount = Math.min(3, Math.max(1, selectedAgentIds.filter((id) => id !== 'default-1').length));
-      const submission = await fetch('/api/generation-jobs', {
+        const audioSettings = useSettingsStore.getState();
+        const selectedProvider = audioSettings.ttsProvidersConfig[audioSettings.ttsProviderId];
+        const teacherVoice =
+          audioSettings.ttsProviderId &&
+          audioSettings.ttsVoice &&
+          audioSettings.ttsVoice !== 'default'
+            ? {
+                providerId: audioSettings.ttsProviderId,
+                voiceId: audioSettings.ttsVoice,
+                modelId: selectedProvider?.modelId,
+              }
+            : undefined;
+        // AgentBar keeps the teacher selected and lets the creator choose the
+        // supporting classroom roles. The durable PPTX pipeline only needs the
+        // number of companions; it generates their course-specific personas.
+        const companionCount = Math.min(
+          3,
+          Math.max(1, selectedAgentIds.filter((id) => id !== 'default-1').length),
+        );
+        const submission = await fetch('/api/generation-jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
           body: JSON.stringify({
@@ -361,7 +374,7 @@ export function HomePage() {
             courseId,
             sourceRevision: 1,
             teachingRequirement: form.requirement.trim(),
-            interactionIntensity: 'standard',
+            interactionIntensity: form.interactiveMode ? 'rich' : 'standard',
             enableTTS: true,
             ...(teacherVoice ? { teacherVoice } : {}),
             companionCount,
@@ -383,7 +396,8 @@ export function HomePage() {
           setPptxProgress({ summary, events }),
         );
         clearPendingGenerationJob();
-        if (status !== 'succeeded') throw new Error('AI 课堂生成未完成，可从课程管理中查看后重试。');
+        if (status !== 'succeeded')
+          throw new Error('AI 课堂生成未完成，可从课程管理中查看后重试。');
         setPptxProgress({ summary: 'AI 课堂已生成，正在进入编辑器…', events: [] });
         router.push(`/classroom/${encodeURIComponent(courseId)}?editor=1`);
         return;
@@ -463,7 +477,7 @@ export function HomePage() {
     // No model/provider guard here: generation is gated by `canGenerate`
     // (requires a usable provider), and under the #580 invariant a usable
     // provider always has a concrete model. State A (no usable provider)
-    // surfaces through the toolbar's single Configure-Provider affordance.
+    // surfaces through the primary button's Configure-Provider affordance.
     if (!form.requirement.trim()) {
       setError(t('upload.requirementRequired'));
       return;
@@ -478,8 +492,7 @@ export function HomePage() {
         DURABLE_GENERATION_UI_ENABLED &&
         form.pdfFiles.length === 0 &&
         !form.webSearch &&
-        !form.interactiveMode &&
-        !form.vocationalTestMode;
+        !form.interactiveMode;
       if (canUseDurablePath) {
         const submission = await fetch('/api/generation-jobs', {
           method: 'POST',
@@ -511,8 +524,7 @@ export function HomePage() {
         userNickname: userProfile.nickname || undefined,
         userBio: userProfile.bio || undefined,
         webSearch: form.webSearch || undefined,
-        interactiveMode: form.vocationalTestMode ? true : form.interactiveMode,
-        ...(form.vocationalTestMode ? { taskEngineMode: true } : {}),
+        interactiveMode: form.interactiveMode,
       };
 
       let materialFiles:
@@ -631,7 +643,7 @@ export function HomePage() {
   };
 
   return (
-    <div className="relative min-h-[100dvh] w-full overflow-x-hidden bg-[#f4f8f6] px-4 pb-16 pt-20 text-slate-800 dark:bg-slate-950 dark:text-slate-100 md:px-8 md:pt-24">
+    <div className={styles.page}>
       <input
         ref={fileInputRef}
         type="file"
@@ -646,11 +658,7 @@ export function HomePage() {
         onChange={handlePptxFileChange}
         className="hidden"
       />
-      {/* ═══ Top-right pill (unchanged) ═══ */}
-      <div
-        ref={toolbarRef}
-        className="fixed top-4 right-4 z-50 flex items-center gap-1 bg-white/60 dark:bg-gray-800/60 backdrop-blur-md px-2 py-1.5 rounded-full border border-gray-100/50 dark:border-gray-700/50 shadow-sm"
-      >
+      <div ref={toolbarRef} className={styles.utilityBar} aria-label="页面设置">
         {/* Language Selector */}
         <LanguageSwitcher onOpen={() => setThemeOpen(false)} />
 
@@ -659,6 +667,8 @@ export function HomePage() {
         {/* Theme Selector */}
         <div className="relative">
           <button
+            type="button"
+            aria-label="切换页面主题"
             onClick={() => {
               setThemeOpen(!themeOpen);
             }}
@@ -721,6 +731,8 @@ export function HomePage() {
         {/* Settings Button */}
         <div className="relative">
           <button
+            type="button"
+            aria-label="打开设置"
             onClick={() => setSettingsOpen(true)}
             className="p-2 rounded-full text-gray-400 dark:text-gray-500 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm transition-all group"
           >
@@ -737,33 +749,44 @@ export function HomePage() {
         initialSection={settingsSection}
       />
 
-      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
-        <div className="absolute -left-48 -top-44 size-[560px] rounded-full bg-sky-300/35 blur-[90px] dark:bg-sky-700/10" />
-        <div className="absolute -right-52 -top-24 size-[660px] rounded-full bg-emerald-300/30 blur-[100px] dark:bg-emerald-700/10" />
-        <div className="absolute -bottom-72 left-1/3 size-[560px] rounded-full bg-violet-300/25 blur-[95px] dark:bg-violet-700/10" />
-      </div>
-
       <motion.main
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: 'easeOut' }}
-        className="relative z-10 mx-auto w-full max-w-[1080px]"
+        className={styles.shell}
       >
-        <header className="mb-5">
-          <h1 className="text-[28px] font-semibold tracking-tight text-slate-800 dark:text-white md:text-[32px]">
-            创建一门课程
-          </h1>
-          <p className="mt-2 text-sm leading-7 text-slate-600 dark:text-slate-300 md:text-[15px]">
-            从教学需求开始生成，或基于已有 PPT、交互课程继续创作。
-          </p>
+        <header className={styles.topbar}>
+          <div className={styles.brand}>
+            <span className={styles.brandMark}>
+              <Box aria-hidden="true" />
+            </span>
+            <span>来学·创课助手</span>
+          </div>
+          <Link href="/" className={styles.backLink}>
+            <ArrowLeft aria-hidden="true" />
+            返回教学驾驶舱
+          </Link>
         </header>
 
-        <section className="relative">
-          <div
-            role="tablist"
-            aria-label="课程创建方式"
-            className="mb-3 flex snap-x gap-3 overflow-x-auto rounded-xl border border-white/80 bg-white/35 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.8),0_18px_38px_-28px_rgba(15,70,55,.35)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/40 md:grid md:grid-cols-3"
-          >
+        <section className={styles.hero}>
+          <div>
+            <p className={styles.eyebrow}>
+              <span>TEACHING BRIEF</span>
+              <i aria-hidden="true">•</i>
+              教学蓝图
+            </p>
+            <h1>
+              创建一门课程，
+              <span>
+                从一个<span className={styles.accent}>清晰的意图</span>开始
+              </span>
+            </h1>
+          </div>
+          <CourseBlueprint />
+        </section>
+
+        <section className={styles.workbench}>
+          <div role="tablist" aria-label="课程创建方式" className={styles.tabs}>
             {(
               [
                 {
@@ -798,6 +821,9 @@ export function HomePage() {
                   type="button"
                   role="tab"
                   aria-selected={selected}
+                  aria-controls={`create-panel-${item.id}`}
+                  id={`create-tab-${item.id}`}
+                  tabIndex={selected ? 0 : -1}
                   onClick={() => selectCreateMode(item.id)}
                   onKeyDown={(event) => {
                     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -813,227 +839,204 @@ export function HomePage() {
                         ?.focus();
                     });
                   }}
-                  className={cn(
-                    'flex min-w-[265px] snap-center items-start gap-3 rounded-lg border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-w-0',
-                    selected
-                      ? 'translate-y-[-1px] border-white bg-white/90 shadow-[0_14px_30px_-18px_rgba(23,110,72,.6),0_0_0_1px_rgba(20,132,78,.55)] dark:border-white/20 dark:bg-slate-900/90'
-                      : 'border-white/60 bg-white/25 hover:-translate-y-px hover:bg-white/55 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10',
-                  )}
+                  className={cn(styles.tab, selected && styles.tabActive)}
                 >
-                  <span
-                    className={cn(
-                      'grid size-9 shrink-0 place-items-center rounded-lg border shadow-[inset_0_1px_0_rgba(255,255,255,.8)]',
-                      item.tone === 'emerald' &&
-                        'border-emerald-200 bg-gradient-to-br from-emerald-50 to-violet-50 text-emerald-700',
-                      item.tone === 'orange' &&
-                        'border-orange-200 bg-gradient-to-br from-amber-50 to-orange-100 text-orange-700',
-                      item.tone === 'cyan' &&
-                        'border-cyan-200 bg-gradient-to-br from-cyan-50 to-emerald-100 text-cyan-700',
-                    )}
-                  >
+                  <span className={styles.tabIcon}>
                     <Icon className="size-5" />
                   </span>
-                  <span className="min-w-0">
-                    <span
-                      className={cn(
-                        'block text-sm font-semibold md:text-[15px]',
-                        selected && 'text-emerald-800 dark:text-emerald-300',
-                      )}
-                    >
-                      {item.title}
-                    </span>
-                    <span className="mt-0.5 block truncate text-xs text-slate-600 dark:text-slate-300 md:text-[13px]">
-                      {item.desc}
-                    </span>
-                  </span>
-                  {selected && <Check className="ml-auto size-4 shrink-0 text-emerald-700" />}
+                  <span>{item.title}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="relative overflow-hidden rounded-2xl border border-white/90 bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,.9),0_28px_64px_-30px_rgba(23,75,60,.42)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/65">
-            <div
-              className={cn(
-                'absolute inset-x-6 top-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-500 to-transparent',
-                createMode === 'pptx' && 'via-orange-500',
-                createMode === 'course' && 'via-cyan-600',
-              )}
-            />
+          <div className={styles.panelFrame}>
             <AnimatePresence mode="wait">
               {createMode === 'ai' ? (
                 <motion.div
                   key="ai"
                   role="tabpanel"
+                  id="create-panel-ai"
+                  aria-labelledby="create-tab-ai"
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="flex min-h-[344px] flex-col p-5 md:p-7"
+                  className={styles.aiPanel}
                 >
-                  {isPreparingGeneration && (
-                    <div
-                      className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-emerald-900 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-100"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <LoaderCircle className="size-5 animate-spin" />
-                      <div>
-                        <p className="font-semibold">正在创建课程</p>
-                        <p className="text-sm opacity-80">课程结构、讲解与互动内容生成中，请勿重复提交。</p>
+                  {isPreparingGeneration ? (
+                    <div className="flex min-h-[290px] flex-col justify-center rounded-xl border border-white/90 bg-white/55 p-6 shadow-inner dark:border-white/10 dark:bg-slate-950/30">
+                      <div className="flex items-center gap-3">
+                        <span className="grid size-12 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                          <LoaderCircle className="size-6 animate-spin" />
+                        </span>
+                        <div>
+                          <p className="font-semibold">正在创建课程</p>
+                          <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
+                            正在生成课程结构、讲解与互动内容…
+                          </p>
+                        </div>
                       </div>
+                      <div className="mt-6 h-2 overflow-hidden rounded-full bg-slate-200/80">
+                        <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" />
+                      </div>
+                      <p className="mt-2 text-right font-mono text-xs text-slate-500">
+                        生成任务已提交
+                      </p>
                     </div>
-                  )}
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <GreetingBar />
-                    <div className="flex w-full min-w-0 items-center gap-2 md:w-auto">
-                      <span className="hidden text-xs font-medium text-slate-500 lg:inline">
-                        课堂角色与音色
-                      </span>
-                      <AgentBar />
-                    </div>
-                  </div>
-                  <label
-                    className="mb-2 flex items-center justify-between text-sm font-semibold"
-                    htmlFor="course-requirement"
-                  >
-                    <span>课程主题 / 教学需求</span>
-                    <span className="font-mono text-xs font-medium text-slate-500">
-                      {form.requirement.length}/300
-                    </span>
-                  </label>
-                  <textarea
-                    id="course-requirement"
-                    ref={textareaRef}
-                    maxLength={300}
-                    placeholder={t('upload.requirementPlaceholder')}
-                    className="min-h-[138px] w-full resize-y rounded-lg border border-slate-300 bg-white/80 px-4 py-3.5 text-[15px] leading-7 text-slate-800 shadow-inner outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white"
-                    value={form.requirement}
-                    onChange={(e) => updateForm('requirement', e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    rows={4}
-                  />
-                  <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                      <GenerationToolbar
-                        webSearch={form.webSearch}
-                        onWebSearchChange={(v) => updateForm('webSearch', v)}
-                        onSettingsOpen={(section) => {
-                          setSettingsSection(section);
-                          setSettingsOpen(true);
-                        }}
-                        pdfFiles={form.pdfFiles}
-                        onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
-                        onPdfError={setError}
-                      />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={form.interactiveMode}
-                            onClick={() => updateForm('interactiveMode', !form.interactiveMode)}
-                            className={cn(
-                              'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
-                              form.interactiveMode
-                                ? 'border-cyan-500 bg-cyan-100 text-cyan-800'
-                                : 'border-cyan-300 bg-white/55 text-cyan-700 hover:bg-cyan-50',
-                            )}
-                          >
-                            <Atom className="size-3.5" />
-                            {t('toolbar.interactiveModeLabel')}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('toolbar.interactiveModeHint')}</TooltipContent>
-                      </Tooltip>
-                      <SpeechButton
-                        size="md"
-                        onTranscription={(text) => {
-                          setForm((prev) => {
-                            const next = `${prev.requirement}${prev.requirement ? ' ' : ''}${text}`;
-                            updateRequirementCache(next);
-                            return { ...prev, requirement: next };
-                          });
-                        }}
-                      />
-                      {showVocationalTestUi && (
+                  ) : (
+                    <>
+                      <div className={styles.promptWrap}>
+                        <span className={styles.promptCount}>{form.requirement.length}/300</span>
+                        <textarea
+                          id="course-requirement"
+                          ref={textareaRef}
+                          maxLength={300}
+                          aria-label="课程主题或教学需求"
+                          placeholder={
+                            '请描述你想开发的课程，由AI帮你生成完整课件。你可以这样描述：\n「新员工入职培训:公司文化、制度与工作规范,适合3年以内新人\n「锐捷交换机配置实操,面向售后工程师,结合真实故障案例 \n「销售谈判技巧,上传了客户案例和话术手册,请基于资料生成」'
+                          }
+                          className={styles.prompt}
+                          value={form.requirement}
+                          onChange={(e) => updateForm('requirement', e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          rows={4}
+                        />
+                      </div>
+                      <div className={styles.composerFoot}>
+                        <div className={styles.agentControl}>
+                          <AgentBar />
+                        </div>
+                        <GenerationToolbar
+                          showLabels
+                          webSearch={form.webSearch}
+                          onWebSearchChange={(v) => updateForm('webSearch', v)}
+                          pdfFiles={form.pdfFiles}
+                          onPdfFilesChange={(files) => updateForm('pdfFiles', files)}
+                          onPdfError={setError}
+                        />
                         <button
                           type="button"
                           role="switch"
-                          aria-checked={form.vocationalTestMode}
-                          onClick={() => updateForm('vocationalTestMode', !form.vocationalTestMode)}
+                          aria-checked={form.webSearch}
+                          onClick={() => updateForm('webSearch', !form.webSearch)}
                           className={cn(
-                            'h-8 rounded-full border px-3 text-xs font-medium',
-                            form.vocationalTestMode
-                              ? 'border-violet-500 bg-violet-100 text-violet-800'
-                              : 'border-slate-300 bg-white/55 text-slate-600',
+                            styles.interactionToggle,
+                            form.webSearch && styles.interactionToggleOn,
                           )}
                         >
-                          职教任务
+                          <Search className="size-3.5" />
+                          <span>联网搜索</span>
+                          <strong>{form.webSearch ? '已开启' : '已关闭'}</strong>
                         </button>
-                      )}
-                    </div>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={form.interactiveMode}
+                              onClick={() => updateForm('interactiveMode', !form.interactiveMode)}
+                              className={cn(
+                                styles.interactionToggle,
+                                form.interactiveMode && styles.interactionToggleOn,
+                              )}
+                            >
+                              <Atom className="size-3.5" />
+                              <span>深度交互</span>
+                              <strong>{form.interactiveMode ? '已开启' : '已关闭'}</strong>
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('toolbar.interactiveModeHint')}</TooltipContent>
+                        </Tooltip>
+                        <span className={styles.speechControl}>
+                          <SpeechButton
+                            size="md"
+                            onTranscription={(text) => {
+                              setForm((prev) => {
+                                const next = `${prev.requirement}${prev.requirement ? ' ' : ''}${text}`;
+                                updateRequirementCache(next);
+                                return { ...prev, requirement: next };
+                              });
+                            }}
+                          />
+                        </span>
+                      </div>
+                      <div className={styles.generateArea}>
                         <button
                           type="button"
-                          aria-label={isPreparingGeneration ? '正在创建课程' : '生成课程'}
-                          onClick={handleGenerate}
-                          disabled={!canGenerate}
+                          onClick={() => {
+                            if (!hasUsableProvider) {
+                              setSettingsSection('providers');
+                              setSettingsOpen(true);
+                              return;
+                            }
+                            if (canGenerate) handleGenerate();
+                          }}
+                          disabled={
+                            isPreparingGeneration || (hasUsableProvider && !form.requirement.trim())
+                          }
+                          title={
+                            !hasUsableProvider
+                              ? '配置模型服务后即可生成课程'
+                              : !form.requirement.trim()
+                                ? '请先描述教学需求'
+                                : undefined
+                          }
                           className={cn(
-                            'grid size-11 shrink-0 place-items-center rounded-xl border transition',
-                            canGenerate
-                              ? 'border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_10px_22px_-12px_rgba(16,120,72,.85)] hover:-translate-y-px hover:brightness-105'
-                              : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400',
+                            styles.generateButton,
+                            (canGenerate || !hasUsableProvider) && styles.generateButtonReady,
                           )}
                         >
                           {isPreparingGeneration ? (
-                            <LoaderCircle className="size-5 animate-spin" />
+                            <LoaderCircle className="size-4 animate-spin" />
                           ) : (
-                            <ArrowUp className="size-5" />
+                            <ArrowRight className="size-4" />
                           )}
+                          {isPreparingGeneration
+                            ? '正在创建课程…'
+                            : hasUsableProvider
+                              ? '生成课程'
+                              : '配置模型服务'}
                         </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {isPreparingGeneration ? '正在创建课程…' : '生成课程'}
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
+                        <p className="sr-only" aria-live="polite">
+                          {form.requirement.trim()
+                            ? hasUsableProvider
+                              ? '已准备就绪，点击即可生成课程框架'
+                              : '请先在设置中配置可用的模型服务'
+                            : '请先描述教学需求'}
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div
                   key={createMode}
                   role="tabpanel"
+                  id={`create-panel-${createMode}`}
+                  aria-labelledby={`create-tab-${createMode}`}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="min-h-[344px] p-5 md:p-7"
+                  className={cn(
+                    createMode === 'course'
+                      ? styles.courseTabPanel
+                      : createMode === 'pptx'
+                        ? styles.pptxTabPanel
+                        : 'min-h-[344px] p-5 md:p-7',
+                  )}
                 >
-                  {(createMode === 'pptx' && (pptxImporting || resumingGeneration)) ||
-                  (createMode === 'course' && importing) ? (
+                  {createMode === 'course' && importing ? (
                     <div className="flex min-h-[290px] flex-col justify-center rounded-xl border border-white/90 bg-white/55 p-6 shadow-inner dark:border-white/10 dark:bg-slate-950/30">
                       <div className="flex items-center gap-3">
-                        <span
-                          className={cn(
-                            'grid size-12 place-items-center rounded-lg',
-                            createMode === 'pptx'
-                              ? 'bg-orange-100 text-orange-700'
-                              : 'bg-cyan-100 text-cyan-700',
-                          )}
-                        >
-                          {createMode === 'pptx' ? (
-                            <FileText className="size-6" />
-                          ) : (
-                            <PackageOpen className="size-6" />
-                          )}
+                        <span className="grid size-12 place-items-center rounded-lg bg-cyan-100 text-cyan-700">
+                          <PackageOpen className="size-6" />
                         </span>
                         <div>
                           <p className="font-semibold">正在处理所选文件</p>
                           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
-                            {createMode === 'pptx'
-                              ? pptxProgress?.summary || '正在解析页面与讲师备注…'
-                              : '正在解析课程内容与互动配置…'}
+                            正在解析课程内容与互动配置…
                           </p>
                         </div>
                         <LoaderCircle className="ml-auto size-5 animate-spin text-emerald-700" />
@@ -1042,113 +1045,201 @@ export function HomePage() {
                         <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" />
                       </div>
                       <p className="mt-2 text-right font-mono text-xs text-slate-500">处理中</p>
-                      {createMode === 'pptx' && pptxProgress?.events.length ? (
-                        <div className="mt-4 space-y-1.5 rounded-lg border border-slate-200 bg-white/55 p-3 text-left text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950/30 dark:text-slate-300">
-                          {pptxProgress.events.map((event) => (
-                            <p key={event.id} className="truncate">
-                              <span className="mr-2 text-emerald-700">{event.kind === 'warning' ? '提示' : '进行中'}</span>
-                              {event.summary}
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
-                  ) : (
+                  ) : createMode === 'pptx' ? (
                     <div
-                      onDragEnter={(e) => {
-                        e.preventDefault();
-                        setDragMode(createMode);
-                      }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDragLeave={(e) => {
-                        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragMode(null);
-                      }}
-                      onDrop={(e) => handleCreateDrop(createMode, e)}
                       className={cn(
-                        'flex min-h-[290px] flex-col items-center justify-center rounded-xl border-2 border-dashed px-5 py-7 text-center transition',
-                        dragMode === createMode
-                          ? 'border-emerald-500 bg-emerald-50/75 shadow-[0_0_0_6px_rgba(16,185,129,.1)]'
-                          : 'border-slate-300 bg-white/30 hover:border-emerald-500/70 hover:bg-white/50 dark:border-slate-700 dark:bg-slate-950/20',
+                        createMode === 'pptx' ? styles.pptxPanel : styles.coursePanel,
+                        createMode === 'pptx'
+                          ? dragMode === 'pptx' && styles.pptxUploadActive
+                          : dragMode === 'course'
+                            ? styles.coursePanelActive
+                            : undefined,
                       )}
                     >
-                      {createMode === 'pptx' && (
-                        <div className="mb-5 w-full max-w-xl text-left">
-                          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">课堂角色与音色</p>
-                              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">设置 AI 讲师、伴学角色和讲师音色后再导入。</p>
-                            </div>
-                            <div className="w-full sm:w-72"><AgentBar /></div>
-                          </div>
-                          <label
-                            htmlFor="pptx-teaching-requirement"
-                            className="mb-2 flex items-center justify-between text-sm font-semibold text-slate-800 dark:text-slate-100"
-                          >
-                            <span>教学需求</span>
-                            <span className="font-mono text-xs font-medium text-slate-500">
-                              {form.requirement.length}/300
-                            </span>
-                          </label>
+                      <div
+                        className={styles.pptxBrief}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <label htmlFor="pptx-teaching-requirement" className={styles.pptxLabel}>
+                          <span>
+                            补充设计要求 <em>可选</em>
+                          </span>
+                        </label>
+                        <div className={styles.pptxTextareaWrap}>
                           <textarea
                             id="pptx-teaching-requirement"
                             maxLength={300}
                             rows={3}
                             value={form.requirement}
                             onChange={(event) => updateForm('requirement', event.target.value)}
-                            placeholder="例如：面向新员工讲解本课件，突出业务价值，每 3 页安排一次轻量理解检查。"
-                            className="w-full resize-y rounded-lg border border-slate-300 bg-white/80 px-3 py-2.5 text-sm leading-6 text-slate-800 shadow-inner outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white"
+                            placeholder="例如：第 1–4 页保持入门讲解，第 5–8 页改为分组任务演练，结尾加入实战演练。"
+                            className={styles.pptxTextarea}
                           />
-                          <p className="mt-1.5 text-xs leading-5 text-slate-600 dark:text-slate-300">
-                            PPT 保留原有内容和版式；教学需求将决定讲解、角色和互动方式。
+                          <span className={styles.pptxPromptCount}>
+                            {form.requirement.length}/300
+                          </span>
+                        </div>
+                        <div className={styles.pptxFoot}>
+                          <div className={styles.agentControl}>
+                            <AgentBar />
+                          </div>
+                        </div>
+                      </div>
+                      {pptxImporting || resumingGeneration ? (
+                        <div
+                          className={styles.pptxProgress}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <span className={styles.pptxProgressIcon} aria-hidden="true">
+                            <FileText className="size-5" />
+                          </span>
+                          <div className={styles.pptxProgressBody}>
+                            <div className={styles.pptxProgressTitle}>
+                              <span>正在处理 PPTX</span>
+                              <LoaderCircle className="size-4 animate-spin" />
+                            </div>
+                            <p>{pptxProgress?.summary || '正在解析页面与讲师备注…'}</p>
+                            <div className={styles.pptxProgressTrack} aria-label="PPTX 处理进度">
+                              <i />
+                            </div>
+                            {pptxProgress?.events.length ? (
+                              <p className={styles.pptxProgressEvent}>
+                                {pptxProgress.events[pptxProgress.events.length - 1]?.summary}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className={styles.pptxUploadArea}
+                          role="button"
+                          tabIndex={0}
+                          aria-label="拖拽 PPTX 至此处，或按 Enter 选择文件"
+                          onClick={triggerPptxFileSelect}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              triggerPptxFileSelect();
+                            }
+                          }}
+                          onDragEnter={(event) => {
+                            event.preventDefault();
+                            setDragMode('pptx');
+                          }}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDragLeave={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                              setDragMode(null);
+                            }
+                          }}
+                          onDrop={(event) => handleCreateDrop('pptx', event)}
+                        >
+                          <span
+                            className={cn(
+                              createMode === 'pptx'
+                                ? styles.pptxUploadIcon
+                                : styles.courseUploadIcon,
+                              createMode === 'pptx' ? '' : undefined,
+                            )}
+                          >
+                            {createMode === 'pptx' ? (
+                              <Presentation className="size-8" />
+                            ) : (
+                              <PackageOpen className="size-8" />
+                            )}
+                          </span>
+                          <h2
+                            className={cn(
+                              createMode === 'pptx'
+                                ? styles.pptxUploadTitle
+                                : styles.courseUploadTitle,
+                              dragMode === createMode && 'text-emerald-800',
+                            )}
+                          >
+                            {dragMode === createMode
+                              ? createMode === 'pptx'
+                                ? '松开以上传 PPTX'
+                                : '松开以上传课程包'
+                              : createMode === 'pptx'
+                                ? '拖拽 PPTX 至此处，或点击选择'
+                                : '将课程包拖到此处，或选择文件'}
+                          </h2>
+                          <p
+                            className={
+                              createMode === 'pptx'
+                                ? styles.pptxUploadDescription
+                                : styles.courseUploadDescription
+                            }
+                          >
+                            {createMode === 'pptx'
+                              ? '保留页面顺序与讲师备注，转换后可编辑。'
+                              : '导入已完成的交互课程，保留内容、结构与互动配置。'}
                           </p>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              triggerPptxFileSelect();
+                            }}
+                            className={styles.pptxUploadButton}
+                          >
+                            <Upload className="size-4" />
+                            选择 PPTX 文件
+                          </button>
+                          <p className={styles.pptxUploadMeta}>.pptx · 单个文件最大 30MB</p>
                         </div>
                       )}
-                      <span
+                    </div>
+                  ) : (
+                    <div className={styles.courseDesignPanel}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={triggerFileSelect}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            triggerFileSelect();
+                          }
+                        }}
+                        onDragEnter={(event) => {
+                          event.preventDefault();
+                          setDragMode('course');
+                        }}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDragLeave={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                            setDragMode(null);
+                          }
+                        }}
+                        onDrop={(event) => handleCreateDrop('course', event)}
                         className={cn(
-                          'grid h-16 w-20 place-items-center rounded-xl shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_10px_24px_-14px_rgba(15,70,55,.5)]',
-                          createMode === 'pptx'
-                            ? 'bg-gradient-to-br from-amber-50 to-orange-100 text-orange-700'
-                            : 'bg-gradient-to-br from-cyan-50 to-emerald-100 text-cyan-700',
+                          styles.courseDrop,
+                          dragMode === 'course' && styles.courseDropActive,
                         )}
+                        aria-label="拖拽课程包至此处，或按 Enter 选择文件"
                       >
-                        {createMode === 'pptx' ? (
-                          <Presentation className="size-8" />
-                        ) : (
-                          <PackageOpen className="size-8" />
-                        )}
-                      </span>
-                      <h2
-                        className={cn(
-                          'mt-4 text-base font-semibold',
-                          dragMode === createMode && 'text-emerald-800',
-                        )}
-                      >
-                        {dragMode === createMode
-                          ? createMode === 'pptx'
-                            ? '松开以上传 PPTX'
-                            : '松开以上传课程包'
-                          : createMode === 'pptx'
-                            ? '将 PPTX 拖到此处，或选择文件'
-                            : '将课程包拖到此处，或选择文件'}
-                      </h2>
-                      <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-                        {createMode === 'pptx'
-                          ? '保留页面顺序与讲师备注，转换后可编辑。'
-                          : '导入已完成的交互课程，保留内容、结构与互动配置。'}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={createMode === 'pptx' ? triggerPptxFileSelect : triggerFileSelect}
-                        className="mt-4 inline-flex h-11 items-center gap-2 rounded-lg border border-emerald-600/50 bg-gradient-to-b from-emerald-300 to-emerald-500 px-5 text-sm font-semibold text-emerald-950 shadow-[inset_0_1px_0_rgba(255,255,255,.75),0_10px_24px_-14px_rgba(16,120,72,.75)] hover:-translate-y-px hover:brightness-105"
-                      >
-                        <Upload className="size-4" />
-                        {createMode === 'pptx' ? '选择 PPTX 文件' : '选择课程包文件'}
-                      </button>
-                      <p className="mt-3 font-mono text-xs text-slate-500">
-                        {createMode === 'pptx'
-                          ? '.pptx · 单个文件最大 100MB'
-                          : '.zip 压缩课程包 · 单个文件最大 200MB'}
-                      </p>
+                        <span className={styles.courseDropIcon} aria-hidden="true">
+                          <PackageOpen className="size-5" />
+                        </span>
+                        <span className={styles.courseDropBody}>
+                          <span className={styles.courseDropTitle}>
+                            拖拽课程包至此处，或点击选择
+                          </span>
+                          <span className={styles.courseDropDescription}>
+                            上传后进入编辑器，完整保留课程内容、结构与互动配置。
+                          </span>
+                        </span>
+                        <span className={styles.courseDropChip}>.zip · 200MB</span>
+                      </div>
+                      <div className={styles.courseFoot}>
+                        <span className={styles.courseStaticChip} aria-label="课程包静态状态条">
+                          <PackageOpen className="size-3.5" />
+                          <span>课程包</span>
+                          <em>原样还原</em>
+                        </span>
+                      </div>
                     </div>
                   )}
                 </motion.div>
@@ -1168,15 +1259,25 @@ export function HomePage() {
               </motion.div>
             )}
           </AnimatePresence>
+          <div className="sr-only">
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="size-3.5 text-emerald-700" />
+              生成或导入后可继续编辑
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="size-3.5 text-emerald-700" />
+              编辑过程自动保存
+            </span>
+          </div>
         </section>
 
         {/* ═══ Recent classrooms — collapsible ═══ */}
-        {classrooms.length > 0 && (
+        {false && classrooms.length > 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.5 }}
-            className="relative z-10 mt-10 w-full max-w-6xl flex flex-col items-center"
+            className={styles.recent}
           >
             {/* Trigger — divider-line with centered text */}
             <div className="group w-full flex items-center gap-4 py-2">
@@ -1184,6 +1285,8 @@ export function HomePage() {
               <div className="shrink-0 flex items-center gap-3 text-[13px] text-muted-foreground/60 select-none">
                 <button
                   onClick={() => persistRecentOpen(!recentOpen)}
+                  aria-expanded={recentOpen}
+                  aria-controls="recent-classrooms-panel"
                   className="flex items-center gap-2 hover:text-foreground/70 transition-colors cursor-pointer"
                 >
                   <Clock className="size-3.5" />
@@ -1307,6 +1410,7 @@ export function HomePage() {
             <AnimatePresence>
               {recentOpen && (
                 <motion.div
+                  id="recent-classrooms-panel"
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
@@ -1352,6 +1456,38 @@ export function HomePage() {
         )}
       </motion.main>
     </div>
+  );
+}
+
+function CourseBlueprint() {
+  return (
+    <svg className={styles.blueprint} viewBox="0 0 260 190" fill="none" aria-hidden="true">
+      <g className={styles.blueprintLinks}>
+        <path d="M50 49C92 49 94 49 126 49" />
+        <path d="M50 49C93 56 95 96 126 96" />
+        <path d="M50 49C93 67 91 145 126 145" />
+        <path d="M164 96C199 96 202 70 228 70" />
+        <path d="M164 96C197 96 202 125 228 125" />
+      </g>
+      <g className={styles.blueprintNode}>
+        <rect x="12" y="31" width="38" height="36" rx="8" />
+        <path d="M31 41v16M23 49h16" />
+      </g>
+      <g className={styles.blueprintNode}>
+        <rect x="126" y="33" width="43" height="29" rx="8" />
+        <path d="M136 43h22M136 50h18" />
+      </g>
+      <g className={styles.blueprintHot}>
+        <rect x="125" y="80" width="45" height="31" rx="9" />
+        <circle cx="147.5" cy="95.5" r="5" />
+      </g>
+      <g className={styles.blueprintNode}>
+        <rect x="126" y="130" width="43" height="30" rx="8" />
+        <path d="m137 145 7 7 14-16" />
+      </g>
+      <circle className={styles.blueprintLeaf} cx="229" cy="69" r="12" />
+      <circle className={styles.blueprintLeaf} cx="229" cy="125" r="12" />
+    </svg>
   );
 }
 

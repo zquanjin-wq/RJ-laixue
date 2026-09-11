@@ -32,7 +32,6 @@ import {
   normalizeThinkingConfig,
   supportsConfigurableThinking,
 } from '@/lib/ai/thinking-config';
-import type { SettingsSection } from '@/lib/types/settings';
 import { MediaPopover } from '@/components/generation/media-popover';
 import { COURSE_MATERIAL_ACCEPT, isSupportedCourseMaterial } from '@/lib/document/mime';
 import {
@@ -49,21 +48,21 @@ const MAX_COURSE_MATERIAL_SIZE_BYTES = MATERIAL_MAX_BYTES;
 export interface GenerationToolbarProps {
   webSearch: boolean;
   onWebSearchChange: (v: boolean) => void;
-  onSettingsOpen: (section?: SettingsSection) => void;
   // PDF
   pdfFiles: File[];
   onPdfFilesChange: (files: File[]) => void;
   onPdfError: (error: string | null) => void;
+  showLabels?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────
 export function GenerationToolbar({
   webSearch,
   onWebSearchChange,
-  onSettingsOpen,
   pdfFiles,
   onPdfFilesChange,
   onPdfError,
+  showLabels = false,
 }: GenerationToolbarProps) {
   const { t } = useI18n();
   const currentProviderId = useSettingsStore((s) => s.providerId);
@@ -137,62 +136,13 @@ export function GenerationToolbar({
 
   // ─── Pill button helper ─────────────────────────────
   const pillCls =
-    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all cursor-pointer select-none whitespace-nowrap border';
-  const pillMuted = `${pillCls} border-border/50 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60`;
-  const pillActive = `${pillCls} border-violet-200/60 dark:border-violet-700/50 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300`;
+    'inline-flex h-8 box-border items-center gap-1.5 rounded-[7px] border px-[9px] py-0 text-xs font-semibold transition-all cursor-pointer select-none whitespace-nowrap';
+  const pillMuted = `${pillCls} border-[#b8c8bf] bg-white/70 text-[#456052] hover:border-[#9aaba0] hover:bg-slate-50`;
+  const pillActive = `${pillCls} border-[#079447] bg-[#dff6e8] text-[#056934] shadow-[0_0_0_2px_rgba(7,148,71,0.08)]`;
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
-      {/* ── Model selector ── */}
-      {configuredProviders.length > 0 ? (
-        <ModelSettingsPopover
-          configuredProviders={configuredProviders}
-          currentProviderId={currentProviderId}
-          currentModelId={currentModelId}
-          currentProviderConfig={currentProviderConfig}
-          currentModel={currentModel}
-          setModel={setModel}
-          thinkingConfig={currentThinkingConfig}
-          onThinkingChange={(config) =>
-            setThinkingConfig(currentProviderId, currentModelId, config)
-          }
-          t={t}
-        />
-      ) : !serverProvidersLoaded ? (
-        <button
-          type="button"
-          disabled
-          className={cn(
-            pillCls,
-            'cursor-default text-muted-foreground/70 bg-muted/40 border-border/50',
-          )}
-        >
-          <Bot className="size-3.5 animate-pulse" />
-          <span>加载模型配置中...</span>
-        </button>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => onSettingsOpen('providers')}
-              className={cn(
-                pillCls,
-                'text-amber-600 dark:text-amber-400 animate-pulse',
-                'bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50',
-              )}
-            >
-              <Bot className="size-3.5" />
-              <span>{t('toolbar.configureProvider')}</span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t('toolbar.configureProviderHint')}</TooltipContent>
-        </Tooltip>
-      )}
-
       <div className="flex min-w-0 items-center gap-1">
-        {/* ── Separator ── */}
-        <div className="w-px h-4 bg-border/60 mx-1" />
-
         {/* ── Course material (extractor + upload) combined Popover ── */}
         <Popover>
           <PopoverTrigger asChild>
@@ -216,6 +166,11 @@ export function GenerationToolbar({
             ) : (
               <button className={pillMuted}>
                 <Paperclip className="size-3.5" />
+                {showLabels && (
+                  <span>
+                    参考资料 <span className="opacity-60">0/{MAX_COURSE_MATERIAL_FILES}</span>
+                  </span>
+                )}
               </button>
             )}
           </PopoverTrigger>
@@ -304,109 +259,6 @@ export function GenerationToolbar({
             </div>
           </PopoverContent>
         </Popover>
-
-        {/* ── Web Search ── */}
-        {webSearchAvailable ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className={webSearch ? pillActive : pillMuted}>
-                <Globe2 className={cn('size-3.5', webSearch && 'animate-pulse')} />
-                {webSearch && (
-                  <span>
-                    {WEB_SEARCH_PROVIDERS[webSearchProviderId]
-                      ? getWebSearchProviderDisplayName(webSearchProviderId, t)
-                      : 'Search'}
-                  </span>
-                )}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-64 p-3 space-y-3">
-              {/* Toggle */}
-              <button
-                onClick={() => {
-                  if (!selectedWebSearchAvailable) return;
-                  onWebSearchChange(!webSearch);
-                }}
-                className={cn(
-                  'w-full flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all',
-                  webSearch
-                    ? 'bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-800'
-                    : 'border-border hover:bg-muted/50',
-                  !selectedWebSearchAvailable && 'opacity-60',
-                )}
-              >
-                <Globe2
-                  className={cn(
-                    'size-4 shrink-0',
-                    webSearch ? 'text-violet-600 dark:text-violet-400' : 'text-muted-foreground',
-                  )}
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium">
-                    {webSearch ? t('toolbar.webSearchOn') : t('toolbar.webSearchOff')}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/70 mt-0.5">
-                    {t('toolbar.webSearchDesc')}
-                  </p>
-                </div>
-              </button>
-
-              {/* Provider selector */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground shrink-0">
-                  {t('toolbar.webSearchProvider')}
-                </span>
-                <Select
-                  value={webSearchProviderId}
-                  onValueChange={(v) => setWebSearchProvider(v as WebSearchProviderId)}
-                >
-                  <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.values(WEB_SEARCH_PROVIDERS).map((provider) => {
-                      const cfg = webSearchProvidersConfig[provider.id];
-                      const available =
-                        !provider.requiresApiKey || !!cfg?.apiKey || !!cfg?.isServerConfigured;
-                      return (
-                        <SelectItem key={provider.id} value={provider.id} disabled={!available}>
-                          <div
-                            className={cn('flex items-center gap-1.5', !available && 'opacity-50')}
-                          >
-                            {getWebSearchProviderDisplayName(provider.id, t)}
-                            {cfg?.isServerConfigured && (
-                              <span className="text-[9px] px-1 py-0 rounded border text-muted-foreground">
-                                {t('settings.serverConfigured')}
-                              </span>
-                            )}
-                          </div>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-            </PopoverContent>
-          </Popover>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className={cn(pillCls, 'text-muted-foreground/40 cursor-not-allowed')}
-                disabled
-              >
-                <Globe2 className="size-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>{t('toolbar.webSearchNoProvider')}</TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* ── Separator ── */}
-        <div className="w-px h-4 bg-border/60 mx-1" />
-
-        {/* ── Media popover ── */}
-        <MediaPopover onSettingsOpen={onSettingsOpen} />
       </div>
     </div>
   );

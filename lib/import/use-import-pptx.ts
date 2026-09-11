@@ -12,6 +12,7 @@ import type { Slide } from '@openmaic/dsl';
 import type * as MaicImport from '@openmaic/importer';
 
 const log = createLogger('ImportPptx');
+const PPTX_MAX_BYTES = 30 * 1024 * 1024;
 
 export type PptxUpload = NonNullable<MaicImport.ImportPptxOptions['upload']>;
 
@@ -58,8 +59,8 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
 
       if (importingRef.current) return;
 
-      if (file.size > 100 * 1024 * 1024) {
-        toast.error('PPTX 文件不能超过 100MB');
+      if (file.size > PPTX_MAX_BYTES) {
+        toast.error('PPTX 文件不能超过 30MB');
         return;
       }
 
