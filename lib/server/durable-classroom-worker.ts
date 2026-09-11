@@ -33,6 +33,32 @@ import { callLLM } from '@/lib/ai/llm';
 import { resolveModel } from './resolve-model';
 import type { Scene, Stage } from '@/lib/types/stage';
 
+export function describeGenerationFailure(error: unknown): { code: string; message: string } {
+  const detail = error instanceof Error ? error.message : '';
+  if (/\b(tts|voice|speech|audio)\b|配音|音色/i.test(detail)) {
+    return {
+      code: 'TTS_GENERATION_FAILED',
+      message: '课程讲解已生成，但配音未完成。请检查音色服务后重试该课程生成任务。',
+    };
+  }
+  if (/pptx|imported ppt|source/i.test(detail)) {
+    return {
+      code: 'PPTX_SOURCE_UNAVAILABLE',
+      message: '课件来源暂时不可用，未生成不完整课程。请稍后重试。',
+    };
+  }
+  if (/configuration|provider|model|api key|credential|authoring access/i.test(detail)) {
+    return {
+      code: 'GENERATION_CONFIGURATION_UNAVAILABLE',
+      message: '课程生成服务当前不可用，请检查服务配置后重试。',
+    };
+  }
+  return {
+    code: 'GENERATION_FAILED',
+    message: '课程生成未完成。可以重试任务，课程内容不会被不完整结果覆盖。',
+  };
+}
+
 export async function runDurableClassroomOnce(
   pool: Pool,
   workerId: string,
@@ -120,10 +146,11 @@ export async function runDurableClassroomOnce(
     });
     if (!finished && !(error instanceof GenerationLeaseLost)) {
       try {
+        const failure = describeGenerationFailure(error);
         await jobs.fail(
           lease,
-          'GENERATION_FAILED',
-          'Generation could not complete; retry or inspect worker diagnostics.',
+          failure.code,
+          failure.message,
           isRetryableGenerationError(error),
         );
       } catch (failure) {
