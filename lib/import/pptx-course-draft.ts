@@ -2,6 +2,13 @@ import { nanoid } from 'nanoid';
 import type { Slide } from '@openmaic/dsl';
 import type { Scene, Stage } from '@/lib/types/stage';
 
+export const PPTX_MAX_PAGES = 15;
+export const PPTX_PAGE_LIMIT_MESSAGE = '为了保证较好的课程学习体验，请将PPT控制在15页以内。';
+
+export function assertPptxPageLimit(pageCount: number): void {
+  if (pageCount > PPTX_MAX_PAGES) throw new Error(PPTX_PAGE_LIMIT_MESSAGE);
+}
+
 function titleFromFilename(fileName: string): string {
   return fileName.replace(/\.pptx$/i, '').trim() || '导入课件';
 }
@@ -14,6 +21,7 @@ export function createPptxCourseDraft(input: {
   sourceId: string;
 }): { title: string; stage: Stage; scenes: Scene[]; outlines: unknown[] } {
   if (!input.slides.length) throw new Error('PPTX 中没有可导入的页面');
+  assertPptxPageLimit(input.slides.length);
   const now = Date.now();
   const title = titleFromFilename(input.fileName);
   const stage: Stage = {

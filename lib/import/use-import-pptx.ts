@@ -10,6 +10,7 @@ import type { Slide } from '@openmaic/dsl';
 // `require()` patterns Turbopack refuses to bundle, so values flow through
 // the URL-loaded dist instead. The workspace package only contributes types.
 import type * as MaicImport from '@openmaic/importer';
+import { assertPptxPageLimit, PPTX_PAGE_LIMIT_MESSAGE } from './pptx-course-draft';
 
 const log = createLogger('ImportPptx');
 const PPTX_MAX_BYTES = 30 * 1024 * 1024;
@@ -99,6 +100,14 @@ export function useImportPptx(options: UseImportPptxOptions = {}) {
         slides = (await mod.importPptx(file, { upload })) as Slide[];
 
         log.info('pptx imported', { slideCount: slides.length });
+        try {
+          assertPptxPageLimit(slides.length);
+        } catch {
+          toast.error(PPTX_PAGE_LIMIT_MESSAGE, { id: toastId });
+          importingRef.current = false;
+          setImporting(false);
+          return;
+        }
       } catch (error) {
         log.error('PPTX import failed:', error);
         const notDeployed =

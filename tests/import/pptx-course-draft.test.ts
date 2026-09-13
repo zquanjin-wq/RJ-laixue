@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Slide } from '@openmaic/dsl';
-import { createPptxCourseDraft } from '@/lib/import/pptx-course-draft';
+import { createPptxCourseDraft, PPTX_PAGE_LIMIT_MESSAGE } from '@/lib/import/pptx-course-draft';
 
 const slide: Slide = {
   id: 'slide-1',
@@ -41,5 +41,25 @@ describe('PPTX formal course draft', () => {
         sourceId: 'source-1',
       }),
     ).toThrow('没有可导入');
+  });
+
+  it('accepts 15 pages and rejects anything longer with the product message', () => {
+    expect(() =>
+      createPptxCourseDraft({
+        courseId: 'course-1',
+        fileName: 'fifteen.pptx',
+        slides: Array.from({ length: 15 }, (_, index) => ({ ...slide, id: `slide-${index}` })),
+        sourceId: 'source-1',
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      createPptxCourseDraft({
+        courseId: 'course-1',
+        fileName: 'sixteen.pptx',
+        slides: Array.from({ length: 16 }, (_, index) => ({ ...slide, id: `slide-${index}` })),
+        sourceId: 'source-1',
+      }),
+    ).toThrow(PPTX_PAGE_LIMIT_MESSAGE);
   });
 });

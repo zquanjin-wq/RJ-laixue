@@ -1366,7 +1366,9 @@ export function HomePage() {
                             <Upload className="size-4" />
                             选择 PPTX 文件
                           </button>
-                          <p className={styles.pptxUploadMeta}>.pptx · 单个文件最大 30MB</p>
+                          <p className={styles.pptxUploadMeta}>
+                            .pptx · 单个文件最大 30MB · 最多 15 页
+                          </p>
                         </div>
                       )}
                     </div>
