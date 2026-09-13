@@ -62,7 +62,7 @@ export default async function AdminLearningTasksPage() {
           </div>
           <div className="flex gap-2">
             <Button asChild variant="outline" size="sm">
-              <Link href="/">返回教学驾驶舱</Link>
+              <Link href="/teaching-dashboard">返回教学驾驶舱</Link>
             </Button>
             <Button asChild size="sm">
               <Link href="/admin/learning-tasks/new">新建任务</Link>

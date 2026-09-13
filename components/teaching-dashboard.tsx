@@ -72,10 +72,10 @@ export function TeachingDashboard() {
       <div className="mx-auto w-full max-w-[1200px] px-4 pb-8 sm:px-6">
         <header className="flex min-h-12 items-center justify-between border-b border-emerald-950/10">
           <div className="flex items-center gap-2.5 font-semibold"><span className="grid size-7 place-items-center rounded-sm bg-[#079447] text-white"><Box className="size-4" /></span>来学·教师驾驶舱</div>
-          <nav className="flex items-center gap-1 text-sm"><Link className="rounded-md px-3 py-2 hover:bg-white/75" href="/courses">课程管理</Link><Link className="rounded-md px-3 py-2 text-[#08743b] hover:bg-white/75" href="/">返回课程创作 <ArrowRight className="ml-1 inline size-4" /></Link></nav>
+          <nav className="flex items-center text-sm"><Link className="rounded-md px-3 py-2 text-[#08743b] hover:bg-white/75" href="/">返回课程创作 <ArrowRight className="ml-1 inline size-4" /></Link></nav>
         </header>
         <section className="flex flex-col gap-3 py-6 md:flex-row md:items-end md:justify-between">
-          <div><p className="mb-2 inline-flex min-h-7 items-center rounded-full border border-[#079447]/30 bg-[#eaf8ef] px-3 font-mono text-xs font-semibold tracking-[.08em] text-[#08743b]">可选教学交付空间</p><h1 className="text-3xl font-semibold leading-[1.3]">教师驾驶舱</h1><p className="mt-1 text-sm text-[#5f6f66]">将课程用于教学交付，并持续跟进学习效果。</p></div>
+          <div><h1 className="text-3xl font-semibold leading-[1.3]">教师驾驶舱</h1><p className="mt-1 text-sm text-[#5f6f66]">将课程用于教学交付，并持续跟进学习效果。</p></div>
           {!loading && dashboardState === 'active' && <p className="w-fit rounded-full border border-emerald-900/10 bg-white/70 px-3 py-1.5 text-xs text-[#5f6f66]">当前共有 {data.taskCount} 项任务</p>}
         </section>
         {error ? (
