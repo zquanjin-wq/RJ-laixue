@@ -7,6 +7,7 @@ describe('buildSystemPrompt capability boundary', () => {
 
   it('grants reading and slide regeneration', () => {
     expect(prompt).toContain('read_scene_content');
+    expect(prompt).toContain('read_course_structure');
     expect(prompt).toContain('regenerate_scene');
   });
 

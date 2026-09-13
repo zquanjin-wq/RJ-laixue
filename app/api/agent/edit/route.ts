@@ -166,6 +166,7 @@ export async function POST(req: NextRequest) {
   const tools = buildToolset({
     aiCall,
     getSceneContext: (sceneId) => sceneContextMap[sceneId],
+    listSceneContexts: () => Object.entries(sceneContextMap),
     activeSceneId: body.scene?.id,
     getSelection: () => selectionIds,
   });

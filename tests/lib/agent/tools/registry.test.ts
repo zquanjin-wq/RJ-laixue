@@ -15,6 +15,7 @@ describe('agent toolset registry', () => {
     expect(names).toEqual([
       'edit_elements',
       'edit_interactive_html',
+      'read_course_structure',
       'read_scene_content',
       'regenerate_scene',
       'regenerate_scene_actions',
