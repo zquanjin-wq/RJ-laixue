@@ -20,7 +20,13 @@ export interface CourseRecord {
  * queries avoids detoasting and serializing complete slide decks (including
  * page images and generated audio references) before the list can render.
  */
-export type CourseListRecord = Omit<CourseRecord, 'content'>;
+export type CourseListRecord = Omit<CourseRecord, 'content'> & {
+  generationJobId: string | null;
+  generationStatus: string | null;
+  generationProgress: unknown;
+  generationErrorCode: string | null;
+  generationErrorMessage: string | null;
+};
 
 export interface CourseAssetRecord {
   id: string;
@@ -57,14 +63,30 @@ const courseColumns = `
 `;
 
 const courseListColumns = `
-  id,
-  owner_user_id AS "ownerUserId",
-  title,
-  topic,
-  save_state AS "saveState",
-  content_revision::integer AS "contentRevision",
-  created_at AS "createdAt",
-  updated_at AS "updatedAt"
+  c.id,
+  c.owner_user_id AS "ownerUserId",
+  c.title,
+  c.topic,
+  c.save_state AS "saveState",
+  c.content_revision::integer AS "contentRevision",
+  c.created_at AS "createdAt",
+  c.updated_at AS "updatedAt",
+  generation.id AS "generationJobId",
+  generation.status AS "generationStatus",
+  generation.progress AS "generationProgress",
+  generation.error_code AS "generationErrorCode",
+  generation.error_message AS "generationErrorMessage"
+`;
+
+const latestGenerationJoin = `
+  LEFT JOIN LATERAL (
+    SELECT j.id,j.status,j.progress,j.error_code,j.error_message
+    FROM app.classroom_generation_jobs g
+    JOIN app.background_jobs j ON j.id=g.job_id
+    WHERE g.course_id=c.id AND g.pipeline_kind='pptx_ai_classroom'
+    ORDER BY j.created_at DESC
+    LIMIT 1
+  ) generation ON true
 `;
 
 export class CourseRepository {
@@ -111,9 +133,10 @@ export class CourseRepository {
   async listOwnedCourses(ownerUserId: string): Promise<CourseListRecord[]> {
     const result = await this.pool.query<CourseListRecord>(
       `SELECT ${courseListColumns}
-       FROM app.courses
-       WHERE owner_user_id = $1 AND deleted_at IS NULL
-       ORDER BY updated_at DESC, id`,
+       FROM app.courses c
+       ${latestGenerationJoin}
+       WHERE c.owner_user_id = $1 AND c.deleted_at IS NULL
+       ORDER BY c.updated_at DESC, c.id`,
       [ownerUserId],
     );
     return result.rows;
@@ -122,9 +145,10 @@ export class CourseRepository {
   async listCourses(): Promise<CourseListRecord[]> {
     const result = await this.pool.query<CourseListRecord>(
       `SELECT ${courseListColumns}
-       FROM app.courses
-       WHERE deleted_at IS NULL
-       ORDER BY updated_at DESC, id`,
+       FROM app.courses c
+       ${latestGenerationJoin}
+       WHERE c.deleted_at IS NULL
+       ORDER BY c.updated_at DESC, c.id`,
     );
     return result.rows;
   }

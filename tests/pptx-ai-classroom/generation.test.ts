@@ -1,7 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
-import { generatePptxPageScript } from '@/lib/pptx-ai-classroom/generation';
+import { fallbackPptxPageScript, generatePptxPageScript } from '@/lib/pptx-ai-classroom/generation';
 
 describe('PPTX narration generation', () => {
+  it('provides a factual fallback for an image-only page', () => {
+    expect(
+      fallbackPptxPageScript(
+        {
+          sceneId: 'scene-blank',
+          page: 3,
+          title: '第 3 页',
+          visibleText: [],
+          speakerNotes: null,
+          repairs: [],
+          warnings: [],
+        },
+        'zh-CN',
+      ),
+    ).toMatchObject({ sceneId: 'scene-blank', sourceKind: 'ai_generated' });
+  });
   it('uses speaker notes as a rewrite source rather than attaching raw notes as speech', async () => {
     const aiCall = vi.fn().mockResolvedValue('欢迎大家。接下来请留意这页呈现的三个关键能力。');
     const result = await generatePptxPageScript({

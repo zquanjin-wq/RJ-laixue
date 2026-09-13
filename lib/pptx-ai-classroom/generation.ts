@@ -5,7 +5,12 @@ import type { PptxPageInspection } from './inspection';
 import type { PptxClassroomRosterMember, PptxPageScript } from './draft';
 
 function parseJson(value: string): unknown {
-  return JSON.parse(value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+  return JSON.parse(
+    value
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, ''),
+  );
 }
 
 function fallbackRoster(languageDirective: string): PptxClassroomRosterMember[] {
@@ -15,21 +20,37 @@ function fallbackRoster(languageDirective: string): PptxClassroomRosterMember[] 
       id: 'pptx-teacher',
       name: chinese ? 'AI 老师' : 'AI Instructor',
       role: 'teacher',
-      persona: chinese ? '表达清晰，善于联系页面内容循序讲解。' : 'Clear, structured, and attentive to the source material.',
-      avatar: AGENT_DEFAULT_AVATARS[0], color: AGENT_COLOR_PALETTE[0], priority: 10,
+      persona: chinese
+        ? '表达清晰，善于联系页面内容循序讲解。'
+        : 'Clear, structured, and attentive to the source material.',
+      avatar: AGENT_DEFAULT_AVATARS[0],
+      color: AGENT_COLOR_PALETTE[0],
+      priority: 10,
       voiceDesign: chinese
         ? { identity: '成年教师', texture: '温暖清晰', delivery: '从容鼓励' }
-        : { identity: 'adult instructor', texture: 'warm and clear', delivery: 'calm and encouraging' },
+        : {
+            identity: 'adult instructor',
+            texture: 'warm and clear',
+            delivery: 'calm and encouraging',
+          },
     },
     {
       id: 'pptx-companion',
       name: chinese ? '伴学同学' : 'Learning Companion',
       role: 'student',
-      persona: chinese ? '主动提问，帮助学习者梳理重点。' : 'Asks useful questions and helps learners connect key ideas.',
-      avatar: AGENT_DEFAULT_AVATARS[1], color: AGENT_COLOR_PALETTE[1], priority: 5,
+      persona: chinese
+        ? '主动提问，帮助学习者梳理重点。'
+        : 'Asks useful questions and helps learners connect key ideas.',
+      avatar: AGENT_DEFAULT_AVATARS[1],
+      color: AGENT_COLOR_PALETTE[1],
+      priority: 5,
       voiceDesign: chinese
         ? { identity: '青年学习伙伴', texture: '明亮自然', delivery: '积极自然' }
-        : { identity: 'young learning companion', texture: 'bright and natural', delivery: 'engaged and natural' },
+        : {
+            identity: 'young learning companion',
+            texture: 'bright and natural',
+            delivery: 'engaged and natural',
+          },
     },
   ];
 }
@@ -43,7 +64,10 @@ export async function generatePptxRoster(input: {
   teacherVoice?: { providerId: string; modelId?: string; voiceId: string };
   companionCount?: number;
 }): Promise<PptxClassroomRosterMember[]> {
-  const pageSummary = input.pages.slice(0, 12).map((page) => `${page.page}. ${page.title}`).join('\n');
+  const pageSummary = input.pages
+    .slice(0, 12)
+    .map((page) => `${page.page}. ${page.title}`)
+    .join('\n');
   try {
     const raw = await input.aiCall(
       'You design a small, practical roster for an interactive course. Return only JSON.',
@@ -53,19 +77,33 @@ export async function generatePptxRoster(input: {
     const agents = parsed.agents ?? [];
     if (agents.filter((agent) => agent.role === 'teacher').length !== 1 || agents.length < 2)
       return fallbackRoster(input.languageDirective);
-    const roster: PptxClassroomRosterMember[] = agents.slice(0, Math.max(2, 1 + (input.companionCount ?? 1))).map((agent, index): PptxClassroomRosterMember => ({
-      id: `pptx-agent-${nanoid(8)}`,
-      name: typeof agent.name === 'string' && agent.name.trim() ? agent.name.trim() : `Agent ${index + 1}`,
-      role: agent.role === 'teacher' ? 'teacher' : agent.role === 'assistant' ? 'assistant' : 'student',
-      persona: typeof agent.persona === 'string' ? agent.persona.trim() : '',
-      avatar: AGENT_DEFAULT_AVATARS[index % AGENT_DEFAULT_AVATARS.length],
-      color: AGENT_COLOR_PALETTE[index % AGENT_COLOR_PALETTE.length],
-      priority: agent.role === 'teacher' ? 10 : agent.role === 'assistant' ? 7 : 5,
-      ...(agent.voiceDesign && typeof agent.voiceDesign === 'object'
-        ? { voiceDesign: agent.voiceDesign as PptxClassroomRosterMember['voiceDesign'] }
-        : {}),
-      ...(agent.role === 'teacher' && input.teacherVoice ? { voiceConfig: input.teacherVoice } : {}),
-    }));
+    const roster: PptxClassroomRosterMember[] = agents
+      .slice(0, Math.max(2, 1 + (input.companionCount ?? 1)))
+      .map(
+        (agent, index): PptxClassroomRosterMember => ({
+          id: `pptx-agent-${nanoid(8)}`,
+          name:
+            typeof agent.name === 'string' && agent.name.trim()
+              ? agent.name.trim()
+              : `Agent ${index + 1}`,
+          role:
+            agent.role === 'teacher'
+              ? 'teacher'
+              : agent.role === 'assistant'
+                ? 'assistant'
+                : 'student',
+          persona: typeof agent.persona === 'string' ? agent.persona.trim() : '',
+          avatar: AGENT_DEFAULT_AVATARS[index % AGENT_DEFAULT_AVATARS.length],
+          color: AGENT_COLOR_PALETTE[index % AGENT_COLOR_PALETTE.length],
+          priority: agent.role === 'teacher' ? 10 : agent.role === 'assistant' ? 7 : 5,
+          ...(agent.voiceDesign && typeof agent.voiceDesign === 'object'
+            ? { voiceDesign: agent.voiceDesign as PptxClassroomRosterMember['voiceDesign'] }
+            : {}),
+          ...(agent.role === 'teacher' && input.teacherVoice
+            ? { voiceConfig: input.teacherVoice }
+            : {}),
+        }),
+      );
     return roster;
   } catch {
     return fallbackRoster(input.languageDirective).map((agent, index) =>
@@ -96,4 +134,20 @@ export async function generatePptxPageScript(input: {
         sourceKind: speakerNotes ? 'speaker_notes_rewritten' : 'ai_generated',
       }
     : null;
+}
+
+/** Blank/image-only pages still need a playable narration action. Keep the
+ * fallback deliberately factual and avoid inventing details not in the PPT. */
+export function fallbackPptxPageScript(
+  page: PptxPageInspection,
+  languageDirective: string,
+): PptxPageScript {
+  const chinese = languageDirective.toLowerCase().startsWith('zh');
+  return {
+    sceneId: page.sceneId,
+    text: chinese
+      ? '这一页以视觉内容为主，请结合页面中的图示进行观察。我们先保留这一页的原始信息，然后继续后面的课程内容。'
+      : 'This page is primarily visual. Take a moment to review the original information shown here before we continue with the course.',
+    sourceKind: 'ai_generated',
+  };
 }

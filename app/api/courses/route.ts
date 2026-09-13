@@ -17,6 +17,11 @@ function courseListResponse(course: CourseListRecord) {
     created_at: course.createdAt,
     updated_at: course.updatedAt,
     author_name: null,
+    generation_job_id: course.generationJobId,
+    generation_status: course.generationStatus,
+    generation_progress: course.generationProgress,
+    generation_error_code: course.generationErrorCode,
+    generation_error_message: course.generationErrorMessage,
   };
 }
 

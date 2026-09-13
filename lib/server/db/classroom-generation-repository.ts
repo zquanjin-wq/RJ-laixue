@@ -235,7 +235,15 @@ export class ClassroomGenerationRepository {
         `INSERT INTO app.classroom_generation_events
           (job_id,execution_epoch,kind,phase,page,summary,details)
          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-        [lease.id, lease.epoch, event.kind, event.phase, event.page ?? null, summary, JSON.stringify(event.details ?? {})],
+        [
+          lease.id,
+          lease.epoch,
+          event.kind,
+          event.phase,
+          event.page ?? null,
+          summary,
+          JSON.stringify(event.details ?? {}),
+        ],
       );
     });
   }
@@ -301,15 +309,63 @@ export class ClassroomGenerationRepository {
    * invalidated step instead of re-parsing the PPTX or re-synthesizing audio.
    */
   async retry(id: string, ownerUserId: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `UPDATE app.background_jobs SET status='queued',attempts=0,run_after=now(),
-        started_at=NULL,completed_at=NULL,error_code=NULL,error_message=NULL,
-        result=NULL,progress='{"step":"queued","progress":0}'::jsonb,
-        locked_by=NULL,locked_until=NULL,execution_epoch=execution_epoch+1,updated_at=now()
-       WHERE id=$1 AND owner_user_id=$2 AND type=$3 AND status IN ('failed','cancelled','conflict')`,
-      [id, ownerUserId, JOB_TYPE],
-    );
-    return result.rowCount === 1;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const target = await client.query<{
+        status: string;
+        pipelineKind: string;
+        courseRevision: number | null;
+        sourceMatches: boolean;
+      }>(
+        `SELECT j.status,g.pipeline_kind AS "pipelineKind",
+          c.content_revision::integer AS "courseRevision",
+          COALESCE(c.content->'stage'->'pptxSource'->>'sourceId'=j.payload->>'sourceId',false) AS "sourceMatches"
+         FROM app.background_jobs j
+         JOIN app.classroom_generation_jobs g ON g.job_id=j.id
+         LEFT JOIN app.courses c ON c.id=g.course_id AND c.deleted_at IS NULL
+         WHERE j.id=$1 AND j.owner_user_id=$2 AND j.type=$3
+         FOR UPDATE OF j,g`,
+        [id, ownerUserId, JOB_TYPE],
+      );
+      const job = target.rows[0];
+      if (!job || !['failed', 'cancelled', 'conflict'].includes(job.status)) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      if (job.status === 'conflict' && job.pipelineKind === 'pptx_ai_classroom') {
+        if (!job.courseRevision || !job.sourceMatches) {
+          await client.query('ROLLBACK');
+          return false;
+        }
+        // Rebase only onto the same immutable PPTX source. The worker reads the
+        // current canvas, so genuine teacher edits remain intact while the
+        // generated actions/audio are added to the new revision.
+        await client.query(
+          `UPDATE app.classroom_generation_jobs SET source_revision=$3 WHERE job_id=$1 AND owner_user_id=$2`,
+          [id, ownerUserId, job.courseRevision],
+        );
+        await client.query(`UPDATE app.background_jobs SET source_revision=$2 WHERE id=$1`, [
+          id,
+          job.courseRevision,
+        ]);
+      }
+      const result = await client.query(
+        `UPDATE app.background_jobs SET status='queued',attempts=0,run_after=now(),
+          started_at=NULL,completed_at=NULL,error_code=NULL,error_message=NULL,
+          result=NULL,progress='{"step":"queued","progress":0}'::jsonb,
+          locked_by=NULL,locked_until=NULL,execution_epoch=execution_epoch+1,updated_at=now()
+         WHERE id=$1 AND owner_user_id=$2 AND type=$3`,
+        [id, ownerUserId, JOB_TYPE],
+      );
+      await client.query('COMMIT');
+      return result.rowCount === 1;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getOwned(id: string, ownerUserId: string) {

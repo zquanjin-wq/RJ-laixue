@@ -21,11 +21,12 @@ import {
   applyPptxSafeTitleRepairs,
 } from '@/lib/pptx-ai-classroom/inspection';
 import { applyPptxRoster, type PptxPageScript } from '@/lib/pptx-ai-classroom/draft';
-import { generatePptxPageScript, generatePptxRoster } from '@/lib/pptx-ai-classroom/generation';
 import {
-  generatePptxPageActions,
-  sanitizePptxPageActions,
-} from '@/lib/pptx-ai-classroom/actions';
+  fallbackPptxPageScript,
+  generatePptxPageScript,
+  generatePptxRoster,
+} from '@/lib/pptx-ai-classroom/generation';
+import { generatePptxPageActions, sanitizePptxPageActions } from '@/lib/pptx-ai-classroom/actions';
 import { validatePptxAiClassroom } from '@/lib/pptx-ai-classroom/quality';
 import {
   applyPptxSpeechAudio,
@@ -277,7 +278,7 @@ async function runPptxAiClassroomJob(input: {
       scenesGenerated: scripts.length,
       totalScenes: scenes.length,
     });
-    const script = await checkpoints.run(
+    const generatedScript = await checkpoints.run(
       `script/${page.page}`,
       { page, previousTitle: inspections[index - 1]?.title },
       () =>
@@ -290,7 +291,10 @@ async function runPptxAiClassroomJob(input: {
           aiCall,
         }),
     );
-    if (script) scripts.push(script);
+    // Older checkpoints can contain null for blank or image-only slides.
+    // Repair after checkpoint retrieval so retries gain a complete narration
+    // without repeating successful model calls.
+    scripts.push(generatedScript ?? fallbackPptxPageScript(page, request.languageDirective));
   }
   if (scripts.length === 0) throw new Error('No teachable PPTX pages produced narration');
   const actionsBySceneId = new Map<string, import('@/lib/types/action').Action[]>();
