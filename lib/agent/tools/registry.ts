@@ -8,6 +8,7 @@ import { makeRegenerateSceneTool } from './regenerate-scene';
 import { makeEditInteractiveHtmlTool } from './edit-interactive-html';
 import { makeEditElementsTool } from './edit-elements';
 import { makeReadCourseStructureTool, type ReadCourseStructureDeps } from './read-course-structure';
+import { makeEditCourseStructureTool } from './edit-course-structure';
 
 /**
  * Deps needed to build the v0 toolset.
@@ -34,6 +35,7 @@ export type ToolsetDeps = RegenerateActionsDeps & ReadCourseStructureDeps & {
 export function buildToolset(deps: ToolsetDeps): AgentTool<never, never>[] {
   return [
     makeReadCourseStructureTool(deps) as never,
+    makeEditCourseStructureTool(deps) as never,
     makeReadSceneContentTool(deps) as never,
     makeRegenerateSceneTool(deps) as never,
     makeRegenerateSceneActionsTool(deps) as never,
@@ -45,6 +47,7 @@ export function buildToolset(deps: ToolsetDeps): AgentTool<never, never>[] {
 /** v0 allowlist — the enabled subset. Widen here to grant capability. */
 export const V0_ALLOWLIST: ReadonlySet<string> = new Set([
   'read_course_structure',
+  'edit_course_structure',
   'read_scene_content',
   'regenerate_scene',
   'regenerate_scene_actions',

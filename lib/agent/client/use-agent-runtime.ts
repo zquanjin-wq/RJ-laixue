@@ -55,6 +55,8 @@ import { useThinkingTimers } from './thinking-timers';
 import { useSceneRuntimeErrors } from '@/lib/store/scene-runtime-errors';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { editElementsApplyCorrectionKey } from './edit-elements-result';
+import { applyCourseStructureEdits } from './apply-course-structure';
+import type { EditCourseStructureDetails } from '@/lib/agent/tools/edit-course-structure';
 
 
 function stripInlineAssets(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -443,6 +445,23 @@ export function useAgentRuntime(opts: UseAgentRuntimeOptions) {
           isError?: boolean;
         };
         toolResultsRef.current.set(e.toolCallId, { result: e.result, isError: !!e.isError });
+
+        if (e.toolName === 'edit_course_structure' && !e.isError) {
+          const applied = applyCourseStructureEdits(
+            (e.result?.details ?? {}) as EditCourseStructureDetails,
+          );
+          if (!applied.ok) {
+            toolResultsRef.current.set(e.toolCallId, {
+              result: {
+                content: [{ type: 'text', text: `Could not apply the course edit: ${applied.reason}` }],
+                details: { operations: null, updateCount: 0, refuseReason: applied.reason },
+              },
+              isError: true,
+            });
+          }
+          refresh();
+          break;
+        }
 
         // Per-element edits: apply validated EditIntents through the slide
         // session (one undo). Separate from wholesale regenerate / html patch.

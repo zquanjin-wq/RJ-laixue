@@ -13,6 +13,7 @@ describe('agent toolset registry', () => {
       .map((t) => t.name)
       .sort();
     expect(names).toEqual([
+      'edit_course_structure',
       'edit_elements',
       'edit_interactive_html',
       'read_course_structure',
@@ -24,6 +25,7 @@ describe('agent toolset registry', () => {
 
   it('allowlists exactly the v0 tools', () => {
     expect(V0_ALLOWLIST.has('read_scene_content')).toBe(true);
+    expect(V0_ALLOWLIST.has('edit_course_structure')).toBe(true);
     expect(V0_ALLOWLIST.has('regenerate_scene')).toBe(true);
     expect(V0_ALLOWLIST.has('regenerate_scene_actions')).toBe(true);
     expect(V0_ALLOWLIST.has('edit_interactive_html')).toBe(true);
