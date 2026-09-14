@@ -158,6 +158,14 @@ async function organizationInScope(
   return result.rowCount === 1;
 }
 
+async function requireActiveOrganization(organizationUnitId: string) {
+  const result = await getDatabasePool().query(
+    `SELECT 1 FROM app.organization_units WHERE id = $1 AND disabled_at IS NULL`,
+    [organizationUnitId],
+  );
+  if (!result.rowCount) throw new Error('InvalidOrganization');
+}
+
 export async function requireManagedLearner(actor: AuthenticatedActor, userId: string) {
   const result = await getDatabasePool().query<{ organizationUnitId: string | null }>(
     `SELECT organization_unit_id::text AS "organizationUnitId"
@@ -172,6 +180,92 @@ export async function requireManagedLearner(actor: AuthenticatedActor, userId: s
     throw new Error('NotFound');
   }
   return learner;
+}
+
+export async function updateManagedPerson(
+  actor: AuthenticatedActor,
+  userId: string,
+  input: { displayName: string; email: string; organizationUnitId: string | null },
+) {
+  const person = await getDatabasePool().query<{
+    role: 'admin' | 'teacher' | 'learner';
+    organizationUnitId: string | null;
+  }>(
+    `SELECT role, organization_unit_id::text AS "organizationUnitId"
+       FROM app.user_profiles WHERE user_id = $1`,
+    [userId],
+  );
+  const target = person.rows[0];
+  if (!target) throw new Error('NotFound');
+  if (actor.role !== 'admin') {
+    await requireManagedLearner(actor, userId);
+    if (
+      !input.organizationUnitId ||
+      !(await organizationInScope(actor, input.organizationUnitId))
+    ) {
+      throw new Error('Forbidden');
+    }
+  } else if (input.organizationUnitId) {
+    await requireActiveOrganization(input.organizationUnitId);
+  }
+
+  const client = await getDatabasePool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE public."user" SET name = $2, email = $3, "updatedAt" = now() WHERE id = $1`,
+      [userId, input.displayName, input.email],
+    );
+    await client.query(
+      `UPDATE app.user_profiles
+          SET display_name = $2, organization_unit_id = $3, updated_at = now()
+        WHERE user_id = $1`,
+      [userId, input.displayName, input.organizationUnitId],
+    );
+    await client.query(
+      `INSERT INTO app.account_audit_events
+         (actor_user_id, target_user_id, action, organization_unit_id, metadata)
+       VALUES ($1, $2, 'person.updated', $3, $4::jsonb)`,
+      [
+        actor.userId,
+        userId,
+        input.organizationUnitId,
+        JSON.stringify({ email: input.email, displayName: input.displayName }),
+      ],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function resetManagedPersonPassword(
+  actor: AuthenticatedActor,
+  userId: string,
+  password: string,
+  headers: Headers,
+) {
+  let organizationUnitId: string | null = null;
+  if (actor.role === 'admin') {
+    const person = await getDatabasePool().query<{ organizationUnitId: string | null }>(
+      `SELECT organization_unit_id::text AS "organizationUnitId"
+         FROM app.user_profiles WHERE user_id = $1`,
+      [userId],
+    );
+    if (!person.rows[0]) throw new Error('NotFound');
+    organizationUnitId = person.rows[0].organizationUnitId;
+  } else {
+    organizationUnitId = (await requireManagedLearner(actor, userId)).organizationUnitId;
+  }
+  await getAuth().api.setUserPassword({ body: { userId, newPassword: password }, headers });
+  await getDatabasePool().query(
+    `UPDATE app.user_profiles SET must_change_password = true, updated_at = now() WHERE user_id = $1`,
+    [userId],
+  );
+  await audit(actor.userId, userId, 'person.password_reset', organizationUnitId);
 }
 
 export async function createManagedLearner(
