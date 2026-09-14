@@ -107,9 +107,10 @@ echo 'Recreating selected services...'
 "`${compose[@]}" up -d --no-deps --force-recreate $($Services -join ' ')
 printf '%s\n' '$shortRevision' | sudo tee .deployed-revision >/dev/null
 "@
-  # PowerShell writes pipeline text with CRLF. Strip it on the Linux side so
-  # heredoc-derived shell lines and continuations keep their intended shape.
-  $remoteScript | & ssh -T -o BatchMode=yes -o ConnectTimeout=15 -i $SshKeyPath "${RemoteUser}@${HostName}" 'tr -d "\r" | bash -s'
+  # The Windows pipeline emits CRLF even after an in-memory replacement.
+  # Strip ASCII CR remotely using an octal escape that the remote shell does
+  # not collapse before `tr` sees it.
+  $remoteScript | & ssh -T -o BatchMode=yes -o ConnectTimeout=15 -i $SshKeyPath "${RemoteUser}@${HostName}" "tr -d '\015' | bash -s"
   if ($LASTEXITCODE -ne 0) { throw 'Remote release failed.' }
 } finally {
   Remove-Item -LiteralPath $archivePath -ErrorAction SilentlyContinue
