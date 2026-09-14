@@ -16,7 +16,7 @@ export default async function AccountManagementPage() {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login?next=/admin/accounts');
   const access = await getAccountManagementAccess(actor);
-  if (!access) redirect('/admin');
+  if (!access) redirect(actor.role === 'teacher' ? '/courses' : '/student/courses');
   const [people, organizations, auditEvents] = await Promise.all([
     listManagedPeople(actor),
     listManageableOrganizationUnits(actor),
@@ -35,9 +35,14 @@ export default async function AccountManagementPage() {
                 : '你只能管理已授权组织范围内的学员。'}
             </p>
           </div>
-          <Button asChild variant="outline">
-            <Link href="/admin">返回工作台</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild variant="outline">
+              <Link href="/courses">课程管理</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/admin/learning-tasks">学习任务</Link>
+            </Button>
+          </div>
         </header>
         <AccountManagementClient
           initialPeople={people}
