@@ -124,6 +124,7 @@ describe('P1 PostgreSQL foundation', () => {
       '0014_api_tokens.sql',
       '0015_revoice_source_revision.sql',
       '0016_course_video_export_leases.sql',
+      '0017_organization_account_management.sql',
     ]);
     expect(second.skipped).toEqual(first.applied);
 
@@ -141,6 +142,19 @@ describe('P1 PostgreSQL foundation', () => {
       `SELECT role FROM app.user_profiles WHERE user_id = 'user-1'`,
     );
     expect(profile.rows[0]?.role).toBe('learner');
+
+    const accountTables = await pool.query<{ tableName: string }>(
+      `SELECT table_name AS "tableName"
+         FROM information_schema.tables
+        WHERE table_schema = 'app'
+          AND table_name IN ('organization_units', 'account_management_grants', 'account_audit_events')
+        ORDER BY table_name`,
+    );
+    expect(accountTables.rows.map((row) => row.tableName)).toEqual([
+      'account_audit_events',
+      'account_management_grants',
+      'organization_units',
+    ]);
   });
 
   it('deduplicates generation requests and fences reclaimed or cancelled workers', async () => {
