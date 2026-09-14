@@ -35,12 +35,16 @@ async function readAudioDuration(blob: Blob): Promise<number> {
   }
 }
 
-async function proxyImageForSnapshot(src: string): Promise<ResolvedSnapshotImage> {
-  const response = await fetch('/api/proxy-media', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url: src }),
-  });
+export async function resolveImageForVideoSnapshot(src: string): Promise<ResolvedSnapshotImage> {
+  const url = new URL(src, window.location.href);
+  const response =
+    url.origin === window.location.origin
+      ? await fetch(url.href, { credentials: 'same-origin', cache: 'no-store' })
+      : await fetch('/api/proxy-media', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url: url.href }),
+        });
   if (!response.ok) {
     throw new Error(`课程图片无法安全导出（HTTP ${response.status}）`);
   }
@@ -88,7 +92,7 @@ export async function compileBrowserCourseVideo(
         width: 1280,
         pixelRatio: 1,
         format: 'blob',
-        resolveImage: proxyImageForSnapshot,
+        resolveImage: resolveImageForVideoSnapshot,
       });
       return image as Blob;
     });

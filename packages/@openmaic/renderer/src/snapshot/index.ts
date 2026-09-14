@@ -335,7 +335,10 @@ async function resolveSnapshotAssets(
 
 function shouldResolveImage(src: string): boolean {
   const url = new URL(src, window.location.href);
-  return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== window.location.origin;
+  // Resolve same-origin HTTP assets too: an authenticated asset endpoint can
+  // redirect to object storage, and that final cross-origin response taints the
+  // canvas even though the original DOM URL looked same-origin.
+  return url.protocol === 'http:' || url.protocol === 'https:';
 }
 
 function waitForImage(img: HTMLImageElement): Promise<void> {

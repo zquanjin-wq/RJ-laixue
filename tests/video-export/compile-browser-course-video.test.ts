@@ -1,11 +1,37 @@
 import JSZip from 'jszip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { compileBrowserCourseVideo } from '@/lib/video-export/compile-browser-course-video';
+import {
+  compileBrowserCourseVideo,
+  resolveImageForVideoSnapshot,
+} from '@/lib/video-export/compile-browser-course-video';
 import type { ClassroomManifest } from '@/lib/export/classroom-zip-types';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('compileBrowserCourseVideo', () => {
+  it('turns same-origin course images into canvas-safe blob URLs', async () => {
+    vi.stubGlobal('window', { location: { href: 'https://laixue.online/classroom/course-1', origin: 'https://laixue.online' } });
+    const fetchMock = vi.fn(async () =>
+      new Response(new Blob(['ppt-page'], { type: 'image/png' }), { status: 200 }),
+    );
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:canvas-safe-image');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolved = await resolveImageForVideoSnapshot('/api/course-assets/object?key=ppt.png');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://laixue.online/api/course-assets/object?key=ppt.png',
+      { credentials: 'same-origin', cache: 'no-store' },
+    );
+    expect(resolved.src).toBe('blob:canvas-safe-image');
+    resolved.cleanup?.();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:canvas-safe-image');
+  });
+
   it('downloads published cloud narration when IndexedDB has no audio blob', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       expect(String(input)).toContain('/api/course-assets/object');
