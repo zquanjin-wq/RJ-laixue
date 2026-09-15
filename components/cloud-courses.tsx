@@ -75,41 +75,98 @@ function VideoStatus({ job }: { job?: VideoExportJob }) {
   if (!job) return <span className="text-sm text-slate-400">— 未生成</span>;
 
   if (job.status === 'succeeded') {
-    return <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700"><i className="size-2 rounded-full bg-emerald-500" />已生成</span>;
+    return (
+      <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700">
+        <i className="size-2 rounded-full bg-emerald-500" />
+        已生成
+      </span>
+    );
   }
 
   if (job.status === 'failed' || job.status === 'cancelled') {
-    return <span className="inline-flex items-center gap-2 text-sm font-medium text-red-700"><i className="size-2 rounded-full bg-red-500" />{job.status === 'failed' ? '生成失败' : '已取消'} · 查看详情</span>;
+    return (
+      <span className="inline-flex items-center gap-2 text-sm font-medium text-red-700">
+        <i className="size-2 rounded-full bg-red-500" />
+        {job.status === 'failed' ? '生成失败' : '已取消'} · 查看详情
+      </span>
+    );
   }
 
   const progress = videoJobProgress(job);
   return (
     <div className="min-w-0">
-      <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
-        <i className="size-2 animate-pulse rounded-full bg-blue-500" />
-        <span>{job.status === 'uploading' ? '准备素材中' : '生成中'} {progress === null ? '' : `${progress}%`}</span>
+      <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+        <i className="size-2 animate-pulse rounded-full bg-emerald-500" />
+        <span>
+          {job.status === 'uploading' ? '准备素材中' : '生成中'}{' '}
+          {progress === null ? '' : `${progress}%`}
+        </span>
       </div>
-      <div className="mt-2 h-1.5 w-24 overflow-hidden rounded-full bg-blue-100">
-        <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress ?? (job.status === 'uploading' ? 12 : 24)}%` }} />
+      <div className="mt-2 h-1.5 w-24 overflow-hidden rounded-full bg-emerald-100">
+        <div
+          className="h-full rounded-full bg-emerald-500 transition-all"
+          style={{ width: `${progress ?? (job.status === 'uploading' ? 12 : 24)}%` }}
+        />
       </div>
     </div>
   );
 }
 
 function CourseStatus({ course }: { course: CloudCourse }) {
-  if (course.lifecycle.creationStatus === 'creating') return <span className="inline-flex items-center gap-2 text-sm font-medium text-violet-700"><i className="size-2 animate-pulse rounded-full bg-violet-500" />创建中</span>;
-  if (course.lifecycle.saveStatus === 'saving') return <span className="inline-flex items-center gap-2 text-sm font-medium text-amber-700"><i className="size-2 animate-pulse rounded-full bg-amber-500" />保存云端中</span>;
-  return <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-700"><i className="size-2 rounded-full bg-slate-400" />已保存</span>;
+  if (course.lifecycle.creationStatus === 'creating')
+    return (
+      <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700">
+        <i className="size-2 animate-pulse rounded-full bg-emerald-500" />
+        创建中
+      </span>
+    );
+  if (course.lifecycle.saveStatus === 'saving')
+    return (
+      <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700">
+        <i className="size-2 animate-pulse rounded-full bg-emerald-500" />
+        保存云端中
+      </span>
+    );
+  return (
+    <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-800">
+      <i className="size-2 rounded-full bg-emerald-500" />
+      已保存
+    </span>
+  );
 }
 
 function VideoPlan({ job }: { job?: VideoExportJob }) {
   if (!job) return <p className="text-sm text-slate-500">尚未创建视频任务</p>;
   if (isActiveVideoJob(job)) {
     const progress = videoJobProgress(job);
-    return <><p className="font-medium text-slate-800">{job.status === 'uploading' ? '正在准备视频素材' : '正在合成画面与配音'}{progress === null ? '' : ` ${progress}%`}</p><p className="mt-1 text-xs text-slate-500">视频完成后会在此课程行中提供下载。</p></>;
+    return (
+      <>
+        <p className="font-medium text-slate-800">
+          {job.status === 'uploading' ? '正在准备视频素材' : '正在合成画面与配音'}
+          {progress === null ? '' : ` ${progress}%`}
+        </p>
+        <p className="mt-1 text-xs text-slate-500">视频完成后会在此课程行中提供下载。</p>
+      </>
+    );
   }
-  if (job.status === 'failed') return <><p className="font-medium text-red-700">视频生成失败</p>{job.error && <p className="mt-1 text-xs text-red-600">{job.error}</p>}</>;
-  if (job.status === 'succeeded') return <><p className="font-medium text-emerald-700">视频已生成</p>{job.exportPlan && <p className="mt-1 text-xs text-slate-500">本次合成检测 {job.exportPlan.totalScenes} 页，可合成 {job.exportPlan.includedCount} 页。</p>}</>;
+  if (job.status === 'failed')
+    return (
+      <>
+        <p className="font-medium text-red-700">视频生成失败</p>
+        {job.error && <p className="mt-1 text-xs text-red-600">{job.error}</p>}
+      </>
+    );
+  if (job.status === 'succeeded')
+    return (
+      <>
+        <p className="font-medium text-emerald-700">视频已生成</p>
+        {job.exportPlan && (
+          <p className="mt-1 text-xs text-slate-500">
+            本次合成检测 {job.exportPlan.totalScenes} 页，可合成 {job.exportPlan.includedCount} 页。
+          </p>
+        )}
+      </>
+    );
   return <p className="text-sm text-slate-500">视频导出已取消。</p>;
 }
 
@@ -156,7 +213,11 @@ export default function CloudCourses() {
       const rawBody = await response.text();
       let body: { success?: boolean; jobs?: VideoExportJob[]; error?: string };
       try {
-        body = JSON.parse(rawBody) as { success?: boolean; jobs?: VideoExportJob[]; error?: string };
+        body = JSON.parse(rawBody) as {
+          success?: boolean;
+          jobs?: VideoExportJob[];
+          error?: string;
+        };
       } catch {
         throw new Error('视频任务服务暂时不可用');
       }
@@ -169,7 +230,9 @@ export default function CloudCourses() {
     }
   }, [isGlobalManager]);
 
-  useEffect(() => { fetchCourses(); }, [fetchCourses]);
+  useEffect(() => {
+    fetchCourses();
+  }, [fetchCourses]);
   useEffect(() => {
     if (!videoJobs.some(isActiveVideoJob)) return;
     const timer = window.setInterval(() => void fetchCourses(), 10000);
@@ -177,29 +240,40 @@ export default function CloudCourses() {
   }, [fetchCourses, videoJobs]);
 
   const latestVideoByCourse = useMemo(() => {
-    const jobs = [...videoJobs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const jobs = [...videoJobs].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
     return new Map(jobs.map((job) => [job.courseId, job]));
   }, [videoJobs]);
 
-  const counts = useMemo(() => ({
-    creating: myCourses.filter((course) => course.lifecycle.creationStatus === 'creating').length,
-    saved: myCourses.filter((course) => course.lifecycle.saveStatus === 'saved').length,
-    active: videoJobs.filter(isActiveVideoJob).length,
-    downloadable: videoJobs.filter((job) => job.status === 'succeeded' && job.downloadUrl).length,
-    failed: videoJobs.filter((job) => job.status === 'failed').length,
-  }), [videoJobs]);
+  const counts = useMemo(
+    () => ({
+      creating: myCourses.filter((course) => course.lifecycle.creationStatus === 'creating').length,
+      saved: myCourses.filter((course) => course.lifecycle.saveStatus === 'saved').length,
+      active: videoJobs.filter(isActiveVideoJob).length,
+      downloadable: videoJobs.filter((job) => job.status === 'succeeded' && job.downloadUrl).length,
+      failed: videoJobs.filter((job) => job.status === 'failed').length,
+    }),
+    [videoJobs],
+  );
 
-  const courses = useMemo(() => myCourses.filter((course) => {
-    const job = latestVideoByCourse.get(course.id);
-    const searchable = `${course.title} ${course.topic} ${course.author_name ?? ''}`.toLowerCase();
-    if (query && !searchable.includes(query.toLowerCase())) return false;
-    if (filter === 'creating') return course.lifecycle.creationStatus === 'creating';
-    if (filter === 'saved') return course.lifecycle.saveStatus === 'saved';
-    if (filter === 'active') return Boolean(job && isActiveVideoJob(job));
-    if (filter === 'downloadable') return Boolean(job?.status === 'succeeded' && job.downloadUrl);
-    if (filter === 'failed') return job?.status === 'failed';
-    return true;
-  }), [filter, latestVideoByCourse, myCourses, query]);
+  const courses = useMemo(
+    () =>
+      myCourses.filter((course) => {
+        const job = latestVideoByCourse.get(course.id);
+        const searchable =
+          `${course.title} ${course.topic} ${course.author_name ?? ''}`.toLowerCase();
+        if (query && !searchable.includes(query.toLowerCase())) return false;
+        if (filter === 'creating') return course.lifecycle.creationStatus === 'creating';
+        if (filter === 'saved') return course.lifecycle.saveStatus === 'saved';
+        if (filter === 'active') return Boolean(job && isActiveVideoJob(job));
+        if (filter === 'downloadable')
+          return Boolean(job?.status === 'succeeded' && job.downloadUrl);
+        if (filter === 'failed') return job?.status === 'failed';
+        return true;
+      }),
+    [filter, latestVideoByCourse, myCourses, query],
+  );
 
   const openCourse = (courseId: string) => window.open(`/classroom/${courseId}?view=1`, '_blank');
   const editCourse = (courseId: string) => window.open(`/classroom/${courseId}?editor=1`, '_blank');
@@ -244,8 +318,12 @@ export default function CloudCourses() {
     }
   };
 
-  if (loading) return <div className="mt-8 text-center text-sm text-muted-foreground">正在加载课程...</div>;
-  if (error) return <div className="mt-8 text-center text-sm text-muted-foreground">课程暂不可用（{error}）</div>;
+  if (loading)
+    return <div className="mt-8 text-center text-sm text-muted-foreground">正在加载课程...</div>;
+  if (error)
+    return (
+      <div className="mt-8 text-center text-sm text-muted-foreground">课程暂不可用（{error}）</div>
+    );
 
   const filters: Array<{ key: CourseFilter; label: string; count: number }> = [
     { key: 'all', label: '全部', count: myCourses.length },
@@ -263,43 +341,153 @@ export default function CloudCourses() {
           <h2 className="text-xl font-semibold tracking-tight">我的课程</h2>
           <span className="text-sm text-muted-foreground">共 {myCourses.length} 门</span>
           <div className="flex items-center gap-5">
-            {filters.map((item) => <button key={item.key} onClick={() => setFilter(item.key)} className={`border-b-2 pb-2 text-sm transition-colors ${filter === item.key ? 'border-slate-900 font-semibold text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{item.label} <span className="text-xs">{item.count}</span></button>)}
+            {filters.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setFilter(item.key)}
+                className={`border-b-2 pb-2 text-sm transition-colors ${filter === item.key ? 'border-slate-900 font-semibold text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              >
+                {item.label} <span className="text-xs">{item.count}</span>
+              </button>
+            ))}
           </div>
         </div>
         <div className="relative w-64 shrink-0">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索课程" className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索课程"
+            className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+          />
         </div>
       </div>
 
-      {courses.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">没有匹配的课程。</p> : (
+      {courses.length === 0 ? (
+        <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          没有匹配的课程。
+        </p>
+      ) : (
         <div className="overflow-visible">
           <div className="min-w-[1120px]">
-          <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500">
-            <span>课程</span><span>课程状态</span><span>视频状态</span><span>最近活动</span><span className="text-right">操作</span>
+            <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] border-b bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500">
+              <span>课程</span>
+              <span>课程状态</span>
+              <span>视频状态</span>
+              <span>最近活动</span>
+              <span className="text-right">操作</span>
+            </div>
+            {courses.map((course) => {
+              const job = latestVideoByCourse.get(course.id);
+              const owner = course.created_by === currentUserId;
+              return (
+                <div key={course.id} className="border-b border-slate-100 last:border-0">
+                  <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] items-center gap-4 px-5 py-4 hover:bg-slate-50/70">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-900">
+                        {course.title || course.topic || '未命名课程'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {owner
+                          ? '我的创作'
+                          : course.author_name
+                            ? `作者：${course.author_name}`
+                            : '课程'}{' '}
+                        · 更新于 {formatDate(course.updated_at)}
+                      </p>
+                    </div>
+                    <CourseStatus course={course} />
+                    <div>
+                      <VideoStatus job={job} />
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {formatActivity(job) ?? `更新于 ${formatDate(course.updated_at)}`}
+                    </div>
+                    <div className="flex min-w-0 flex-nowrap items-center gap-2 lg:justify-end">
+                      {job?.status === 'succeeded' && job.downloadUrl && (
+                        <button
+                          type="button"
+                          onClick={() => void downloadVideo(job)}
+                          disabled={Boolean(downloadingVideoId)}
+                          className="inline-flex h-8 w-[124px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-70"
+                        >
+                          {downloadingVideoId === job.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Download className="size-3.5" />
+                          )}
+                          {downloadingVideoId === job.id ? '正在准备下载…' : '下载'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => editCourse(course.id)}
+                        className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100"
+                      >
+                        <Pencil className="size-3.5 text-slate-400" />
+                        继续编辑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openCourse(course.id)}
+                        aria-label="预览课程"
+                        title="预览课程"
+                        className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100"
+                      >
+                        <Eye className="size-4" />
+                      </button>
+                      <div className="relative shrink-0">
+                        <button
+                          type="button"
+                          aria-label="更多操作"
+                          title="更多操作"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenMenuId(openMenuId === course.id ? null : course.id);
+                          }}
+                          className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                        >
+                          <MoreHorizontal className="size-4" />
+                        </button>
+                        {openMenuId === course.id && (
+                          <div
+                            onPointerDown={(event) => event.stopPropagation()}
+                            className="absolute right-0 z-20 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void shareCourse(course.id);
+                                setOpenMenuId(null);
+                              }}
+                              className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"
+                            >
+                              <Share2 className="size-3.5" />
+                              {sharingId === course.id ? '复制中…' : '分享链接'}
+                            </button>
+                            {owner && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  void removeCourse(course.id);
+                                }}
+                                className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="size-3.5" />
+                                删除
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          {courses.map((course) => {
-            const job = latestVideoByCourse.get(course.id);
-            const owner = course.created_by === currentUserId;
-            return <div key={course.id} className="border-b border-slate-100 last:border-0">
-              <div className="grid grid-cols-[minmax(260px,2.5fr)_minmax(140px,1fr)_minmax(150px,1.3fr)_minmax(160px,1.3fr)_minmax(320px,1.8fr)] items-center gap-4 px-5 py-4 hover:bg-slate-50/70">
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-slate-900">{course.title || course.topic || '未命名课程'}</p>
-                  <p className="mt-1 text-xs text-slate-400">{owner ? '我的创作' : course.author_name ? `作者：${course.author_name}` : '课程'} · 更新于 {formatDate(course.updated_at)}</p>
-                </div>
-                <CourseStatus course={course} />
-                <div><VideoStatus job={job} /></div>
-                <div className="text-xs text-slate-500">{formatActivity(job) ?? `更新于 ${formatDate(course.updated_at)}`}</div>
-                <div className="flex min-w-0 flex-nowrap items-center gap-2 lg:justify-end">
-                  {job?.status === 'succeeded' && job.downloadUrl && <button type="button" onClick={() => void downloadVideo(job)} disabled={Boolean(downloadingVideoId)} className="inline-flex h-8 w-[124px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-70">{downloadingVideoId === job.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}{downloadingVideoId === job.id ? '正在准备下载…' : '下载'}</button>}
-                  <button type="button" onClick={() => editCourse(course.id)} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 active:bg-slate-100"><Pencil className="size-3.5 text-slate-400" />继续编辑</button>
-                  <button type="button" onClick={() => openCourse(course.id)} aria-label="预览课程" title="预览课程" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100"><Eye className="size-4" /></button>
-                  <div className="relative shrink-0"><button type="button" aria-label="更多操作" title="更多操作" onClick={(event) => { event.stopPropagation(); setOpenMenuId(openMenuId === course.id ? null : course.id); }} className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"><MoreHorizontal className="size-4" /></button>{openMenuId === course.id && <div onPointerDown={(event) => event.stopPropagation()} className="absolute right-0 z-20 mt-2 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => { void shareCourse(course.id); setOpenMenuId(null); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs hover:bg-slate-50"><Share2 className="size-3.5" />{sharingId === course.id ? '复制中…' : '分享链接'}</button>{owner && <button type="button" onClick={() => { setOpenMenuId(null); void removeCourse(course.id); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" />删除</button>}</div>}</div>
-                </div>
-              </div>
-            </div>;
-          })}
-          </div></div>
+        </div>
       )}
     </section>
   );

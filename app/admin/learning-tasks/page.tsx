@@ -10,7 +10,6 @@ import { redirect } from 'next/navigation';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
 import { resolveActor } from '@/lib/server/learning-tasks/permissions';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TaskListFilters } from './_components/task-list-filters';
 
 export const dynamic = 'force-dynamic';
@@ -95,11 +94,12 @@ export default async function AdminLearningTasksPage() {
   }));
 
   return (
-    <main className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto max-w-5xl space-y-6">
+    <main className="teaching-workbench min-h-screen px-8 py-10">
+      <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">学习任务</h1>
+            <p className="text-sm font-medium text-primary">教学驾驶舱 / 学习任务</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">学习任务管理</h1>
             <p className="text-sm text-muted-foreground">
               {enriched.length} 个任务 · 创建草稿并发布给指定学员
             </p>
@@ -120,24 +120,9 @@ export default async function AdminLearningTasksPage() {
           </div>
         )}
 
-        <section className="space-y-3">
-          {enriched.length === 0 && !hasError && (
-            <Card className="rounded-lg">
-              <CardHeader>
-                <CardTitle>暂无学习任务</CardTitle>
-                <CardDescription>点击右上角「新建任务」创建第一个学习任务草稿。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild>
-                  <Link href="/admin/learning-tasks/new">新建任务</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {enriched.length > 0 && (
-            <TaskListFilters
-              tasks={enriched.map((task) => ({
+        <section>
+          <TaskListFilters
+            tasks={enriched.map((task) => ({
                 id: task.id,
                 title: task.title,
                 status: task.status as 'draft' | 'published' | 'closed' | 'archived',
@@ -148,8 +133,7 @@ export default async function AdminLearningTasksPage() {
                 learnerCount: task.learner_count,
                 completedCount: task.completed_count,
               }))}
-            />
-          )}
+          />
         </section>
       </div>
     </main>

@@ -6,11 +6,12 @@ import { Button } from '@/components/ui/button';
 export default function CoursesPage() {
   return (
     <AdminGate>
-      <main className="min-h-screen bg-background px-4 py-10">
-        <div className="mx-auto max-w-6xl">
+      <main className="teaching-workbench min-h-screen px-8 py-10">
+        <div className="mx-auto max-w-7xl">
           <header className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">课程管理</h1>
+              <p className="text-sm font-medium text-primary">教学驾驶舱 / 课程管理</p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-tight">课程管理</h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 维护自己的课程，并从资源库发现可复用内容。
               </p>
