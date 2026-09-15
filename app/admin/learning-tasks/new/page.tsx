@@ -7,10 +7,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
-import {
-  resolveActor,
-  checkCoursePublishPermission,
-} from '@/lib/server/learning-tasks/permissions';
+import { resolveActor } from '@/lib/server/learning-tasks/permissions';
 import { Button } from '@/components/ui/button';
 import { CreateTaskForm } from '../_components/create-task-form';
 
