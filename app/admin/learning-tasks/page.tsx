@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * /admin/learning-tasks
  *
@@ -123,16 +122,16 @@ export default async function AdminLearningTasksPage() {
         <section>
           <TaskListFilters
             tasks={enriched.map((task) => ({
-                id: task.id,
-                title: task.title,
-                status: task.status as 'draft' | 'published' | 'closed' | 'archived',
-                startAt: task.start_at,
-                dueAt: task.due_at,
-                createdAt: task.created_at,
-                courseCount: task.course_count,
-                learnerCount: task.learner_count,
-                completedCount: task.completed_count,
-              }))}
+              id: task.id,
+              title: task.title,
+              status: task.status as 'draft' | 'published' | 'closed' | 'archived',
+              startAt: task.start_at,
+              dueAt: task.due_at,
+              createdAt: task.created_at,
+              courseCount: task.course_count,
+              learnerCount: task.learner_count,
+              completedCount: task.completed_count,
+            }))}
           />
         </section>
       </div>

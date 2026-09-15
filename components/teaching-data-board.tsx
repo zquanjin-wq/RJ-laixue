@@ -63,6 +63,8 @@ export function TeachingDataBoard() {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (view !== 'tasks') return;
+    // 开始一次请求时立即呈现加载态；实际数据更新在异步回调中完成。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(
       `/api/admin/teaching-data?status=published${taskId ? `&taskId=${encodeURIComponent(taskId)}` : ''}`,
