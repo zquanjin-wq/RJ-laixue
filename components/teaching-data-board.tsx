@@ -63,6 +63,8 @@ export function TeachingDataBoard() {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (view !== 'tasks') return;
+    // 开始一次请求时立即呈现加载态；实际数据更新在异步回调中完成。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(
       `/api/admin/teaching-data?status=published${taskId ? `&taskId=${encodeURIComponent(taskId)}` : ''}`,
@@ -75,11 +77,11 @@ export function TeachingDataBoard() {
   }, [taskId, view]);
   const overview = data.overview;
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-background">
+    <main className="teaching-workbench min-h-screen px-8 py-10 dark:bg-background">
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-primary">来学 · 教学数据中心</p>
+            <p className="text-sm font-medium text-primary">教学驾驶舱 / 教学数据中心</p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight">教学数据看板</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               任务运营与课程资产分开分析，各自回答不同问题。
@@ -92,7 +94,7 @@ export function TeachingDataBoard() {
             </Link>
           </Button>
         </header>
-        <div className="flex gap-2 border-b">
+        <div className="flex gap-2 border-b border-primary/20">
           <Button variant={view === 'tasks' ? 'default' : 'ghost'} onClick={() => setView('tasks')}>
             任务运营
           </Button>
@@ -257,13 +259,13 @@ function Stat({
   loading: boolean;
 }) {
   return (
-    <Card className="shadow-sm">
-      <CardContent className="p-5">
+    <div className="border-y border-primary/15 bg-background/70 p-5">
+      <CardContent className="p-0">
         <Icon className="size-5 text-primary" />
         <p className="mt-4 text-sm text-muted-foreground">{label}</p>
         <p className="mt-1 text-2xl font-semibold">{loading ? '—' : value}</p>
         <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
       </CardContent>
-    </Card>
+    </div>
   );
 }

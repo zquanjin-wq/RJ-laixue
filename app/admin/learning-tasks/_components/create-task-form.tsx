@@ -1,7 +1,7 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Badge } from '@/components/ui/badge';
 import { toTaskTimestamp } from '@/lib/utils/task-datetime';
 import { LearnerPickerDialog } from './learner-picker-dialog';
 
@@ -100,140 +99,175 @@ export function CreateTaskForm({ courses }: CreateTaskFormProps) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-6">
-      <div className="space-y-3">
-        <div>
-          <Label>课程组合 *</Label>
-          <p className="mt-1 text-xs text-muted-foreground">
-            可选择多门课程；排序即学员后续的学习顺序。
+    <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <form
+        onSubmit={submit}
+        className="space-y-6 border-y border-border/80 bg-background/75 py-7 pr-8"
+      >
+        <div className="space-y-3">
+          <div>
+            <Label>课程组合 *</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              可选择多门课程；排序即学员后续的学习顺序。
+            </p>
+          </div>
+          <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
+            {courses.map((course) => {
+              const selected = courseIds.includes(course.id);
+              const index = courseIds.indexOf(course.id);
+              const move = (direction: -1 | 1) => {
+                const nextIndex = index + direction;
+                if (nextIndex < 0 || nextIndex >= courseIds.length) return;
+                const next = [...courseIds];
+                [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+                setCourseIds(next);
+              };
+              return (
+                <div key={course.id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={selected}
+                    onCheckedChange={() =>
+                      setCourseIds(
+                        selected
+                          ? courseIds.filter((id) => id !== course.id)
+                          : [...courseIds, course.id],
+                      )
+                    }
+                  />
+                  <span className="min-w-0 flex-1 truncate">{course.title || '未命名课程'}</span>
+                  {selected && (
+                    <>
+                      <span className="text-xs text-muted-foreground">第 {index + 1} 门</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={index === 0}
+                        onClick={() => move(-1)}
+                      >
+                        上移
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={index === courseIds.length - 1}
+                        onClick={() => move(1)}
+                      >
+                        下移
+                      </Button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            {courses.length === 0 && (
+              <p className="text-sm text-muted-foreground">暂无可用课程。</p>
+            )}
+          </div>
+          {courseIds.length > 0 && (
+            <p className="text-xs text-muted-foreground">已选 {courseIds.length} 门课程。</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="title">任务标题 *</Label>
+          <Input
+            id="title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="例如：新员工入职培训第一周"
+            className="w-full md:w-96"
+            required
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="description">任务说明</Label>
+          <Textarea
+            id="description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="补充说明、学习目标或注意事项"
+          />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="startAt">开始时间</Label>
+            <Input
+              id="startAt"
+              type="datetime-local"
+              value={startAt}
+              onChange={(e) => setStartAt(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="dueAt">截止时间</Label>
+            <Input
+              id="dueAt"
+              type="datetime-local"
+              value={dueAt}
+              onChange={(e) => setDueAt(e.target.value)}
+            />
+          </div>
+        </div>
+        {timeError && <p className="text-xs text-destructive">{timeError}</p>}
+
+        <div className="space-y-2">
+          <Label>学员名单</Label>
+          <p className="text-xs text-muted-foreground">
+            创建时可不选；保存草稿后也可继续添加学习对象。
           </p>
-        </div>
-        <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
-          {courses.map((course) => {
-            const selected = courseIds.includes(course.id);
-            const index = courseIds.indexOf(course.id);
-            const move = (direction: -1 | 1) => {
-              const nextIndex = index + direction;
-              if (nextIndex < 0 || nextIndex >= courseIds.length) return;
-              const next = [...courseIds];
-              [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-              setCourseIds(next);
-            };
-            return (
-              <div key={course.id} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={selected}
-                  onCheckedChange={() =>
-                    setCourseIds(
-                      selected
-                        ? courseIds.filter((id) => id !== course.id)
-                        : [...courseIds, course.id],
-                    )
-                  }
-                />
-                <span className="min-w-0 flex-1 truncate">{course.title || '未命名课程'}</span>
-                {selected && (
-                  <>
-                    <span className="text-xs text-muted-foreground">第 {index + 1} 门</span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={index === 0}
-                      onClick={() => move(-1)}
-                    >
-                      上移
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={index === courseIds.length - 1}
-                      onClick={() => move(1)}
-                    >
-                      下移
-                    </Button>
-                  </>
-                )}
-              </div>
-            );
-          })}
-          {courses.length === 0 && <p className="text-sm text-muted-foreground">暂无可用课程。</p>}
-        </div>
-        {courseIds.length > 0 && (
-          <p className="text-xs text-muted-foreground">已选 {courseIds.length} 门课程。</p>
-        )}
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="title">任务标题 *</Label>
-        <Input
-          id="title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="例如：新员工入职培训第一周"
-          className="w-full md:w-96"
-          required
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="description">任务说明</Label>
-        <Textarea
-          id="description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="补充说明、学习目标或注意事项"
-        />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="startAt">开始时间</Label>
-          <Input
-            id="startAt"
-            type="datetime-local"
-            value={startAt}
-            onChange={(e) => setStartAt(e.target.value)}
+          <LearnerPickerDialog
+            selectedIds={Array.from(selectedLearners)}
+            onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="dueAt">截止时间</Label>
-          <Input
-            id="dueAt"
-            type="datetime-local"
-            value={dueAt}
-            onChange={(e) => setDueAt(e.target.value)}
-          />
-        </div>
-      </div>
-      {timeError && <p className="text-xs text-destructive">{timeError}</p>}
 
-      <div className="space-y-2">
-        <Label>学员名单</Label>
-        <p className="text-xs text-muted-foreground">
-          创建时可不选；保存草稿后也可继续添加学习对象。
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <div className="flex gap-2">
+          <Button type="submit" disabled={loading || !!timeError}>
+            {loading ? '保存中...' : '保存草稿'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push('/admin/learning-tasks')}
+          >
+            取消
+          </Button>
+        </div>
+      </form>
+      <aside className="h-fit border-y border-primary/20 bg-primary/5 p-5 xl:sticky xl:top-8">
+        <p className="text-sm font-semibold text-primary">任务摘要</p>
+        <dl className="mt-5 space-y-4 text-sm">
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-muted-foreground">当前状态</dt>
+            <dd className="font-medium text-primary">草稿</dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-muted-foreground">课程组合</dt>
+            <dd className="font-medium">{courseIds.length} 门</dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-muted-foreground">学习对象</dt>
+            <dd className="font-medium">{selectedLearners.size} 人</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">时间范围</dt>
+            <dd className="mt-1 leading-6">
+              {startAt || '尚未设置开始时间'}
+              <br />
+              {dueAt || '尚未设置截止时间'}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-6 border-t border-primary/15 pt-4 text-xs leading-5 text-muted-foreground">
+          保存草稿后将进入任务详情页，再完成发布与后续维护。
         </p>
-        <LearnerPickerDialog
-          selectedIds={Array.from(selectedLearners)}
-          onSelectedIdsChange={(ids) => setSelectedLearners(new Set(ids))}
-        />
-      </div>
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-
-      <div className="flex gap-2">
-        <Button type="submit" disabled={loading || !!timeError}>
-          {loading ? '保存中...' : '保存草稿'}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => router.push('/admin/learning-tasks')}
-        >
-          取消
-        </Button>
-      </div>
-    </form>
+      </aside>
+    </div>
   );
 }

@@ -7,10 +7,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server';
-import {
-  resolveActor,
-  checkCoursePublishPermission,
-} from '@/lib/server/learning-tasks/permissions';
+import { resolveActor } from '@/lib/server/learning-tasks/permissions';
 import { Button } from '@/components/ui/button';
 import { CreateTaskForm } from '../_components/create-task-form';
 
@@ -47,11 +44,12 @@ export default async function NewLearningTaskPage() {
     .map((c) => ({ id: c.id, title: c.title }));
 
   return (
-    <main className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-6">
+    <main className="teaching-workbench min-h-screen px-8 py-10">
+      <div className="mx-auto max-w-6xl space-y-6">
         <header className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">新建学习任务</h1>
+            <p className="text-sm font-medium text-primary">教学驾驶舱 / 学习任务</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">新建学习任务</h1>
             <p className="text-sm text-muted-foreground">
               填写任务信息并保存草稿，随后可在详情页发布。
             </p>
@@ -61,9 +59,7 @@ export default async function NewLearningTaskPage() {
           </Button>
         </header>
 
-        <div className="rounded-lg border bg-background p-6">
-          <CreateTaskForm courses={courses} />
-        </div>
+        <CreateTaskForm courses={courses} />
       </div>
     </main>
   );
