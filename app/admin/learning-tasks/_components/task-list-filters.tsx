@@ -128,8 +128,8 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
   }
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center">
+    <section className="space-y-0 border-y border-border/80 bg-background/70">
+      <div className="flex flex-col gap-3 border-b border-border/80 py-3 sm:flex-row sm:items-center">
         <Input
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
@@ -154,7 +154,15 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
         </Button>
       </div>
 
-      <p className="text-sm text-muted-foreground">显示 {visibleTasks.length} 个任务</p>
+      <div className="grid grid-cols-[minmax(240px,2fr)_88px_88px_minmax(190px,1.3fr)_minmax(170px,1.2fr)_88px_180px] gap-4 border-b border-border/80 py-3 text-xs font-medium text-primary/80">
+        <span>任务</span>
+        <span>课程</span>
+        <span>学员</span>
+        <span>完成情况</span>
+        <span>开始 / 截止</span>
+        <span>状态</span>
+        <span className="text-right">操作</span>
+      </div>
 
       {visibleTasks.map((task) => {
         const deadline = deadlineLabel(task, now);
@@ -165,31 +173,41 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
         return (
           <article
             key={task.id}
-            className="flex flex-col gap-3 rounded-lg border bg-background p-4 md:flex-row md:items-center md:justify-between"
+            className="grid grid-cols-[minmax(240px,2fr)_88px_88px_minmax(190px,1.3fr)_minmax(170px,1.2fr)_88px_180px] items-center gap-4 border-b border-border/70 py-4 transition-colors hover:bg-primary/[0.035]"
           >
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate font-medium">{task.title || '未命名任务'}</span>
-                <Badge variant={task.status === 'published' ? 'default' : 'secondary'}>
-                  {STATUS_LABEL[task.status]}
-                </Badge>
-                {deadline && (
-                  <Badge variant="outline" className={deadline.className}>
-                    {deadline.label}
-                  </Badge>
-                )}
-              </div>
-              <div className="text-xs text-muted-foreground">课程包：{task.courseCount} 门课程</div>
-              <div className="text-xs text-muted-foreground">
-                学员 {task.learnerCount} 人 · 已完成 {task.completedCount} 人 · 完成率 {completion}%
-                {task.startAt && ` · 开始 ${new Date(task.startAt).toLocaleString('zh-CN')}`}
-                {task.dueAt && ` · 截止 ${new Date(task.dueAt).toLocaleString('zh-CN')}`}
-              </div>
-              <div className="text-xs text-muted-foreground">
+            <div className="min-w-0">
+              <p className="truncate font-medium">{task.title || '未命名任务'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
                 创建于 {new Date(task.createdAt).toLocaleString('zh-CN')}
-              </div>
+              </p>
             </div>
-            <div className="flex flex-wrap gap-2 md:flex-shrink-0">
+            <span>{task.courseCount} 门</span>
+            <span>{task.learnerCount} 人</span>
+            <div>
+              <p className="font-medium text-primary">{completion}%</p>
+              <p className="text-xs text-muted-foreground">已完成 {task.completedCount} 人</p>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              <p>
+                {task.startAt
+                  ? new Date(task.startAt).toLocaleDateString('zh-CN')
+                  : '未设置开始时间'}
+              </p>
+              <p className="mt-1">
+                {task.dueAt ? new Date(task.dueAt).toLocaleDateString('zh-CN') : '未设置截止时间'}
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Badge variant={task.status === 'published' ? 'default' : 'secondary'}>
+                {STATUS_LABEL[task.status]}
+              </Badge>
+              {deadline && (
+                <Badge variant="outline" className={deadline.className}>
+                  {deadline.label}
+                </Badge>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
               <Button asChild variant="outline" size="sm">
                 <Link href={`/admin/learning-tasks/${task.id}`}>查看详情</Link>
               </Button>
@@ -209,8 +227,8 @@ export function TaskListFilters({ tasks }: { tasks: TaskListItem[] }) {
       })}
 
       {visibleTasks.length === 0 && (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          没有符合当前条件的任务。
+        <div className="border-b border-border/80 py-10 text-center text-sm text-muted-foreground">
+          当前范围内没有学习任务；调整筛选条件，或从右上角新建任务并先保存为草稿。
         </div>
       )}
 

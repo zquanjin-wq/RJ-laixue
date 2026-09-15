@@ -142,6 +142,15 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Shared desktop shell for the teaching cockpit and its workbenches. */
+  .teaching-workbench {
+    min-width: 1180px;
+    background-color: #fbfdfb;
+    background-image:
+      repeating-linear-gradient(0deg, rgb(22 163 74 / 0.065) 0 1px, transparent 1px 28px),
+      repeating-linear-gradient(90deg, rgb(22 163 74 / 0.065) 0 1px, transparent 1px 28px);
+  }
   /* Radix modal overlays wrap with `react-remove-scroll`, which compensates
      for the removed page scrollbar by adding right-side body spacing. This
      app already reserves the scrollbar gutter on <html> (above), so that
